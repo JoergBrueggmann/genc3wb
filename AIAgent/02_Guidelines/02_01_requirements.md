@@ -1,12 +1,12 @@
 # Requirements guideline
 
-This guideline defines the mandatory structure for every requirements specification document produced in the Requirements Definition Phase (folder '03_RequirementsDev', finalised into '03_Requirements') for *product*, in addition to the general rules of '01_01_management.md' (§ Document rules).
+This guideline defines the mandatory structure for every requirements specification document produced in phase 3 *Requirements Definition* (folder '03_Requirements') for *product*, in addition to the general rules of '01_01_management.md' (§ Document rules).
 
 ## Applicable documents
 
 | Ref. | Document file name | Title |
 | --- | --- | --- |
-| [AD01] | 01_01_management.md | Management requirements |
+| [1] | 01_01_management.md | Management requirements |
 
 ## Terms
 
@@ -38,7 +38,7 @@ Every requirements specification document must contain the following sections, i
 6. **Non-functional requirements** — quality attributes such as performance, reliability, and portability.
 7. **Interface requirements** — grouped by interface (e.g. CLI, file format, API); each requirement states the direction of data flow (`input`, `output`, or both when the same channel serves as both, e.g. a file that is read and, on success, overwritten).
 8. **Constraints** — technical or organisational constraints (e.g. programming language, platform) that shape but are not themselves behavior.
-9. **Open questions** — permitted only while the document is in Dev status; must be empty before finalisation (finalisation checklist item 2: "No placeholders or TODOs remain").
+9. **Open questions** — permitted only while the change cycle is running; must be empty before the agent asks gate question G ('01_01_management.md' § Change cycle → Gate).
 
 A section above — and, recursively, any subsection within it — should be divided into further subsections, each introduced by a heading one level deeper naming the group, once it grows large enough that the grouping aids readability (e.g. beyond about 5 to 10 requirements) and its requirements admit a reasonable grouping (e.g. by feature, module, or interface). Interface requirements groups by interface regardless of count (item 7). A section or subsection short enough to read as one, or whose requirements do not fall into such a grouping, remains flat.
 
@@ -171,11 +171,11 @@ Examples: *The product shall parse a 1 MB input file within 2 seconds.* — *The
 c = subject , modal , ( "use" | "implement" | ( "conform" , "to" ) ) ,
     technology_or_standard_ref , [ "for" , object_ref ] , "." ;
 ```
-Examples: *The product shall be implemented using the Haskell Stack toolchain.* — *Input data shall conform to UTF-8 encoding.*
+Examples: *The product shall be implemented using the Qt framework.* — *Input data shall conform to UTF-8 encoding.*
 
 ## 6. Traceability
 
-Requirements must be phrased so each can be referenced by its ID from the Design (04) and Test (05) phases, keeping the requirement → design → test chain traceable end to end.
+Requirements must be phrased so each can be referenced by its ID from phase 4 *Design Definition* and phase 5 *Implementation and Test*, keeping the requirement → design → test chain traceable end to end.
 
 ## 7. Template
 
@@ -190,7 +190,8 @@ This specification follows the structure defined in '02_01_requirements.md'.
 
 | Ref. | Document file name | Title |
 | --- | --- | --- |
-| [AD01] | 01_01_management.md | Management requirements |
+| [1] | 01_01_management.md | Management requirements |
+| [2] | 02_01_requirements.md | Requirements guideline |
 
 ## Terms
 

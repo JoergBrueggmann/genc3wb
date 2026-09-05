@@ -4,19 +4,32 @@ This document describes the management of *product*'s development process — wh
 
 ## Applicable documents
 
-### Rules
-
-A document of *product* lists under its applicable documents only those documents that are its input according to section 'Definition and Folder dependencies'. A document that takes it as input is not listed, because the dependency runs in the opposite direction.
-
-The file '00_agents.md' is not listed in the applicable documents of any document. According to section 'Definition and Folder dependencies' it is the input of every phase, and it is therefore implicitly applicable to every document of *product*.
-
-### Documents applicable to this document
-
-According to section 'Definition and Folder dependencies', the input of phase 1 *Management Definition* is '00_agents.md' and the client's prompt. By the rules above '00_agents.md' is implicitly applicable and is not listed, and the documents of the phases 2 to 5 take this document as input and are not listed either. What remains listed is the document that the change cycle maintains.
+The input of phase 1 *Management Definition* is '00_agents.md' and the client's prompt. By section 'Document rules' '00_agents.md' is implicitly applicable and is not listed, and the documents of the phases 2 to 5 take this document as input and are not listed either. What remains listed is the document that the change cycle maintains.
 
 | Ref. | Document file name | Title |
 | --- | --- | --- |
 | [1] | CHANGELOG.md | Changelog for `genc³wb` |
+
+## Document rules
+
+The rules of this section apply to every document of *product*.
+
+### Applicable documents
+
+A document lists in a section 'Applicable documents' the documents that are its input according to section 'Definition and Folder dependencies', as a table with the columns *Ref.*, *Document file name* and *Title*.
+
+- A document that takes it as input is not listed, because the dependency runs in the opposite direction.
+- The file '00_agents.md' is not listed in the applicable documents of any document. According to section 'Definition and Folder dependencies' it is the input of every phase, and it is therefore implicitly applicable to every document of *product*.
+- The references are `[1]`, `[2]`, and so on, numbered in the order of the table. A document cites an applicable document by its reference, for example [1].
+
+### Terms
+
+A document defines in a section 'Terms' the terms it uses, as a table with the columns *Term*, *Context* and *Definition*.
+
+- A word is defined as a term only where it is not common knowledge, or where its meaning within *product* must be more specific than its everyday sense. Every other word carries its ordinary meaning.
+- A term is written in italics wherever it is used, including in the Terms table itself.
+- A term is defined once, in the document that introduces it. A document that takes that document as input uses the term without defining it again.
+- The *Context* column names where the term applies, and stays empty where the term applies throughout the document.
 
 ## Phases
 
@@ -100,6 +113,8 @@ A commit message carries no co-author trailer. That parts of *product* were writ
 #### Version control
 
 Every file of *product* belongs under version control. The change cycle leaves no file of the project untracked.
+
+A file that is not part of *product* is excluded from version control by '.gitignore'. The verification that no untracked file is left therefore covers the files of *product* only.
 
 The commit of step 9 therefore covers the whole working tree, not only the files that the work item named. A file that the work item did not change is committed as it stands.
 
