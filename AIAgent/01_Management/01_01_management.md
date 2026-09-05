@@ -167,10 +167,12 @@ A *trigger point* of the change cycle is fired either by a code phrase the clien
 
 The code phrases are supplied by the client. Until a phrase is entered below, the corresponding trigger point can be fired by the agent's question only.
 
+A code phrase fires its trigger point wherever it appears in the client's prompt. The client may embed it in a sentence, as in 'yes, agreed'.
+
 The table below covers the trigger points of the change cycle only. Code phrases that do not belong to the change cycle are defined in '00_agents.md', for example the phrases 'print for review' and 'print changes for review'.
 
 | Ref. | Trigger point | Code phrase | Effect when fired |
 | --- | --- | --- | --- |
-| TP-1 | Start change cycle | _(to be supplied)_ | Starts a change cycle at step 1. A phrase that names a work item settles which one is taken. |
-| TP-2 | Agree | _(to be supplied)_ | Fires gate G and thereby authorises step 9. |
-| TP-3 | Abort change cycle | _(to be supplied)_ | Ends the change cycle without release and without merge. The change branch is kept, `main` is left untouched. |
+| TP-1 | Start change cycle | **start change cycle** | Starts a change cycle at step 1. A phrase that names a work item settles which one is taken. |
+| TP-2 | Agree | **agreed** | Fires gate G and thereby authorises step 9. |
+| TP-3 | Abort change cycle | **abort change cycle** | Ends the change cycle without release and without merge. The change branch is kept, `main` is left untouched. |

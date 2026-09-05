@@ -13,6 +13,13 @@ and this project adheres to a four-part version number.
 
 ## Released
 
+### [0.0.0.6] - 2026-09-05
+
+**_Code_phrases_of_the_trigger_points_**
+
+- The code phrases 'start change cycle', 'agreed' and 'abort change cycle' fire the trigger points TP-1 to TP-3.
+- A code phrase fires its trigger point wherever it appears in the client's prompt.
+
 ### [0.0.0.5] - 2026-09-05
 
 **_Deletion_of_the_change_branch_**
@@ -27,7 +34,7 @@ and this project adheres to a four-part version number.
 - The change cycle adds the whole working tree with 'git add .' before it commits, and verifies afterwards that no untracked file is left.
 - The release and integration step lists adding as a step of its own, and the push is verified against the remote.
 
-### [0.0.0.3] - 2026-09-05
+    ### [0.0.0.3] - 2026-09-05
 
 **_Separation_of_released_versions_**
 
