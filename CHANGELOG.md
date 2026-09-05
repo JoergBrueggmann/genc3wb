@@ -10,6 +10,16 @@ and this project adheres to a four-part version number.
 
 ## Unreleased
 
+
+## Released
+
+### [0.0.0.3] - 2026-09-05
+
+**_Separation_of_released_versions_**
+
+- The changelog holds unreleased work items in section 'Unreleased' and released versions in section 'Released', the most recent first.
+- The change cycle moves a work item to 'Released' when it releases it.
+
 ### [0.0.0.2] - 2026-09-05
 
 **_Version_control_of_all_project_files_**
