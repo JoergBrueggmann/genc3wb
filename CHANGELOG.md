@@ -10,6 +10,15 @@ and this project adheres to a four-part version number.
 
 ## Unreleased
 
+### [0.0.0.2] - 2026-09-05
+
+**_Version_control_of_all_project_files_**
+
+- Every file of *product* is under version control; the commit of the change cycle covers the whole working tree, not only the files of the work item.
+- Files the work item did not change are reported at the gate before they are committed.
+- The guideline, requirement and design documents are placed under version control unchanged, to be adapted later.
+- The licence notice names *product*, its year and its author.
+
 ### [0.0.0.1] - 2026-09-05
 
 **_Finalisation_of_agent_and_management_definition_**
