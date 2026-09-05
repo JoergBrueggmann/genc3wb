@@ -13,6 +13,13 @@ and this project adheres to a four-part version number.
 
 ## Released
 
+### [0.0.0.7] - 2026-09-05
+
+**_Attribution_in_the_readme_instead_of_the_commits_**
+
+- Commit messages carry no co-author trailer; the assistance of the agent is stated once in 'README.md'.
+- The form of a commit message is defined.
+
 ### [0.0.0.6] - 2026-09-05
 
 **_Code_phrases_of_the_trigger_points_**

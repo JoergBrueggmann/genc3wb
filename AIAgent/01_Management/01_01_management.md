@@ -91,6 +91,12 @@ As long as phase 5 *Implementation and Test* has no output, no work item can cha
 
 A work item stays in `## Unreleased` for the whole change cycle. The release of step 9 moves it, with its entries, from `## Unreleased` to the top of `## Released`.
 
+#### Commit message
+
+The first line of a commit message states what the commit does and for which version. The body describes what was changed and why.
+
+A commit message carries no co-author trailer. That parts of *product* were written with the agent's assistance is stated once in 'README.md', under the client's direction and review, and not in every commit.
+
 #### Version control
 
 Every file of *product* belongs under version control. The change cycle leaves no file of the project untracked.
@@ -141,7 +147,7 @@ On the client's agreement the agent carries out the following, in this order and
 
 1. **release** — replace `YYYY-MM-DD` in the version heading of the work item in `CHANGELOG.md` [1] by the current date, and move the work item to the top of section `## Released`, according to section 'Changelog structure',
 2. **add** — add the whole working tree to the index with `git add .`, according to section 'Version control',
-3. **commit** — commit the index on the change branch,
+3. **commit** — commit the index on the change branch, with a message according to section 'Commit message',
 4. **pull** — update `main` from its remote,
 5. **merge** — merge the change branch into `main`,
 6. **push** — push `main` to its remote, and verify that the remote holds what was pushed,
