@@ -80,6 +80,14 @@ The agent determines the part from what the work item changed in fact, and repor
 
 As long as phase 5 *Implementation and Test* has no output, no work item can change functionality of *product*, and every work item increments the build part.
 
+#### Version control
+
+Every file of *product* belongs under version control. The change cycle leaves no file of the project untracked.
+
+The commit of step 9 therefore covers the whole working tree, not only the files that the work item named. A file that the work item did not change is committed as it stands.
+
+Before the gate the agent determines which files of the working tree are not yet under version control, and which carry changes it did not make itself. It reports them at the gate together with what it changed, so that the client sees the whole content of the commit before agreeing to it.
+
 #### Steps
 
 **Step 1 — Work item.**
@@ -108,14 +116,14 @@ The agent runs the build and the tests, as far as they exist, and reports the re
 The agent brings the entries of the work item in `CHANGELOG.md` [1] in line with what was changed in fact, including what the dependency propagation reached. It then checks the version number of the work item against the rules of section 'Version number' and corrects it where what was changed in fact requires another part to be incremented. The date of the version heading stays `YYYY-MM-DD`.
 
 **Step 8 — Agreement gate (G).**
-The agent stops, reports everything changed in the steps 4 to 7, and asks gate question **G**. It carries out none of step 9 before the client agrees.
+The agent stops, reports everything changed in the steps 4 to 7, and asks gate question **G**. It reports in addition the files that the commit will contain although the work item did not change them, according to section 'Version control'. It carries out none of step 9 before the client agrees.
 An objection returns the cycle to step 4, or to step 2 where the identification itself was wrong.
 
 **Step 9 — Release and integration.**
 On the client's agreement the agent carries out the following, in this order and without further questions:
 
 1. **release** — replace `YYYY-MM-DD` in the version heading of the work item in `CHANGELOG.md` [1] by the current date,
-2. **commit** — commit the change on the change branch,
+2. **commit** — commit the whole working tree on the change branch, according to section 'Version control',
 3. **pull** — update `main` from its remote,
 4. **merge** — merge the change branch into `main`,
 5. **push** — push `main` to its remote.
