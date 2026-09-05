@@ -80,6 +80,17 @@ The agent determines the part from what the work item changed in fact, and repor
 
 As long as phase 5 *Implementation and Test* has no output, no work item can change functionality of *product*, and every work item increments the build part.
 
+#### Changelog structure
+
+`CHANGELOG.md` [1] holds the work items in two sections.
+
+| Section | Holds | Order |
+| --- | --- | --- |
+| `## Unreleased` | the work items that are not released; their date is `YYYY-MM-DD` | the order in which they are to be worked on |
+| `## Released` | the versions that are released; their date is the date of their release | the most recent version first |
+
+A work item stays in `## Unreleased` for the whole change cycle. The release of step 9 moves it, with its entries, from `## Unreleased` to the top of `## Released`.
+
 #### Version control
 
 Every file of *product* belongs under version control. The change cycle leaves no file of the project untracked.
@@ -91,7 +102,7 @@ Before the gate the agent determines which files of the working tree are not yet
 #### Steps
 
 **Step 1 — Work item.**
-The agent takes the next unreleased work item: the first version heading in section `## Unreleased` of `CHANGELOG.md` [1] whose date is still `YYYY-MM-DD`, together with the entries listed under it. The client's prompt may narrow the work item to a part of it, or extend it; an extension is written into the work item.
+The agent takes the next unreleased work item: the first version heading in section `## Unreleased` of `CHANGELOG.md` [1], together with the entries listed under it. The client's prompt may narrow the work item to a part of it, or extend it; an extension is written into the work item.
 
 **Step 2 — Identification.**
 The agent identifies which phases and which files of *product* the work item changes, and reports them.
@@ -122,7 +133,7 @@ An objection returns the cycle to step 4, or to step 2 where the identification 
 **Step 9 — Release and integration.**
 On the client's agreement the agent carries out the following, in this order and without further questions:
 
-1. **release** — replace `YYYY-MM-DD` in the version heading of the work item in `CHANGELOG.md` [1] by the current date,
+1. **release** — replace `YYYY-MM-DD` in the version heading of the work item in `CHANGELOG.md` [1] by the current date, and move the work item to the top of section `## Released`, according to section 'Changelog structure',
 2. **commit** — commit the whole working tree on the change branch, according to section 'Version control',
 3. **pull** — update `main` from its remote,
 4. **merge** — merge the change branch into `main`,
