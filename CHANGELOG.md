@@ -13,6 +13,13 @@ and this project adheres to a four-part version number.
 
 ## Released
 
+### [0.0.0.5] - 2026-09-05
+
+**_Deletion_of_the_change_branch_**
+
+- The change cycle deletes the change branch after the push is verified; an aborted change cycle keeps it.
+- The change branches of the versions 0.0.0.1 to 0.0.0.4 are deleted.
+
 ### [0.0.0.4] - 2026-09-05
 
 **_Explicit_adding_of_all_files_**
