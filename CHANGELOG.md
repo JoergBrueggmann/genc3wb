@@ -13,6 +13,17 @@ and this project adheres to a four-part version number.
 
 ## Released
 
+### [0.0.0.9] - 2026-09-05
+
+**_Design_guideline_**
+
+- The 'Design guideline' is consolidated as the 'Requirements guideline' was in version 0.0.0.8: its references to the management requirements resolve, the working folder and the finalisation checklist are dropped, and the reference convention and the design template follow the document rules.
+- The unit of decomposition is the component, named by its C++ namespace and by the files that make it up. Acyclic dependency is kept as a rule of the guideline, justified by readability instead of by the compiler.
+- Type declarations and function declarations are given in C++ syntax without bodies; an abstraction is declared as an abstract base class or as a concept, and the choice is stated.
+- The error handling strategy names the C++ means of representing expected failure, and requires an exception that crosses a component boundary to be declared with that boundary.
+- A section 'Class diagram' is mandatory: every declared class appears in a class diagram, with its relationships to the other classes, given as Mermaid source.
+- The section 'Purity and effect boundaries' becomes 'Side-effect boundaries': it states which parts of *product* are free of side effects and which perform I/O, with 'const' as the marker in the declaration.
+
 ### [0.0.0.8] - 2026-09-05
 
 **_Requirements_guideline_**
