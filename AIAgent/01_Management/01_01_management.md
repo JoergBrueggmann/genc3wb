@@ -118,7 +118,7 @@ The agent creates one branch for the change cycle, from `main`, named
 
     change/<version>-<short topic>
 
-for example `change/0.0.0.1-agent-and-management-definition`. The whole change cycle is carried out on this one branch.
+for example `change/0.0.0.1-agent-and-management-definition`. The whole change cycle is carried out on this one branch, and the branch exists only for the duration of the change cycle.
 
 **Step 4 — Change.**
 The agent changes the identified files, on the client's prompts, and reports what it changed and why. It does not pause for confirmation before each individual edit.
@@ -144,9 +144,12 @@ On the client's agreement the agent carries out the following, in this order and
 3. **commit** — commit the index on the change branch,
 4. **pull** — update `main` from its remote,
 5. **merge** — merge the change branch into `main`,
-6. **push** — push `main` to its remote, and verify that the remote holds what was pushed.
+6. **push** — push `main` to its remote, and verify that the remote holds what was pushed,
+7. **delete** — delete the change branch.
 
-Where the pull brings in changes that conflict with the change, the agent stops, reports the conflict, and returns the cycle to step 4. The change cycle ends with the verified push.
+Where the pull brings in changes that conflict with the change, the agent stops, reports the conflict, and returns the cycle to step 4.
+
+The change branch is deleted only after the push has been verified, so that its content is on the remote before the branch is removed. A change cycle that is aborted keeps its branch, as section 'Client's code phrases' defines for TP-3. The change cycle ends with the deleted branch.
 
 #### Gate
 
