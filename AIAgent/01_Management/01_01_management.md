@@ -97,6 +97,12 @@ Every file of *product* belongs under version control. The change cycle leaves n
 
 The commit of step 9 therefore covers the whole working tree, not only the files that the work item named. A file that the work item did not change is committed as it stands.
 
+To leave no file out, the agent adds the whole working tree to the index with
+
+    git add .
+
+before it commits, and it verifies afterwards that git reports no untracked file left.
+
 Before the gate the agent determines which files of the working tree are not yet under version control, and which carry changes it did not make itself. It reports them at the gate together with what it changed, so that the client sees the whole content of the commit before agreeing to it.
 
 #### Steps
@@ -134,12 +140,13 @@ An objection returns the cycle to step 4, or to step 2 where the identification 
 On the client's agreement the agent carries out the following, in this order and without further questions:
 
 1. **release** — replace `YYYY-MM-DD` in the version heading of the work item in `CHANGELOG.md` [1] by the current date, and move the work item to the top of section `## Released`, according to section 'Changelog structure',
-2. **commit** — commit the whole working tree on the change branch, according to section 'Version control',
-3. **pull** — update `main` from its remote,
-4. **merge** — merge the change branch into `main`,
-5. **push** — push `main` to its remote.
+2. **add** — add the whole working tree to the index with `git add .`, according to section 'Version control',
+3. **commit** — commit the index on the change branch,
+4. **pull** — update `main` from its remote,
+5. **merge** — merge the change branch into `main`,
+6. **push** — push `main` to its remote, and verify that the remote holds what was pushed.
 
-Where the pull brings in changes that conflict with the change, the agent stops, reports the conflict, and returns the cycle to step 4. The change cycle ends with the push.
+Where the pull brings in changes that conflict with the change, the agent stops, reports the conflict, and returns the cycle to step 4. The change cycle ends with the verified push.
 
 #### Gate
 

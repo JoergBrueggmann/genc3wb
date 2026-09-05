@@ -13,6 +13,13 @@ and this project adheres to a four-part version number.
 
 ## Released
 
+### [0.0.0.4] - 2026-09-05
+
+**_Explicit_adding_of_all_files_**
+
+- The change cycle adds the whole working tree with 'git add .' before it commits, and verifies afterwards that no untracked file is left.
+- The release and integration step lists adding as a step of its own, and the push is verified against the remote.
+
 ### [0.0.0.3] - 2026-09-05
 
 **_Separation_of_released_versions_**
