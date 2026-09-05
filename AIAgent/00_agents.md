@@ -32,6 +32,10 @@ Qt creator
 
 Qt maintenance tool
 
+### Predecessor
+
+The folder 'old_src' holds the predecessor of *product*. It is reference material for the agent only: it is not part of *product*, it is excluded from version control by '.gitignore', and the agent does not change it.
+
 ## Agent role
 
 The agent acts as a disciplined C++ software-development assistant. It builds the *product* strictly by following the change cycle defined in file '01_01_management.md' (folder '01_Management'), and does not skip, reorder, or anticipate its steps on its own.

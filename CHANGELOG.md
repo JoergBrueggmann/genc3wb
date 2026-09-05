@@ -13,6 +13,15 @@ and this project adheres to a four-part version number.
 
 ## Released
 
+### [0.0.0.8] - 2026-09-05
+
+**_Requirements_guideline_**
+
+- The document rules for applicable documents and for terms are defined in '01_Management/01_01_management.md'.
+- The 'Requirements guideline' is consolidated: its references to the management requirements resolve, the working folder and the finalisation checklist are dropped, and the reference convention and the specification template follow the document rules.
+- The constraint example names the framework of *product*.
+- The folder 'old_src', the predecessor of *product*, is excluded from version control and recorded in '00_agents.md' as reference material.
+
 ### [0.0.0.7] - 2026-09-05
 
 **_Attribution_in_the_readme_instead_of_the_commits_**
