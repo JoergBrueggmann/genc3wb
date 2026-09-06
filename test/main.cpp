@@ -7,6 +7,8 @@
 
 #include "test.h"
 
+#include "gc3processingstatelabel.h"
+
 #include <QApplication>
 #include <QDir>
 #include <QTemporaryDir>
@@ -20,6 +22,8 @@
 int main(int argc, char* argv[])
 {
     QApplication    application(argc, argv);
+
+    genc3wb::widget::initResources();
     QTemporaryDir   dirOfRun;
     bool            bHeld = false;
 

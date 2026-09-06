@@ -8,6 +8,7 @@
 #include "test.h"
 
 #include "neatest.h"
+#include "test_mainwindow.h"
 #include "test_settings.h"
 #include "test_widget.h"
 
@@ -16,5 +17,6 @@ bool test()
     TEST_INIT();
     TEST( widget );
     TEST( settings );
+    TEST( mainwindow );
     TEST_RETURN();
 }

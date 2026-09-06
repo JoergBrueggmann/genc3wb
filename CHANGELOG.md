@@ -10,7 +10,7 @@ and this project adheres to a four-part version number.
 
 ## Unreleased
 
-### [0.2.0.0] - YYYY-MM-DD
+### [0.3.0.0] - YYYY-MM-DD
 
 **_Change_to_Rust_with_Qt_Bridging_Technology_**
 
@@ -18,6 +18,18 @@ and this project adheres to a four-part version number.
 
 
 ## Released
+
+### [0.2.0.0] - 2026-09-06
+
+**_Main_window_of_the_workbench_**
+
+- Implement the component 'genc3wb::mainwindow': compose the main window from the group of the compiler-compiler input file, the group of the compiler input file, the group of the compiler-compiler and the output group, built in code from the widget tree of the design.
+- Lay out each input group with its file name field, its file selector button, its code editor and its processing state indicator, from the widgets of 'genc3wb::widget'.
+- Carry a menu bar with a help menu, present a modal info dialog from that menu, and carry a status bar.
+- Notify the widget that lost the focus and the widget that received it, so that the code editor highlights its current line only while it holds the focus.
+- Initialise the resources of *product*, which a static library does not initialise by itself and without which the indicator draws no image.
+- Declare 'InputGroup', 'initResources' and the accessors of the main window in the design, which the implementation needs and the design did not declare.
+- Cover the main window with a test group of ten test cases, and assert that the four images of the indicator resolve.
 
 ### [0.1.0.1] - 2026-09-06
 
