@@ -1,3 +1,21 @@
 # The predecessor of *product*, kept for reference only.
 old_src/
 old_tst/
+
+# Build output.
+build/
+release/
+debug/
+Makefile
+Makefile.*
+*.o
+*.a
+*.exe
+moc_*.cpp
+qrc_*.cpp
+ui_*.h
+.qmake.stash
+object_script.*
+
+# The settings product stores at run time.
+.genc3config/

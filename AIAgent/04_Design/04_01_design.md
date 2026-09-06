@@ -166,6 +166,21 @@ virtual void setCCExecFilePath(const QString& strFilePath);
  */
 virtual bool bOutFilePathOfNumber(int nFileNumber, QString& strOutFilePath) const;
 
+// realises FR-038
+/**
+ * @brief   Sets the path of one output file.
+ * @param   nFileNumber         the number of the output file, from nMinFileNumber to nMaxFileNumber
+ * @param   strOutFilePath      the path to store
+ * @return  whether the number is within its range and the path was stored
+ */
+virtual bool setOutFilePath(int nFileNumber, const QString& strOutFilePath);
+
+/**
+ * @brief   Yields the path of the compiler-compiler.
+ * @return  the stored path
+ */
+virtual const QString& strCCExecFilePath() const;
+
 // realises FR-037
 /** @brief Removes the output file of that number, so that it is no longer presented. */
 virtual void excludeOutFilePath(int nFileNumber);
