@@ -32,6 +32,21 @@ and this project adheres to a four-part version number.
 
 ## Released
 
+### [0.2.0.2] - 2026-09-06
+
+**_Deployment_on_every_platform_**
+
+- Build for the machine the script runs on, and say so: Windows code on Windows, Linux code on Linux, and macOS code on macOS, on Apple silicon as well as on Intel. The script does not cross-compile; each platform is built on a machine of that platform.
+- Collect the application bundle on macOS, which the deployment did not find at all: the build yields a directory there, where the search was for a file, and the deployment ended saying that the application was not found before it ever reached the deployment tool.
+- Take the architecture of the machine on macOS, refuse the deployment where the Qt installation does not carry it, and assert it of the executable produced, rather than failing late in the link on symbols that do not name the missing slice as the reason.
+- Sign the bundle on macOS anew, ad hoc, after the deployment tool has written the load paths and thereby broken the signature, without which a machine of Apple silicon does not load the code at all.
+- Ask the platform for the number of processors and for the time a file was written, where the tools of the two families answer the same option differently and the answer of the other family is not an error but a wrong result.
+- Carry on Linux the libraries the plugins import, and not only those the executable imports: the platform plugin imports the Qt library of the window system, which the executable does not, and the bundle started nowhere but on the machine that built it.
+- Name the platform plugins on Linux one by one rather than taking the directory, which carries plugins for targets this application is not built for. The plugin of a VNC server imports the network library of Qt, which imports Kerberos, which a desktop machine need not carry — and the deployment then failed on a library that no plugin of this application ever asks for.
+- Carry on Linux the helper libraries of X11 that Qt asks for and that a machine installed without a development environment does not hold, without which the platform plugin is found but cannot be loaded, and the application ends naming xcb rather than the library that is absent.
+- Write the run path of the binaries anew, so that each names the library directory of the bundle relative to itself. The linker writes the path of the installation either as RPATH, which is searched before the library path of the environment, or as RUNPATH, which is searched after it; the same sources and the same flags yield either one, and where it was the first the application loaded Qt from the installation and not from the bundle.
+- Verify the result on Linux and on macOS as well, and not on Windows alone: every library imported must be carried along or belong to the operating system, and a library that is carried yet still answered from the installation is named, since what is read on this machine is then not what the target machine would load.
+
 ### [0.2.0.1] - 2026-09-06
 
 **_Reporting_of_a_failed_deployment_**
