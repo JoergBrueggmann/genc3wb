@@ -10,90 +10,104 @@ and this project adheres to a four-part version number.
 
 ## Unreleased
 
+### [0.0.0.12] - YYYY-MM-DD
+
+**_Coding_guideline_**
+
+- Consolidate the 'Coding guideline' and re-engineer 'old_src' to define the coding of the *product*.
+
 
 ## Released
+
+### [0.0.0.11] - 2026-09-06
+
+**_Imperative_changelog_entries_**
+
+- Write every entry of a work item in the imperative, as a commit message is written.
+- Read an entry of 'Unreleased' as what is to be done, and the same entry of 'Released' as what was done.
+- Rewrite the entries of the released versions 0.0.0.1 to 0.0.0.10 in the imperative.
 
 ### [0.0.0.10] - 2026-09-06
 
 **_Test_guideline_**
 
-- The 'Test guideline' is consolidated: it defines the test suite of *product* on the macro framework 'neatest' of 'old_tst', with the three levels root, test group and test case, and the file layout of the folder 'test'.
-- The framework is extended by the assertion macro 'TEST_ASSERT', which names the expression, the file and the line where an expectation broke.
-- The folder 'old_tst' is excluded from version control and recorded in '00_agents.md' as reference material, next to 'old_src'.
+- Consolidate the 'Test guideline': define the test suite of *product* on the macro framework 'neatest' of 'old_tst', with the three levels root, test group and test case, and the file layout of the folder 'test'.
+- Extend the framework by the assertion macro 'TEST_ASSERT', which names the expression, the file and the line where an expectation broke.
+- Exclude the folder 'old_tst' from version control, and record it in '00_agents.md' as reference material next to 'old_src'.
 
 ### [0.0.0.9] - 2026-09-05
 
 **_Design_guideline_**
 
-- The 'Design guideline' is consolidated as the 'Requirements guideline' was in version 0.0.0.8: its references to the management requirements resolve, the working folder and the finalisation checklist are dropped, and the reference convention and the design template follow the document rules.
-- The unit of decomposition is the component, named by its C++ namespace and by the files that make it up. Acyclic dependency is kept as a rule of the guideline, justified by readability instead of by the compiler.
-- Type declarations and function declarations are given in C++ syntax without bodies; an abstraction is declared as an abstract base class or as a concept, and the choice is stated.
-- The error handling strategy names the C++ means of representing expected failure, and requires an exception that crosses a component boundary to be declared with that boundary.
-- A section 'Class diagram' is mandatory: every declared class appears in a class diagram, with its relationships to the other classes, given as Mermaid source.
-- The section 'Purity and effect boundaries' becomes 'Side-effect boundaries': it states which parts of *product* are free of side effects and which perform I/O, with 'const' as the marker in the declaration.
+- Consolidate the 'Design guideline' as the 'Requirements guideline' was consolidated in version 0.0.0.8: resolve its references to the management requirements, drop the working folder and the finalisation checklist, and follow the reference convention and the document rules in the design template.
+- Make the component the unit of decomposition, named by its C++ namespace and by the files that make it up, and keep acyclic dependency as a rule of the guideline, justified by readability instead of by the compiler.
+- Give type declarations and function declarations in C++ syntax without bodies, and declare an abstraction as an abstract base class or as a concept, stating the choice.
+- Name in the error handling strategy the C++ means of representing expected failure, and require an exception that crosses a component boundary to be declared with that boundary.
+- Require a section 'Class diagram' in which every declared class appears with its relationships to the other classes, given as Mermaid source.
+- Rename the section 'Purity and effect boundaries' to 'Side-effect boundaries', stating which parts of *product* are free of side effects and which perform I/O, with 'const' as the marker in the declaration.
 
 ### [0.0.0.8] - 2026-09-05
 
 **_Requirements_guideline_**
 
-- The document rules for applicable documents and for terms are defined in '01_Management/01_01_management.md'.
-- The 'Requirements guideline' is consolidated: its references to the management requirements resolve, the working folder and the finalisation checklist are dropped, and the reference convention and the specification template follow the document rules.
-- The constraint example names the framework of *product*.
-- The folder 'old_src', the predecessor of *product*, is excluded from version control and recorded in '00_agents.md' as reference material.
+- Define the document rules for applicable documents and for terms in '01_Management/01_01_management.md'.
+- Consolidate the 'Requirements guideline': resolve its references to the management requirements, drop the working folder and the finalisation checklist, and follow the reference convention and the document rules in the specification template.
+- Name the framework of *product* in the constraint example.
+- Exclude the folder 'old_src', the predecessor of *product*, from version control, and record it in '00_agents.md' as reference material.
 
 ### [0.0.0.7] - 2026-09-05
 
 **_Attribution_in_the_readme_instead_of_the_commits_**
 
-- Commit messages carry no co-author trailer; the assistance of the agent is stated once in 'README.md'.
-- The form of a commit message is defined.
+- Carry no co-author trailer in a commit message, and state the assistance of the agent once in 'README.md'.
+- Define the form of a commit message.
 
 ### [0.0.0.6] - 2026-09-05
 
 **_Code_phrases_of_the_trigger_points_**
 
-- The code phrases 'start change cycle', 'agreed' and 'abort change cycle' fire the trigger points TP-1 to TP-3.
-- A code phrase fires its trigger point wherever it appears in the client's prompt.
+- Enter the code phrases 'start change cycle', 'agreed' and 'abort change cycle' for the trigger points TP-1 to TP-3.
+- Define that a code phrase fires its trigger point wherever it appears in the client's prompt.
 
 ### [0.0.0.5] - 2026-09-05
 
 **_Deletion_of_the_change_branch_**
 
-- The change cycle deletes the change branch after the push is verified; an aborted change cycle keeps it.
-- The change branches of the versions 0.0.0.1 to 0.0.0.4 are deleted.
+- Delete the change branch after the push is verified, and keep it where the change cycle is aborted.
+- Delete the change branches of the versions 0.0.0.1 to 0.0.0.4.
 
 ### [0.0.0.4] - 2026-09-05
 
 **_Explicit_adding_of_all_files_**
 
-- The change cycle adds the whole working tree with 'git add .' before it commits, and verifies afterwards that no untracked file is left.
-- The release and integration step lists adding as a step of its own, and the push is verified against the remote.
+- Add the whole working tree with 'git add .' before committing, and verify afterwards that no untracked file is left.
+- List adding as a step of its own in the release and integration step, and verify the push against the remote.
 
-    ### [0.0.0.3] - 2026-09-05
+### [0.0.0.3] - 2026-09-05
 
 **_Separation_of_released_versions_**
 
-- The changelog holds unreleased work items in section 'Unreleased' and released versions in section 'Released', the most recent first.
-- The change cycle moves a work item to 'Released' when it releases it.
+- Hold unreleased work items in section 'Unreleased' and released versions in section 'Released', the most recent first.
+- Move a work item to 'Released' when the change cycle releases it.
 
 ### [0.0.0.2] - 2026-09-05
 
 **_Version_control_of_all_project_files_**
 
-- Every file of *product* is under version control; the commit of the change cycle covers the whole working tree, not only the files of the work item.
-- Files the work item did not change are reported at the gate before they are committed.
-- The guideline, requirement and design documents are placed under version control unchanged, to be adapted later.
-- The licence notice names *product*, its year and its author.
+- Put every file of *product* under version control, and cover the whole working tree with the commit of the change cycle, not only the files of the work item.
+- Report at the gate the files the work item did not change, before they are committed.
+- Place the guideline, requirement and design documents under version control unchanged, to be adapted later.
+- Name *product*, its year and its author in the licence notice.
 
 ### [0.0.0.1] - 2026-09-05
 
 **_Finalisation_of_agent_and_management_definition_**
 
-- Initial version of '00_agents.md': general information, agent role, persona, decision authority and reporting.
-- Initial version of '01_Management/01_01_management.md': applicable documents, dependency order, change cycle and the client's code phrases.
-- The change cycle takes the next unreleased work item of this file, identifies the files to change, goes along the folder dependencies, and ends on the client's agreement with release, commit, pull, merge and push.
-- Phases are a dependency structure only; the client does not step through them.
-- A document lists as applicable only its input documents; '00_agents.md' is implicitly applicable to all of them and is listed nowhere.
-- The four-part version number is defined; the change cycle determines and maintains it.
-- The code phrases 'print for review' and 'print changes for review' print the relevant input and output of the current change, in full respectively as the changes reported by git.
-- The code phrases of the trigger points TP-1 to TP-3 are still to be supplied by the client.
+- Write the initial version of '00_agents.md': general information, agent role, persona, decision authority and reporting.
+- Write the initial version of '01_Management/01_01_management.md': applicable documents, dependency order, change cycle and the client's code phrases.
+- Take in the change cycle the next unreleased work item of this file, identify the files to change, go along the folder dependencies, and end on the client's agreement with release, commit, pull, merge and push.
+- Define phases as a dependency structure only, through which the client does not step.
+- List as applicable only the input documents of a document, and list '00_agents.md' nowhere, since it is implicitly applicable to all of them.
+- Define the four-part version number, determined and maintained by the change cycle.
+- Print with the code phrases 'print for review' and 'print changes for review' the relevant input and output of the current change, in full respectively as the changes reported by git.
+- Leave the code phrases of the trigger points TP-1 to TP-3 to be supplied by the client.
