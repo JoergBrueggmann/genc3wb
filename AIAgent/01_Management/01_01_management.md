@@ -104,6 +104,10 @@ As long as phase 5 *Implementation and Test* has no output, no work item can cha
 
 A work item stays in `## Unreleased` for the whole change cycle. The release of step 9 moves it, with its entries, from `## Unreleased` to the top of `## Released`.
 
+An entry of a work item is written in the imperative, as a commit message is (section 'Commit message'): 'Consolidate the test guideline', not 'The test guideline is consolidated'.
+
+The mood does not change when the work item is released. The same entry stands in `## Unreleased` for what is to be done and in `## Released` for what was done, and the agent reads it accordingly: an entry of `## Unreleased` is an instruction to the agent, an entry of `## Released` is a record of what the agent did.
+
 #### Commit message
 
 The first line of a commit message states what the commit does and for which version. The body describes what was changed and why.
