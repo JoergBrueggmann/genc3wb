@@ -10,8 +10,29 @@ and this project adheres to a four-part version number.
 
 ## Unreleased
 
+### [0.1.0.0] - YYYY-MM-DD
+
+**_Implementation_of_the_foundation_**
+
+- Set up the Qt project of *product*: the project file, the folders 'src', 'app' and 'test', and a build that runs on Linux, MacOS (Apple silicon) and Microsoft Windows.
+- Implement the components 'genc3wb::widget' and 'genc3wb::settings' as the design declares them, together with the application that opens an empty main window.
+- Set up the test suite on the framework 'neatest' as the test guideline defines it, including the assertion macro 'TEST_ASSERT', and cover the implemented components with test groups and test cases.
+- Carry the widget 'Gc3CodeEditorWidget' over from the predecessor with its own licence notice, which differs from the notice of the other files of *product*.
+
 
 ## Released
+
+### [0.0.0.15] - 2026-09-06
+
+**_Settlement_of_the_open_items_**
+
+- Define the namespace 'genc3wb::<component>' in the coding conventions, name a component in it as a file name is named, and place a declaration carried over from the predecessor in the namespace of its component.
+- Assert no licence in the file header: state the licence of *product* once, in 'LICENSE', so that no file header can disagree with it.
+- Carry the years '2021-<current year>' in the copyright notice of every file of *product*, and set the first year to 2021 in 'LICENSE'.
+- Keep the licence notice of a file carried over from elsewhere unchanged, and write its '@file' and '@brief' beneath that notice.
+- Admit a document of the same phase in the applicable documents where it is cited, and keep a document of a later phase excluded.
+- Write no changelog entry for a change that alters no meaning, and enter a correction that does change meaning.
+- Correct the namespace examples of the design guideline and of the test guideline, which still name the product of the predecessor.
 
 ### [0.0.0.14] - 2026-09-06
 

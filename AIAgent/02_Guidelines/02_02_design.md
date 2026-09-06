@@ -40,7 +40,7 @@ Every design document must contain the following sections, in this order. A sect
 
 ## 3. Architecture overview
 
-- Every component of *product* is listed with its C++ namespace (e.g. `genc3::parser`), the header and source files that make it up, a one-sentence statement of its responsibility, and the components it depends on.
+- Every component of *product* is listed with its C++ namespace (e.g. `genc3wb::inputfile`), the header and source files that make it up, a one-sentence statement of its responsibility, and the components it depends on.
 - Component dependencies are acyclic. A C++ build does not reject a cycle, so acyclicity is a rule of this guideline rather than a property enforced by the compiler: a cycle makes a component impossible to read, test, or replace on its own.
 - Dependencies are shown as a table with columns **Component**, **Files**, **Responsibility**, **Depends on**.
 
@@ -195,7 +195,7 @@ Out of scope: ...
 
 | Component | Files | Responsibility | Depends on |
 | --- | --- | --- | --- |
-| `genc3::<name>` | `<name>.h`, `<name>.cpp` | ... | ... |
+| `genc3wb::<name>` | `<name>.h`, `<name>.cpp` | ... | ... |
 
 ## Type declarations
 
