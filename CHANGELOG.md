@@ -13,6 +13,16 @@ and this project adheres to a four-part version number.
 
 ## Released
 
+### [0.0.0.14] - 2026-09-06
+
+**_Design_of_the_user_interface_**
+
+- Replace the inherited design of *genc³* by a design of *genc³wb* that realises the requirements FR-001 to FR-049 of the specification.
+- Re-engineer the components of the design from the predecessor: the model of the settings, the controllers of the input files, of the compiler-compiler and of the output, the reusable widgets, and the windows.
+- Extend the 'Design guideline' to demand a user interface design: a widget tree per window, with the class, the parent and the requirement of each widget, and a layout sketch per window.
+- Follow the design guideline: decompose into components with acyclic dependency, declare the types and the functions in C++ without bodies, show every class in a class diagram, and state the data flow, the error handling strategy, the side-effect boundaries and the traceability to the requirements.
+- Decompose *product* into the seven components 'widget', 'settings', 'inputfile', 'output', 'runner', 'editorwindow' and 'mainwindow', in that dependency order.
+
 ### [0.0.0.13] - 2026-09-06
 
 **_Requirements_regarding_UI_**
