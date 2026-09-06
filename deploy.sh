@@ -93,22 +93,48 @@ fi
 QT_BIN_DIR="$(to_shell_path "$("${QMAKE}" -query QT_INSTALL_BINS)")"
 QT_VERSION="$("${QMAKE}" -query QT_VERSION)"
 
-# MAKE may be set in the environment; mingw32-make is preferred on Windows.
-MAKE="${MAKE:-}"
-if [ -z "${MAKE}" ]; then
-    for candidate in mingw32-make make gmake; do
-        if command -v "${candidate}" >/dev/null 2>&1; then
-            MAKE="$(command -v "${candidate}")"
-            break
+# ------------------------------------------------------------------ toolchain --
+
+# Qt on Windows is built with the toolchain it ships with, against the C runtime
+# that toolchain uses. Another compiler of the same name on the path — an MSYS2
+# UCRT64 one, for instance — links against a different C runtime, and the link
+# then fails on symbols such as '__imp___argc' in libQt6EntryPoint. The toolchain
+# is therefore taken from the Qt installation rather than from the path.
+TOOLCHAIN_BIN=""
+
+if [ "${PLATFORM}" = "windows" ]; then
+    # .../Qt/<version>/<kit>/bin -> .../Qt
+    QT_ROOT="$(dirname -- "$(dirname -- "$(dirname -- "${QT_BIN_DIR}")")")"
+
+    for candidate in "${QT_ROOT}"/Tools/mingw*/bin; do
+        if [ -x "${candidate}/g++.exe" ] && [ -x "${candidate}/mingw32-make.exe" ]; then
+            TOOLCHAIN_BIN="${candidate}"
         fi
     done
-fi
-[ -n "${MAKE}" ] || die "no make found; install mingw32-make or make"
 
-# qmake probes the compiler to learn its include paths, so the directory of the
-# toolchain is put on the path before it runs. A machine that carries Qt but not
-# its compiler on the path would otherwise fail with an unhelpful message.
-TOOLCHAIN_BIN="$(dirname -- "${MAKE}")"
+    if [ -z "${TOOLCHAIN_BIN}" ]; then
+        die "no MinGW toolchain of the Qt installation found under ${QT_ROOT}/Tools
+    Qt must be linked with the compiler it ships with. Install the MinGW
+    component of Qt, or set MAKE and put its compiler on the path yourself."
+    fi
+
+    MAKE="${TOOLCHAIN_BIN}/mingw32-make.exe"
+else
+    MAKE="${MAKE:-}"
+    if [ -z "${MAKE}" ]; then
+        for candidate in make gmake; do
+            if command -v "${candidate}" >/dev/null 2>&1; then
+                MAKE="$(command -v "${candidate}")"
+                break
+            fi
+        done
+    fi
+    [ -n "${MAKE}" ] || die "no make found; install make"
+    TOOLCHAIN_BIN="$(dirname -- "${MAKE}")"
+fi
+
+# qmake probes the compiler to learn its include paths, so the toolchain is put
+# on the path before it runs, ahead of any other compiler the machine carries.
 PATH="${TOOLCHAIN_BIN}:${QT_BIN_DIR}:${PATH}"
 export PATH
 
@@ -116,6 +142,7 @@ say "genc³wb — portable build"
 info "platform   : ${PLATFORM}"
 info "qmake      : ${QMAKE} (Qt ${QT_VERSION})"
 info "make       : ${MAKE}, ${JOBS} job(s)"
+info "compiler   : $(command -v g++ 2>/dev/null || echo 'not found')"
 info "build dir  : ${BUILD_DIR}"
 info "output dir : ${OUTPUT_DIR}"
 
@@ -128,11 +155,18 @@ if [ "${CLEAN_BUILD}" -eq 1 ]; then
 fi
 mkdir -p -- "${BUILD_DIR}"
 
-(
+# The build runs in a subshell; its failure is caught here rather than left to
+# a later step, which would otherwise report a missing executable and hide the
+# reason it is missing.
+if ! (
     cd -- "${BUILD_DIR}"
     "${QMAKE}" "${PROJECT_FILE}" CONFIG+=release
     "${MAKE}" -j"${JOBS}"
-)
+); then
+    die "the build failed — nothing was packaged
+    The last lines above name the reason. A link failing on symbols such as
+    '__imp___argc' means the compiler does not match the Qt installation."
+fi
 
 # --------------------------------------------------------------------- test --
 
@@ -161,11 +195,23 @@ say "Collecting the portable executable"
 APP_EXE="$(find "${BUILD_DIR}/app" -maxdepth 2 -type f \( -name 'genc3wb' -o -name 'genc3wb.exe' \) | head -n 1)"
 [ -n "${APP_EXE}" ] || die "application not found under ${BUILD_DIR}/app"
 
-rm -rf -- "${OUTPUT_DIR}"
+APP_NAME="$(basename -- "${APP_EXE}")"
+
+# A running application holds its own file and the directory it lies in, so the
+# removal below would fail and end the deployment with the message of the remove
+# command, leaving the bundle of an earlier run in place. That earlier bundle
+# then looks like the result of this run. The state is therefore named here.
+if [ -e "${OUTPUT_DIR}" ]; then
+    if ! rm -rf -- "${OUTPUT_DIR}" 2>/dev/null; then
+        die "the output directory cannot be replaced: ${OUTPUT_DIR}
+    Close ${APP_NAME} where it is still running, and close any window of the
+    file manager showing that directory, then run this script again.
+    The bundle of the earlier run is left untouched."
+    fi
+fi
 mkdir -p -- "${OUTPUT_DIR}"
 cp -- "${APP_EXE}" "${OUTPUT_DIR}/"
 
-APP_NAME="$(basename -- "${APP_EXE}")"
 info "application: ${APP_NAME}"
 
 case "${PLATFORM}" in
@@ -294,10 +340,18 @@ fi
 
 FILE_COUNT="$(find "${OUTPUT_DIR}" -type f | wc -l)"
 TOTAL_SIZE="$(du -sh "${OUTPUT_DIR}" | cut -f1)"
+APP_SIZE="$(du -h -- "${OUTPUT_DIR}/${APP_NAME}" | cut -f1)"
+APP_TIME="$(date -r "${OUTPUT_DIR}/${APP_NAME}" '+%Y-%m-%d %H:%M:%S')"
 
 say "Done"
 info "directory : ${OUTPUT_DIR}"
 info "files     : ${FILE_COUNT}"
 info "size      : ${TOTAL_SIZE}"
+info ""
+# The executable is named with its size and its time, so that a bundle of an
+# earlier run is recognised as such rather than started as the result of this one.
+info "executable: ${APP_NAME}"
+info "  size    : ${APP_SIZE}"
+info "  written : ${APP_TIME}"
 info ""
 info "Copy the whole directory to the target machine and start ${APP_NAME} in it."

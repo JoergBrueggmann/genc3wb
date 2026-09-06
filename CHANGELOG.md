@@ -12,12 +12,35 @@ and this project adheres to a four-part version number.
 
 ### [0.3.0.0] - YYYY-MM-DD
 
+**_Editing_of_the_input_files_**
+
+- Implement the component 'genc3wb::inputfile': drive one input group with its file name field, its file selector button, its code editor and its processing state indicator, as the design declares it.
+- Present a file selector dialog on the file selector button, with the caption and the file filter of that input group, and write the selected path into the file name field.
+- Load the named file into the code editor where it exists, leave the editor unchanged where it does not, and ask the user whether to save before discarding unsaved changes.
+- Save the content of the code editor to the named file after the configured pause in typing, driven by the watchdog.
+- Determine the processing state from whether the named file exists and whether the edited text differs from it, and show it in the indicator.
+- Announce that the file or its content changed, so that the group of the compiler-compiler can tell whether it may run.
+- Connect the two input groups of the main window to the settings, so that the paths are restored at the start and stored at the end.
+- Cover the component with a test group and its test cases, reading and writing files in a directory of the run.
+
+### [0.4.0.0] - YYYY-MM-DD
+
 **_Change_to_Rust_with_Qt_Bridging_Technology_**
 
 - Change agent, management, guidelines, requirements, design, test and code to transform everything to Rust and its ecosystem using Qt's bridging technology.
 
 
 ## Released
+
+### [0.2.0.1] - 2026-09-06
+
+**_Reporting_of_a_failed_deployment_**
+
+- Take the compiler and the make of the Qt installation, rather than the first of that name on the path, so that the product is linked with the toolchain Qt is built with. Another compiler of the same name links against a different C runtime, and the link then fails on symbols of the entry point of Qt.
+- Report the compiler that is used, next to qmake and make.
+- End the deployment where the build fails, naming the build as the reason, instead of reporting a missing test executable further on.
+- Refuse the deployment where the output directory cannot be replaced, naming the application to close, instead of failing with the message of the remove command.
+- Report at the end the name, the size and the time of the executable produced, so that a bundle left over from an earlier run is recognised as such.
 
 ### [0.2.0.0] - 2026-09-06
 
