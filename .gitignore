@@ -19,3 +19,6 @@ object_script.*
 
 # The settings product stores at run time.
 .genc3config/
+
+# The portable build produced by deploy.sh.
+dist/

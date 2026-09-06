@@ -19,6 +19,17 @@ and this project adheres to a four-part version number.
 
 ## Released
 
+### [0.1.0.1] - 2026-09-06
+
+**_Portable_build_of_the_application_**
+
+- Provide the script 'deploy.sh', which builds the application, runs the test suite, and gathers the application with every library it needs into one folder that can be copied to a machine carrying neither Qt nor a compiler.
+- Fail the deployment where the test suite fails, so that a failing build is never packaged.
+- Verify the result by reading the imports of every binary of the folder, and require each imported library to lie in the folder or to belong to the operating system.
+- Carry the software renderer and the D3D compiler along, without which the platform plugin is found but cannot be initialised.
+- Pin the plugins of the folder with a 'qt.conf', so that a Qt installation of the target machine cannot divert the application to the plugins of another build.
+- Exclude the folder of the portable build from version control.
+
 ### [0.1.0.0] - 2026-09-06
 
 **_Implementation_of_the_foundation_**
