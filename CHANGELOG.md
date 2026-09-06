@@ -10,14 +10,22 @@ and this project adheres to a four-part version number.
 
 ## Unreleased
 
-### [0.0.0.12] - YYYY-MM-DD
+
+## Released
+
+### [0.0.0.12] - 2026-09-06
 
 **_Coding_guideline_**
 
-- Consolidate the 'Coding guideline' and re-engineer 'old_src' to define the coding of the *product*.
-
-
-## Released
+- Consolidate the 'Coding guideline' and re-engineer 'old_src' to define the coding of the *product*: resolve its references to the management requirements, follow the reference convention, and replace the Haskell conventions by the C++ and Qt conventions the predecessor is written to.
+- Remove the section on the EBNF comment of a carried syntax.
+- Define the file name prefixes 'mdl', 'ctrl', 'gwb' and 'gc3' for the role a file holds, and mirror the file name in the class it declares.
+- Define the type-hint prefixes for C++ and Qt, and keep the member prefix 'm_' of the predecessor.
+- Set the line length of code to 120 characters, which the aligned declarations and the Qt type names of the predecessor need.
+- Codify the brace style of the predecessor: a definition opens its brace on its own line, a statement on the same line.
+- Derive the include guard from the file name, which 12 of the 13 headers of the predecessor no longer do.
+- Require a Doxygen comment on every declaration of a public interface, which the predecessor carries nowhere.
+- Declare an enumeration as 'enum class', as the design guideline requires, instead of the typedef of the predecessor.
 
 ### [0.0.0.11] - 2026-09-06
 
