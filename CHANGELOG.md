@@ -13,6 +13,15 @@ and this project adheres to a four-part version number.
 
 ## Released
 
+### [0.0.0.13] - 2026-09-06
+
+**_Requirements_regarding_UI_**
+
+- Re-engineer the requirements for the user interface of *product* from the predecessor, and replace the inherited specification of *genc³* by a specification of *genc³wb*.
+- Specify the main window and its four groups, the editing of the two input files with their file selection and their automatic saving, the indication of the processing state, the selection of the compiler-compiler, the presentation of its results on output pages, the detached windows, and the restoring of the paths between sessions, as FR-001 to FR-049.
+- Specify the graphical user interface, the file system and the compiler-compiler as the three interfaces of *product*, as IR-001 to IR-014.
+- Constrain *product* to C++ with the Qt framework, and to running the compiler-compiler as a separate process, as C-001 to C-004.
+
 ### [0.0.0.12] - 2026-09-06
 
 **_Coding_guideline_**
