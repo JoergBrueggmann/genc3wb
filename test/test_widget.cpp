@@ -14,6 +14,9 @@
 #include "gc3processingstatelabel.h"
 #include "gc3timerwatchdog.h"
 
+#include <QFile>
+#include <QPixmap>
+
 using namespace genc3wb::widget;
 
 /********** forward declarations **************************************************************************************/
@@ -21,6 +24,7 @@ using namespace genc3wb::widget;
 TEST_DEF( widgetMultiStateLabelSelectsState );
 TEST_DEF( widgetMultiStateLabelRejectsStateOutOfRange );
 TEST_DEF( widgetProcessingStateLabelShowsFourStates );
+TEST_DEF( widgetProcessingStateLabelImagesResolve );
 TEST_DEF( widgetProcessingStateLabelKeepsStateSet );
 TEST_DEF( widgetLineEditOmitsChangeOfProgram );
 TEST_DEF( widgetLineEditReportsChangeOfUser );
@@ -43,6 +47,7 @@ TEST_DEF( widget )
     TEST( widgetMultiStateLabelSelectsState );
     TEST( widgetMultiStateLabelRejectsStateOutOfRange );
     TEST( widgetProcessingStateLabelShowsFourStates );
+    TEST( widgetProcessingStateLabelImagesResolve );
     TEST( widgetProcessingStateLabelKeepsStateSet );
     TEST( widgetLineEditOmitsChangeOfProgram );
     TEST( widgetLineEditReportsChangeOfUser );
@@ -91,6 +96,27 @@ TEST_DEF( widgetProcessingStateLabelShowsFourStates )
     Gc3ProcessingStateLabel wdgtIndicator;
 
     TEST_ASSERT( wdgtIndicator.nStateCount() == 4 );
+    TEST_RETURN();
+}
+
+TEST_DEF( widgetProcessingStateLabelImagesResolve )
+{
+    TEST_INIT();
+
+    // FR-017: the four states are shown as four distinct images. A style sheet
+    // naming a resource that does not resolve draws nothing and reports nothing,
+    // so the resources are asserted here rather than trusted.
+    const char* const   aPaths[] = {
+        ":/icons/icons/indicatorUntouched.png",
+        ":/icons/icons/indicatorChanged.png",
+        ":/icons/icons/indicatorUnknownFileUntouched.png",
+        ":/icons/icons/indicatorUnknownFileChanged.png"
+    };
+
+    for ( const char* strPath : aPaths ) {
+        TEST_ASSERT( QFile::exists(QString::fromLatin1(strPath)) );
+        TEST_ASSERT( ! QPixmap(QString::fromLatin1(strPath)).isNull() );
+    }
     TEST_RETURN();
 }
 

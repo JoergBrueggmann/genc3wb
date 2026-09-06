@@ -7,6 +7,13 @@
 
 #include "gc3processingstatelabel.h"
 
+// Q_INIT_RESOURCE declares a symbol of the global namespace, so it is called
+// from a function of the global namespace and reached from the component below.
+static void genc3wbInitResources()
+{
+    Q_INIT_RESOURCE(resources);
+}
+
 namespace genc3wb::widget
 {
 
@@ -23,9 +30,16 @@ const QStringList l_strListStyleSheets =
 
 }
 
+void initResources()
+{
+    genc3wbInitResources();
+}
+
 Gc3ProcessingStateLabel::Gc3ProcessingStateLabel(QWidget* pwdgtParent) :
     Gc3MultiStateLabel(l_strListStyleSheets, pwdgtParent)
 {
+    // A label built without initResources() having been called would draw nothing.
+    initResources();
     setProcessingState(ProcessingState::UnknownFileTextUntouched);
 }
 

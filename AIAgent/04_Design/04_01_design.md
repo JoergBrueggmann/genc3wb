@@ -76,6 +76,23 @@ enum class InputKind
 ```
 
 ```cpp
+// realises FR-007
+/**
+ * @brief   The widgets of one input group.
+ * @details * One such group edits the compiler-compiler input file, the other the compiler input file.
+ * @par prefix grp
+ */
+struct InputGroup
+{
+    QGroupBox*                  pwdgtGroupBox;      ///< the group box holding the widgets below
+    Gc3LineEdit*                pwdgtFileName;      ///< the path of the input file
+    QToolButton*                pwdgtFileSelector;  ///< opens the file selector of this group
+    Gc3ProcessingStateLabel*    pwdgtIndicator;     ///< the processing state of this group
+    Gc3CodeEditorWidget*        pwdgtCodeEditor;    ///< the text of the input file
+};
+```
+
+```cpp
 // realises FR-027
 /**
  * @brief The kind of an output page.
@@ -123,6 +140,20 @@ protected: // attributes
 ```
 
 ## Function signatures
+
+### `genc3wb::widget`
+
+```cpp
+// realises FR-017
+/**
+ * @brief   Initialises the resources of *product*.
+ * @details * The resources are compiled into a static library, which contributes an object file only
+ *            where something references it. Without this call the style sheets of the indicator name
+ *            images that do not resolve, and the indicator draws nothing while reporting nothing.
+ *          * Calling it more than once is harmless.
+ */
+void initResources();
+```
 
 ### `genc3wb::settings`
 
@@ -311,6 +342,26 @@ virtual void on_actionInfo_triggered();
 // realises FR-006
 /** @brief Notifies the widget that lost the focus and the one that received it. */
 virtual void on_focusChanged(QWidget* pwdgtOld, QWidget* pwdgtNow);
+
+// realises FR-007
+/**
+ * @brief   Yields the widgets of one input group.
+ * @param   eKind   which input file the group edits
+ * @return  the widgets of that group
+ */
+virtual const InputGroup& groupOfKind(InputKind eKind) const;
+
+// realises FR-022
+/** @brief Yields the group box of the compiler-compiler. */
+virtual QGroupBox* pwdgtGroupBoxCC() const;
+
+// realises FR-027
+/** @brief Yields the group box of the output. */
+virtual QGroupBox* pwdgtGroupBoxCOut() const;
+
+// realises FR-002
+/** @brief Yields the help menu. */
+virtual QMenu* pwdgtMenuHelp() const;
 
 // realises FR-043
 /** @brief Presents the output group in a detached window. */
@@ -550,12 +601,12 @@ A member function that changes no observable state of its object is declared `co
 | FR-002, FR-005 | `menubar`, `menuHelp`, `statusbar` |
 | FR-003, FR-004 | `GwbInfoDialog`, `GwbMainWindow::on_actionInfo_triggered` |
 | FR-006 | `GwbMainWindow::on_focusChanged` |
-| FR-007 | `CtrlInpFileHandling::setup` |
+| FR-007 | `InputGroup`, `GwbMainWindow::groupOfKind`, `CtrlInpFileHandling::setup` |
 | FR-008, FR-009, FR-010 | `Gc3CodeEditorWidget` — line number area, current-line highlight, focus |
 | FR-011, FR-012 | `CtrlInpFileHandling::on_selectFile`, `MdlSettings::setInpFilePath` |
 | FR-013, FR-014, FR-015 | `CtrlInpFileHandling::on_fileNameChanged` |
 | FR-016 | `Gc3TimerWatchdog`, `CtrlInpFileHandling::on_autoSave` |
-| FR-017 | `Gc3ProcessingStateLabel`, `CtrlInpFileHandling::eState` |
+| FR-017 | `Gc3ProcessingStateLabel`, `initResources`, `CtrlInpFileHandling::eState` |
 | FR-018 to FR-021 | `ProcessingState` |
 | FR-022 | `CtrlCCHandling`, widget tree of `groupBoxCC` |
 | FR-023, FR-024 | `CtrlCCHandling::on_selectFile`, `MdlSettings::setCCExecFilePath` |

@@ -13,6 +13,16 @@
 namespace genc3wb::widget
 {
 
+/**
+ * @brief   Initialises the resources of *product*.
+ * @details * The resources are compiled into a static library, and a static library contributes an object
+ *            file only where something references it. Without this call the style sheets of the indicator
+ *            name images that do not resolve, and the indicator draws nothing while reporting nothing.
+ *          * Calling it more than once is harmless.
+ */
+void initResources();
+
+
 // realises FR-018, FR-019, FR-020, FR-021
 /**
  * @brief   The processing state of an input group.

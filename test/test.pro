@@ -13,9 +13,11 @@ HEADERS += neatest.h
 HEADERS += test.h
 HEADERS += test_widget.h
 HEADERS += test_settings.h
+HEADERS += test_mainwindow.h
 
 SOURCES += neatest.cpp
 SOURCES += main.cpp
 SOURCES += test.cpp
 SOURCES += test_widget.cpp
 SOURCES += test_settings.cpp
+SOURCES += test_mainwindow.cpp
