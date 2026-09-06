@@ -10,17 +10,29 @@ and this project adheres to a four-part version number.
 
 ## Unreleased
 
-### [0.1.0.0] - YYYY-MM-DD
+### [0.2.0.0] - YYYY-MM-DD
 
-**_Implementation_of_the_foundation_**
+**_Change_to_Rust_with_Qt_Bridging_Technology_**
 
-- Set up the Qt project of *product*: the project file, the folders 'src', 'app' and 'test', and a build that runs on Linux, MacOS (Apple silicon) and Microsoft Windows.
-- Implement the components 'genc3wb::widget' and 'genc3wb::settings' as the design declares them, together with the application that opens an empty main window.
-- Set up the test suite on the framework 'neatest' as the test guideline defines it, including the assertion macro 'TEST_ASSERT', and cover the implemented components with test groups and test cases.
-- Carry the widget 'Gc3CodeEditorWidget' over from the predecessor with its own licence notice, which differs from the notice of the other files of *product*.
+- Change agent, management, guidelines, requirements, design, test and code to transform everything to Rust and its ecosystem using Qt's bridging technology.
 
 
 ## Released
+
+### [0.1.0.0] - 2026-09-06
+
+**_Implementation_of_the_foundation_**
+
+- Set up the Qt project of *product* with qmake: a subdirs project over 'src', 'app' and 'test', 'src' building the components as a static library that 'app' and 'test' link, and C++23 as the standard the design assumes.
+- Implement the component 'genc3wb::widget' as the design declares it: the line edit, the plain text edit with its watermark, the code editor with its line number area, the label of several states, the indicator of the processing state with its four images, and the watchdog of the typing pause.
+- Implement the component 'genc3wb::settings' as the design declares it: the paths of the two input files, of the compiler-compiler and of the nine output files, restored at construction and stored at destruction.
+- Carry the widget 'Gc3CodeEditorWidget' over from the predecessor, keeping the licence notice of the Qt Company that holds for it.
+- Open an empty main window in the application.
+- Set up the test suite on the framework 'neatest' with the assertion macro 'TEST_ASSERT', and cover the two components with 2 test groups and 17 test cases.
+- Run the test suite in a working directory of its own, so that what one run stores leaves nothing behind for the next.
+- Declare 'setOutFilePath' and 'strCCExecFilePath' in the design, which the component 'genc3wb::settings' needs and the design did not declare.
+- Define in the test guideline the entry point that runs the root of the test suite and yields its result as the exit code.
+- Exclude the build output and the stored settings from version control.
 
 ### [0.0.0.15] - 2026-09-06
 
