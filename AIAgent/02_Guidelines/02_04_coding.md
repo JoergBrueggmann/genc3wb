@@ -83,6 +83,14 @@ A prefix names what the binding holds, not how it is passed: a `const QString&` 
 
 A type declared by *product* may define its own prefix instead of, or alongside, the standard ones above. A custom prefix is declared once, in that type's documentation comment (§5), as a `@par prefix` paragraph, using the same lowercase convention as the standard prefixes.
 
+### 2.4 Namespaces
+
+- Every declaration of *product* is placed in the namespace `genc3wb::<component>`, where `<component>` is the component the file belongs to, as the design names it ('02_02_design.md' § Architecture overview).
+- A component name inside a namespace is all lowercase without separator, as a file name is: `genc3wb::inputfile`, not `genc3wb::inputFile` and not `genc3wb::input_file`.
+- The namespace is opened in a header after the includes and closed before the `#endif` of the include guard, and in a source file after the includes.
+- A `using namespace` directive is not written at file scope of a header, so that a file including it inherits no name it did not ask for. In a source file a `using` declaration for a single name is permitted.
+- The predecessor carries no namespace. A declaration carried over from it is placed in the namespace of its component.
+
 ## 3. File structure
 
 ### 3.1 File header
@@ -93,14 +101,16 @@ Every source and header file opens with a documentation comment:
 /**
  * @file      ctrlinpfilehandling.h
  * @brief     <one-line summary of what the file provides>
- * @copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026. All rights reserved.
+ * @copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
  * @author    Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
  */
 ```
 
-The copyright notice names the author in full, followed by the range of years in which the file's work began and was last revised, in the form `(c) <author>, <first year>-<latest year>`. The latest year is brought to the current year whenever the file is revised — the notice is therefore maintained per file, deliberately, in exchange for each file stating the period its content covers.
+The copyright notice names the author in full, followed by the years `2021-<current year>`: 2021 is the year in which the work of *product* began, and the second year is brought to the current year whenever the file is revised. Every file of *product* carries the notice in this one form, so that it reads the same everywhere and can be checked mechanically.
 
-The project's 'LICENSE' file states the reservation of rights in full and carries the same notice in its own legal form — `Copyright <first year>-<latest year> <author>`, with `All rights reserved.` beneath it. That form abbreviates the author's name where the file header spells it in full; the two forms are intentionally distinct and neither is to be aligned to the other.
+The file header asserts no licence. The licence of *product* is stated once, in the file 'LICENSE', and is neither repeated nor summarised in a file header: a header naming a licence would have to be corrected in every file of *product* whenever that licence changed, and a header disagreeing with 'LICENSE' would leave it unclear which of the two holds.
+
+A file carried over from elsewhere under a licence of its own keeps that licence's notice unchanged and does not receive the copyright notice above. Its `@file` and `@brief` are written beneath the foreign notice, so that the file is documented as a file of *product* without its licence being altered. 'gc3codeeditorwidget.h' of the predecessor, carried over from an example of the Qt Company under a BSD licence, is such a file.
 
 ### 3.2 Header file
 
@@ -109,7 +119,7 @@ A header file is laid out in this order:
 1. The file header (§3.1).
 2. The include guard, whose macro is the file name in upper case with its dot replaced by an underscore: 'ctrlinpfilehandling.h' guards with `CTRLINPFILEHANDLING_H`. The `#endif` repeats the macro as a trailing comment.
 3. The includes, in three groups separated by a blank line: the headers of *product* first, then the Qt headers, then the standard library headers.
-4. The class declaration (§4).
+4. The namespace of the component (§2.4), containing the class declaration (§4).
 
 The guard is derived from the file name and follows it when the file is renamed. In the predecessor 12 of 13 headers guard with the name the file carried before its prefix was introduced — `TIMERWATCHDOG_H` in 'gc3timerwatchdog.h' — which is the defect this rule prevents.
 
@@ -123,10 +133,15 @@ The guard is derived from the file name and follows it when the file is renamed.
 
 #include <iostream>
 
+namespace genc3wb::widget
+{
+
 class Gc3TimerWatchdog : public QTimer
 {
     // ...
 };
+
+}
 
 #endif // GC3TIMERWATCHDOG_H
 ```

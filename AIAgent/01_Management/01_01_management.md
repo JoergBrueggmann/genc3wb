@@ -20,6 +20,7 @@ A document lists in a section 'Applicable documents' the documents that are its 
 
 - A document that takes it as input is not listed, because the dependency runs in the opposite direction.
 - The file '00_agents.md' is not listed in the applicable documents of any document. According to section 'Definition and Folder dependencies' it is the input of every phase, and it is therefore implicitly applicable to every document of *product*.
+- A document may also list a document of the same phase that it cites. The documents of one phase are the input of the same later phases, so citing a document beside it reverses no dependency; a document of a later phase remains excluded.
 - The references are `[1]`, `[2]`, and so on, numbered in the order of the table. A document cites an applicable document by its reference, for example [1].
 
 ### Terms
@@ -107,6 +108,10 @@ A work item stays in `## Unreleased` for the whole change cycle. The release of 
 An entry of a work item is written in the imperative, as a commit message is (section 'Commit message'): 'Consolidate the test guideline', not 'The test guideline is consolidated'.
 
 The mood does not change when the work item is released. The same entry stands in `## Unreleased` for what is to be done and in `## Released` for what was done, and the agent reads it accordingly: an entry of `## Unreleased` is an instruction to the agent, an entry of `## Released` is a record of what the agent did.
+
+No entry is written for a change that alters no meaning — a spelling correction, a formatting slip, a typographical error. Such a change is committed with the work item like every other one (section 'Version control') and is visible in the difference the commit carries; the changelog records what changed for a reader of *product*, not every character that changed.
+
+A correction that does change meaning is not typographical and is entered: a wrong file name, a wrong identifier, a wrong number, a statement that says the opposite of what was meant.
 
 #### Commit message
 
