@@ -31,11 +31,12 @@ Every design document must contain the following sections, in this order. A sect
 6. **Type declarations** — the data model of *product*, in actual C++ syntax (§4 below).
 7. **Function signatures** — the public interface of each component, as declarations only (§5 below).
 8. **Class diagram** — every class of *product* and its relationships to the others (§6 below).
-9. **Data flow** — the processing pipeline of *product*, naming the type that flows between stages.
-10. **Error handling strategy** — how expected failure is represented and propagated (§8 below).
-11. **Side-effect boundaries** — which parts of *product* are free of side effects and which perform I/O (§9 below).
-12. **Traceability** — how design elements reference the requirements they realise (§10 below).
-13. **Open questions** — permitted only while the change cycle is running; must be empty before the agent asks gate question G ('01_01_management.md' § Change cycle → Gate).
+9. **User interface design** — every window of *product*, its widgets and its layout (§7 below).
+10. **Data flow** — the processing pipeline of *product*, naming the type that flows between stages.
+11. **Error handling strategy** — how expected failure is represented and propagated (§9 below).
+12. **Side-effect boundaries** — which parts of *product* are free of side effects and which perform I/O (§10 below).
+13. **Traceability** — how design elements reference the requirements they realise (§11 below).
+14. **Open questions** — permitted only while the change cycle is running; must be empty before the agent asks gate question G ('01_01_management.md' § Change cycle → Gate).
 
 ## 3. Architecture overview
 
@@ -97,30 +98,70 @@ Every design document must contain the following sections, in this order. A sect
       Lexer --> Token : produces
   ```
 
-- The diagram does not repeat the requirement IDs of §4 and §5. Traceability stays at the declarations (§10).
+- The diagram does not repeat the requirement IDs of §4 and §5. Traceability stays at the declarations (§11).
 
-## 7. Data flow
+## 7. User interface design
+
+Where *product* presents a user interface, the design states it, so that the interface is designed rather than left to the files a designer tool generates.
+
+### 7.1 Widget tree
+
+Every window of *product* is given as a table of the widgets it contains, in the order in which they are laid out, with the columns **Widget**, **Class**, **Parent**, **Purpose** and **Realises**.
+
+- **Widget** is the name the widget carries in the design and in the code.
+- **Class** is the widget's class — a class of *product* (§4) or a class of Qt.
+- **Parent** is the widget that contains it, empty for the window itself.
+- **Realises** names the requirement IDs the widget realises, or is empty where the widget only groups others.
+
+| Widget | Class | Parent | Purpose | Realises |
+| --- | --- | --- | --- | --- |
+| `MainWindow` | `GwbMainWindow` | | the main window | FR-001 |
+| `groupBoxCInp` | `QGroupBox` | `MainWindow` | the group of the compiler input file | FR-001 |
+| `lineEditCInp` | `Gc3LineEdit` | `groupBoxCInp` | the path of the compiler input file | FR-007, FR-012 |
+
+A widget that a designer tool generates into a '.ui' file appears in this table as well: the table is the design, the '.ui' file is one rendering of it.
+
+### 7.2 Layout sketch
+
+Every window is given as a sketch of where its groups and widgets sit, in a fenced block of fixed-width characters, so that the arrangement is versioned as text alongside the widget tree:
+
+```
++-- MainWindow ------------------------------------------------+
+| [Help]                                                       |
+| +-- groupBoxCCInp -----------+ +-- groupBoxCOut -----------+ |
+| | [lineEditCCInp     ] [...] | | (<) page 1/3 (>)  [detach]| |
+| | [labelIndicatorCCInp]      | | +-----------------------+ | |
+| | +------------------------+ | | | plainTextEditStdOut   | | |
+| | | plainTextEditCCInp     | | | +-----------------------+ | |
+| | +------------------------+ | +---------------------------+ |
+| +----------------------------+                               |
++--------------------------------------------------------------+
+```
+
+The sketch states the arrangement and the nesting, not the pixel sizes: a widget's exact geometry is settled where the window is built, within the arrangement the sketch fixes.
+
+## 8. Data flow
 
 The processing pipeline of *product* is documented as an ordered sequence of stages (e.g. stdin → lexer → incremental parser state → output), naming the type that flows between each stage. Each stage references the component (§3) that implements it.
 
-## 8. Error handling strategy
+## 9. Error handling strategy
 
 - All expected failure is represented in types — `std::optional`, `std::expected`, or a dedicated result type — never by an out-of-range access, a null dereference, or an uncaught exception.
 - Where the design uses exceptions, it states which component throws, which catches, and which requirement describes that failure behaviour. An exception that crosses a component boundary is part of that component's public interface and is declared with it (§5).
 - An error type's enumerators or members are declared per §4 and traced to the requirement(s) describing the corresponding failure behaviour.
 
-## 9. Side-effect boundaries
+## 10. Side-effect boundaries
 
 - Parsing and data-transformation logic is free of side effects: it reads its input through its parameters and returns its result, touching no file, no environment variable, no global or static mutable state. Side effects are confined to the components that the design names as effectful, and to the application's entry point.
 - For every function declared per §5, the design states whether it is free of side effects or performs I/O, either by grouping functions under a "Free of side effects" / "Effectful" subheading or by an inline note.
 - A member function that changes no observable state of its object is declared `const` (§5). `const` is the marker in the declaration; the grouping or note says what the function does beyond its object.
 
-## 10. Traceability
+## 11. Traceability
 
 - Every design element (component, type, or function declaration) that realises one or more requirements states those requirement IDs directly at its declaration (§4, §5), keeping requirement → design traceability explicit at the point of use.
 - Before the agent asks gate question G ('01_01_management.md' § Change cycle → Gate), every requirement categorised as Functional or Interface ('02_01_requirements.md' §4.1) is realised by at least one design element.
 
-## 11. Template
+## 12. Template
 
 ````
 # Design
@@ -182,6 +223,20 @@ classDiagram
         +<ReturnType> <operation>()
     }
     <Name> --> <Other> : <relationship>
+```
+
+## User interface design
+
+### <Window name>
+
+| Widget | Class | Parent | Purpose | Realises |
+| --- | --- | --- | --- | --- |
+| `<name>` | `<Class>` | `<parent>` | ... | FR-... |
+
+```
++-- <Window name> ---------------+
+| ...                            |
++--------------------------------+
 ```
 
 ## Data flow
