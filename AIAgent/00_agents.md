@@ -34,7 +34,9 @@ Qt maintenance tool
 
 ### Predecessor
 
-The folder 'old_src' holds the predecessor of *product*. It is reference material for the agent only: it is not part of *product*, it is excluded from version control by '.gitignore', and the agent does not change it.
+The folders 'old_src' and 'old_tst' hold the predecessor of *product* and its tests. They are reference material for the agent only: they are not part of *product*, they are excluded from version control by '.gitignore', and the agent does not change them.
+
+Material carried over from them is not copied silently: it is described in the guideline that governs it, and created as a file of *product* by the phase that owns it.
 
 ## Agent role
 

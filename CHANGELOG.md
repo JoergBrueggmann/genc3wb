@@ -13,6 +13,14 @@ and this project adheres to a four-part version number.
 
 ## Released
 
+### [0.0.0.10] - 2026-09-06
+
+**_Test_guideline_**
+
+- The 'Test guideline' is consolidated: it defines the test suite of *product* on the macro framework 'neatest' of 'old_tst', with the three levels root, test group and test case, and the file layout of the folder 'test'.
+- The framework is extended by the assertion macro 'TEST_ASSERT', which names the expression, the file and the line where an expectation broke.
+- The folder 'old_tst' is excluded from version control and recorded in '00_agents.md' as reference material, next to 'old_src'.
+
 ### [0.0.0.9] - 2026-09-05
 
 **_Design_guideline_**
