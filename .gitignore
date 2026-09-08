@@ -1,0 +1,26 @@
+# Build output.
+build/
+release/
+debug/
+Makefile
+Makefile.*
+*.o
+*.a
+*.exe
+moc_*.cpp
+qrc_*.cpp
+ui_*.h
+.qmake.stash
+object_script.*
+
+# The settings product stores at run time.
+.genc3config/
+
+# The portable build produced by deploy.sh.
+dist/
+
+# The metadata the Finder of macOS leaves behind.
+.DS_Store
+
+# The know-how of dealing with AI agents, which is not part of product.
+CLAUDE.md
