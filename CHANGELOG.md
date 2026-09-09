@@ -10,7 +10,7 @@ and this project adheres to a four-part version number.
 
 ## Unreleased
 
-### [0.4.0.0] - YYYY-MM-DD
+### [0.5.0.0] - YYYY-MM-DD
 
 **_Editing_of_the_input_files_**
 
@@ -24,6 +24,22 @@ and this project adheres to a four-part version number.
 - Cover the component with a test group and its test cases, reading and writing files in a directory of the run.
 
 ## Released
+
+### [0.4.0.0] - 2026-09-09
+
+**_Implementation_in_Rust_with_Qt_Bridge_for_Rust_**
+
+Derived work items: definition 0.1.1.0, management 0.1.1.0
+
+- Replace the C++ implementation by the Rust package 'genc3wb' with a library and a binary target, built by cargo against Qt 6.11 through the crate `qtbridge`, as the design declares it; remove the qmake project files, the C++ sources, the neatest test suite and 'deploy.sh'.
+- Implement the core components text_increment, input_file, settings, runner and output as plain Rust, free of the bridge crate, with the types and functions the design declares.
+- Implement the bridged types Workbench, InputGroup, RunnerGroup and OutputGroup with the properties, slots and signals of the bridge interface; let a bridged type reach another one by a queued invocation, and run the compiler-compiler on a thread of its own that reports through the method invoker.
+- Implement the front end in QML: Main, InputGroup, CodeEditor, ProcessingStateIndicator, RunnerGroup, OutputGroup, OutputWindow, EditorWindow and InfoDialog, with the component trees, layouts and bindings of the design; embed the QML files and the indicator images in the executable and load 'Main.qml' from the resource system.
+- Cover the core with unit tests in the test module of each component and with integration tests under 'tests', asserting the requirements they realise; store the test output under 'reports'.
+- Rewrite 'README.md' for the Rust build: the preconditions per platform, the build with cargo, the test run, and how the application is started.
+- Add 'build.rs', which gives the application and the test executables the run path of the Qt libraries found through `qmake`, so that they load Qt without an environment variable.
+- Add the QML singleton `PathOfUrl`, which yields the path of the URL a file dialog selects, and the 'qmldir' listing the components of the front end, which a QML singleton requires.
+- Adapt '.gitignore' to the cargo build output.
 
 ### [0.3.0.3] - 2026-09-07
 

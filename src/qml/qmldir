@@ -1,0 +1,10 @@
+Main 1.0 Main.qml
+InputGroup 1.0 InputGroup.qml
+CodeEditor 1.0 CodeEditor.qml
+ProcessingStateIndicator 1.0 ProcessingStateIndicator.qml
+RunnerGroup 1.0 RunnerGroup.qml
+OutputGroup 1.0 OutputGroup.qml
+OutputWindow 1.0 OutputWindow.qml
+EditorWindow 1.0 EditorWindow.qml
+InfoDialog 1.0 InfoDialog.qml
+singleton PathOfUrl 1.0 PathOfUrl.qml

@@ -1,0 +1,20 @@
+# Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
+# Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
+
+[package]
+name = "genc3wb"
+version = "0.4.0"
+edition = "2024"
+description = "The workbench of the compiler-compiler genc³: edits its inputs, runs it, and presents its results."
+
+[lib]
+name = "genc3wb"
+path = "src/lib.rs"
+
+[[bin]]
+name = "genc3wb"
+path = "src/main.rs"
+
+[dependencies]
+qtbridge = "0.2"
+dirs = "7"

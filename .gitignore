@@ -1,23 +1,15 @@
-# Build output.
+# The build output of cargo.
+target/
+
+# The build output of the C++ predecessor, which the working tree may still hold.
 build/
-release/
-debug/
-Makefile
-Makefile.*
-*.o
-*.a
-*.exe
-moc_*.cpp
-qrc_*.cpp
-ui_*.h
-.qmake.stash
-object_script.*
-
-# The settings product stores at run time.
-.genc3config/
-
-# The portable build produced by deploy.sh.
 dist/
+
+# The settings product stores at run time, where it is started with the working directory as configuration directory.
+genc3wb/settings.txt
+
+# The output of a test run.
+reports/
 
 # The metadata the Finder of macOS leaves behind.
 .DS_Store
