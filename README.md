@@ -1,6 +1,6 @@
 # genc3wb
 
-The workbench of the compiler-compiler genc³. Its main window is the compiler
+The language workbench of the meta compiler-compiler genc³. Its main window is the compiler
 network editor: it edits a compiler network file (g3n-file), lets a build system
 such as `genc3d` evaluate it while it is edited, and shows the network it states
 as a graph. A double-click on a node of the graph opens the node window, which
