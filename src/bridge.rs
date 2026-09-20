@@ -4,6 +4,7 @@
 //! Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
 
 pub mod input_group;
+pub mod network_editor;
 pub mod output_group;
 pub mod runner_group;
 pub mod workbench;

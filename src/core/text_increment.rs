@@ -27,6 +27,19 @@ impl TextIncrement {
         self.range == 0 && self.text.is_empty()
     }
 
+    // realises FR-054, FR-070
+    /// Yields `provided` with the range of the *text increment* overwritten by its text: the
+    /// *provided text* a receiver of the *text increment* holds after it.
+    ///
+    /// * A position or a range beyond the end of `provided` is cut to its end.
+    pub fn overwriting(&self, provided: &str) -> String {
+        let mut characters = provided.chars();
+        let mut result: String = characters.by_ref().take(self.position).collect();
+        result.push_str(&self.text);
+        result.extend(characters.skip(self.range));
+        result
+    }
+
     // realises FR-060, FR-061, FR-062
     /// Yields the *text increment* as one line, as FR-060 to FR-062 define it.
     ///
@@ -319,6 +332,23 @@ mod tests {
             "Position:0001, Range: 0000, \"a\\nb\\r\\tc\\\"d\\\\e\""
         );
         assert!(!increment.rendering().contains('\n'));
+    }
+
+    #[test]
+    fn overwriting_the_provided_text_yields_the_current_text() {
+        // FR-054
+        let increment = increment_between("ab\ncd", "ab\nxd!");
+        assert_eq!(increment.overwriting("ab\ncd"), "ab\nxd!");
+    }
+
+    #[test]
+    fn overwriting_beyond_the_end_is_cut_to_the_end() {
+        let increment = TextIncrement {
+            position: 9,
+            range: 9,
+            text: "z".into(),
+        };
+        assert_eq!(increment.overwriting("ab"), "abz");
     }
 
     #[test]

@@ -3,7 +3,7 @@
 
 [package]
 name = "genc3wb"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 description = "The workbench of the compiler-compiler genc³: edits its inputs, runs it, and presents its results."
 
@@ -18,3 +18,4 @@ path = "src/main.rs"
 [dependencies]
 qtbridge = "0.2"
 dirs = "7"
+ciborium = "0.2"

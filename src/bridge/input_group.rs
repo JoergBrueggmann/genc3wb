@@ -15,6 +15,8 @@ use std::rc::Rc;
 
 /// The *maximum idle time* until another one is set, in milliseconds.
 const DEFAULT_MAX_IDLE_TIME: u32 = 1000;
+/// The *long idle time* until another one is set, in milliseconds.
+const DEFAULT_LONG_IDLE_TIME: u32 = 5000;
 
 // realises FR-007
 /// One *input group* as the *front end* binds to it.
@@ -25,14 +27,20 @@ pub struct InputGroup {
     tracker: IncrementTracker,
     /// the *maximum idle time* in milliseconds
     max_idle_time: u32,
+    /// the *long idle time* in milliseconds
+    long_idle_time: u32,
     /// the path waiting to be loaded while the user is asked whether to save
     pending_path: Option<String>,
     /// the *processing state* last pushed to the runner group
     pushed_state: ProcessingState,
     /// the settings, to store the path; wired by the *workbench object*
     settings: Option<Rc<RefCell<Settings>>>,
-    /// the invoker of the runner group, to push the *processing state* to; wired by the *workbench object*
+    /// the invoker of the runner group, to push the *processing state* to; wired by the
+    /// *workbench object* for an *input group* of the *node window*
     runner: Option<QmlMethodInvoker>,
+    /// the invoker of the network editor, which receives the path, the *text increments* and the
+    /// expiry of the *long idle time*; wired by the *workbench object* for the *network file*
+    receiver: Option<QmlMethodInvoker>,
 }
 
 impl Default for InputGroup {
@@ -41,15 +49,18 @@ impl Default for InputGroup {
             file: InputFile::new(InputKind::CompilerCompilerInput),
             tracker: IncrementTracker::default(),
             max_idle_time: DEFAULT_MAX_IDLE_TIME,
+            long_idle_time: DEFAULT_LONG_IDLE_TIME,
             pending_path: None,
             pushed_state: ProcessingState::default(),
             settings: None,
             runner: None,
+            receiver: None,
         }
     }
 }
 
-// realises FR-007, FR-011, FR-012, FR-013, FR-014, FR-015, FR-016, FR-017, FR-056, FR-058, FR-059
+// realises FR-007, FR-011, FR-012, FR-013, FR-014, FR-015, FR-016, FR-017, FR-056, FR-058, FR-059,
+// FR-069, FR-083, FR-084, FR-086, FR-087
 #[qobject(NoQmlElement)]
 impl InputGroup {
     qproperty!("caption", Read = caption, Constant);
@@ -62,6 +73,12 @@ impl InputGroup {
         Read = max_idle_time,
         Write = set_max_idle_time,
         Notify = max_idle_time_changed
+    );
+    qproperty!(
+        "longIdleTime",
+        Read = long_idle_time,
+        Write = set_long_idle_time,
+        Notify = long_idle_time_changed
     );
 
     // getters
@@ -87,6 +104,10 @@ impl InputGroup {
 
     fn max_idle_time(&self) -> u32 {
         self.max_idle_time
+    }
+
+    fn long_idle_time(&self) -> u32 {
+        self.long_idle_time
     }
 
     // setters
@@ -126,6 +147,16 @@ impl InputGroup {
         self.max_idle_time_changed();
     }
 
+    // realises FR-084
+    fn set_long_idle_time(&mut self, long_idle_time: u32) {
+        let long_idle_time = long_idle_time.max(1);
+        if long_idle_time == self.long_idle_time {
+            return;
+        }
+        self.long_idle_time = long_idle_time;
+        self.long_idle_time_changed();
+    }
+
     // signals
     #[qsignal(qml_name = "pathChanged")]
     fn path_changed(&mut self);
@@ -138,6 +169,9 @@ impl InputGroup {
 
     #[qsignal(qml_name = "maxIdleTimeChanged")]
     fn max_idle_time_changed(&mut self);
+
+    #[qsignal(qml_name = "longIdleTimeChanged")]
+    fn long_idle_time_changed(&mut self);
 
     #[qsignal(qml_name = "askToSave")]
     fn ask_to_save(&mut self, path: String);
@@ -158,10 +192,11 @@ impl InputGroup {
         }
     }
 
-    // realises FR-016, FR-056, FR-057, FR-059, IR-015, IR-016
+    // realises FR-016, FR-056, FR-057, FR-059, FR-069, IR-015, IR-016
     /// Provides the pending *text increment*, writes its rendering to standard output followed by
-    /// a line separator, emits `increment_provided`, and saves the input file where it holds
-    /// unsaved changes and a path is named.
+    /// a line separator, emits `increment_provided`, schedules `applyIncrement` of the network
+    /// editor where one is wired, and saves the input file where it holds unsaved changes and a
+    /// path is named.
     #[qslot(qml_name = "idleExpired")]
     fn idle_expired(&mut self) {
         if let Some(increment) = self.tracker.provide(self.file.text()) {
@@ -170,27 +205,58 @@ impl InputGroup {
             let _ = writeln!(stdout, "{rendering}");
             let _ = stdout.flush();
             self.increment_provided(rendering);
+            if let Some(receiver) = &self.receiver {
+                invoke_method!(
+                    receiver,
+                    "applyIncrement",
+                    i32::try_from(increment.position).unwrap_or(i32::MAX),
+                    i32::try_from(increment.range).unwrap_or(i32::MAX),
+                    increment.text
+                );
+            }
         }
         if self.file.has_unsaved_changes() && !self.file.path().is_empty() {
             let _ = self.file.save();
             self.push_state();
         }
     }
+
+    // realises FR-083
+    /// Schedules `longIdleExpired` of the network editor where one is wired: the text was not
+    /// modified for the *long idle time*.
+    #[qslot(qml_name = "longIdleExpired")]
+    fn long_idle_expired(&mut self) {
+        if let Some(receiver) = &self.receiver {
+            invoke_method!(receiver, "longIdleExpired");
+        }
+    }
+
+    // realises FR-086, FR-087
+    /// Names `path`, as the file name field does; scheduled by the network editor when a *node*
+    /// is opened.
+    #[qslot(qml_name = "namePath")]
+    fn name_path(&mut self, path: String) {
+        self.set_path(path);
+    }
 }
 
 impl InputGroup {
-    /// Wires the group: which input file it edits, the settings, and the invoker of the runner group.
+    /// Wires the group: which input file it edits, the settings, the invoker of the runner group
+    /// for an *input group* of the *node window*, and the invoker of the network editor for the
+    /// *input group* of the *network file*.
     ///
     /// * Called by the *workbench object* once, before the *front end* binds to the group.
     pub fn configure(
         &mut self,
         kind: InputKind,
         settings: Rc<RefCell<Settings>>,
-        runner: QmlMethodInvoker,
+        runner: Option<QmlMethodInvoker>,
+        receiver: Option<QmlMethodInvoker>,
     ) {
         self.file = InputFile::new(kind);
         self.settings = Some(settings);
-        self.runner = Some(runner);
+        self.runner = runner;
+        self.receiver = receiver;
     }
 
     // realises FR-048
@@ -203,6 +269,15 @@ impl InputGroup {
             .unwrap_or_default();
         let _ = self.file.load(&path);
         self.push_state();
+        self.announce_path();
+    }
+
+    // realises FR-067
+    /// Schedules `setNetworkPath` of the network editor where one is wired.
+    fn announce_path(&self) {
+        if let Some(receiver) = &self.receiver {
+            invoke_method!(receiver, "setNetworkPath", self.file.path().to_owned());
+        }
     }
 
     /// Stores `path` in the settings, loads the file, and notifies the *front end*.
@@ -219,6 +294,7 @@ impl InputGroup {
             self.text_changed();
         }
         self.push_state();
+        self.announce_path();
     }
 
     // realises FR-017, FR-026

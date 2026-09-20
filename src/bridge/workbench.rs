@@ -4,6 +4,7 @@
 //! Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
 
 use crate::bridge::input_group::InputGroup;
+use crate::bridge::network_editor::NetworkEditor;
 use crate::bridge::output_group::OutputGroup;
 use crate::bridge::runner_group::RunnerGroup;
 use crate::core::input_file::InputKind;
@@ -14,7 +15,7 @@ use qtbridge::{QObjectHolder, qobject};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-// realises FR-001, FR-048
+// realises FR-001, FR-048, FR-063, FR-090
 /// The *workbench object*.
 pub struct Workbench {
     /// the settings, shared with the groups
@@ -27,11 +28,17 @@ pub struct Workbench {
     runner: Rc<RefCell<RunnerGroup>>,
     /// the output group
     output: Rc<RefCell<OutputGroup>>,
+    /// the *input group* of the *network file*
+    network_input: Rc<RefCell<InputGroup>>,
+    /// the group for the *network graph*
+    network: Rc<RefCell<NetworkEditor>>,
 }
 
 impl Default for Workbench {
     /// Restores the settings, creates the groups, and wires them: the output group first, the
-    /// runner group with it, the two *input groups* with the runner group, each with its path.
+    /// runner group with it, the two *input groups* of the *node window* with the runner group,
+    /// the network editor with those two, and the *input group* of the *network file* with the
+    /// network editor, each with its path.
     fn default() -> Self {
         let settings = Rc::new(RefCell::new(
             Settings::load(&Settings::default_path()).unwrap_or_default(),
@@ -47,34 +54,55 @@ impl Default for Workbench {
         cc_input.borrow_mut().configure(
             InputKind::CompilerCompilerInput,
             Rc::clone(&settings),
-            runner.borrow().get_qml_method_invoker(),
+            Some(runner.borrow().get_qml_method_invoker()),
+            None,
         );
         let c_input = InputGroup::default_with_attached_qobject();
         c_input.borrow_mut().configure(
             InputKind::CompilerInput,
             Rc::clone(&settings),
-            runner.borrow().get_qml_method_invoker(),
+            Some(runner.borrow().get_qml_method_invoker()),
+            None,
+        );
+        let network = NetworkEditor::default_with_attached_qobject();
+        network.borrow_mut().configure(
+            Rc::clone(&settings),
+            cc_input.borrow().get_qml_method_invoker(),
+            c_input.borrow().get_qml_method_invoker(),
+        );
+        let network_input = InputGroup::default_with_attached_qobject();
+        network_input.borrow_mut().configure(
+            InputKind::Network,
+            Rc::clone(&settings),
+            None,
+            Some(network.borrow().get_qml_method_invoker()),
         );
         runner.borrow_mut().load_initial();
         cc_input.borrow_mut().load_initial();
         c_input.borrow_mut().load_initial();
+        network.borrow_mut().load_initial();
+        network_input.borrow_mut().load_initial();
         Workbench {
             settings,
             cc_input,
             c_input,
             runner,
             output,
+            network_input,
+            network,
         }
     }
 }
 
-// realises FR-001, FR-048
+// realises FR-001, FR-048, FR-063
 #[qobject(Singleton)]
 impl Workbench {
     qproperty!("ccInput", Read = cc_input, Constant);
     qproperty!("cInput", Read = c_input, Constant);
     qproperty!("runner", Read = runner, Constant);
     qproperty!("output", Read = output, Constant);
+    qproperty!("networkInput", Read = network_input, Constant);
+    qproperty!("network", Read = network, Constant);
 
     fn cc_input(&self) -> Rc<RefCell<InputGroup>> {
         Rc::clone(&self.cc_input)
@@ -90,6 +118,14 @@ impl Workbench {
 
     fn output(&self) -> Rc<RefCell<OutputGroup>> {
         Rc::clone(&self.output)
+    }
+
+    fn network_input(&self) -> Rc<RefCell<InputGroup>> {
+        Rc::clone(&self.network_input)
+    }
+
+    fn network(&self) -> Rc<RefCell<NetworkEditor>> {
+        Rc::clone(&self.network)
     }
 }
 

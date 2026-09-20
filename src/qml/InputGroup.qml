@@ -61,8 +61,10 @@ GroupBox {
             Layout.fillHeight: true
             text: root.group.text
             maxIdleTime: root.group.maxIdleTime
+            longIdleTime: root.group.longIdleTime
             onTextEdited: root.group.text = editor.text
             onIdleExpired: root.group.idleExpired()
+            onLongIdleExpired: root.group.longIdleExpired()
         }
     }
 

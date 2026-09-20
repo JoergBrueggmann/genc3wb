@@ -1,8 +1,11 @@
 # genc3wb
 
-The workbench of the compiler-compiler genc³: it edits the two input files of
-genc³, runs it, and presents what it wrote to standard output, to standard error
-and to its output files.
+The workbench of the compiler-compiler genc³. Its main window is the compiler
+network editor: it edits a compiler network file (g3n-file), lets a build system
+such as `genc3d` evaluate it while it is edited, and shows the network it states
+as a graph. A double-click on a node of the graph opens the node window, which
+edits the two input files of genc³, runs it, and presents what it wrote to
+standard output, to standard error and to its output files.
 
 NOTE: Portions of this project's code and documentation were developed with AI
 assistance (Claude), under the author's direction, review, and authorisation.
@@ -25,6 +28,17 @@ bridging code against Qt.
 
 - A C++ compiler and a linker that match the Qt installation: the command line
   tools of Xcode on macOS, MSVC 2022 on Windows, `g++` on Linux.
+
+- Graphviz, whose program `dot` lays out the graph of a compiler network. It
+  is searched on the path, and then in `/opt/local/bin`, `/opt/homebrew/bin`,
+  `/usr/local/bin` and `/usr/bin`. The graph is rendered as a PNG image, so
+  that the module `qtsvg` of Qt is not needed.
+
+- A build system that conforms to genc³api 0.8.0.0 and offers the description
+  mode, which is `genc3d` of genc³ 0.14.0.0 or later. It is named in the
+  compiler network editor; without it a network file is edited, but no graph is
+  shown. genc³wb reaches it through a Unix domain socket, so that in this
+  version the graph is shown on Linux and macOS alone.
 
 Qt Bridge for Rust supports Linux x86_64, Windows x64 and macOS arm64, the
 last as experimental.
@@ -134,6 +148,14 @@ with
 mkdir -p reports && cargo test 2>&1 | tee reports/test.txt
 ```
 
+Two tests run the build system and `dot` and are therefore left out of that
+run. They are run with the path of `genc3d` in the environment variable
+`GENC3D`:
+
+```bash
+GENC3D=/path/to/genc3d cargo test --test build_system -- --ignored
+```
+
 The QML files of the user interface are checked with the linter of Qt:
 
 ```bash
@@ -142,8 +164,8 @@ qmllint -I src/qml src/qml/*.qml
 
 ### Where the settings are stored
 
-genc³wb restores the paths of the input files, of the compiler-compiler and of
-the output files at its start, from `genc3wb/settings.txt` in the configuration
+genc³wb restores the paths of the network file, of the build system, of the
+input files, of the compiler-compiler and of the output files at its start, from `genc3wb/settings.txt` in the configuration
 directory of the user: `~/.config` on Linux, `~/Library/Application Support` on
 macOS, `%APPDATA%` on Windows. The file is plain text, one `key = value` line
 per path.

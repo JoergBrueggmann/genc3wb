@@ -10,7 +10,7 @@ and this project adheres to a four-part version number.
 
 ## Unreleased
 
-### [0.5.0.0] - YYYY-MM-DD
+### [0.6.0.0] - YYYY-MM-DD
 
 **_Editing_of_the_input_files_**
 
@@ -23,7 +23,30 @@ and this project adheres to a four-part version number.
 - Connect the two input groups of the main window to the settings, so that the paths are restored at the start and stored at the end.
 - Cover the component with a test group and its test cases, reading and writing files in a directory of the run.
 
+### [A.B.C.D] - YYYY-MM-DD
+
+**_Local_workbench_settings_in_YAML_**
+
+- Add a settings dialog to set *idle time* and *long idle_time* that is persisted in file './genc3wb.yaml'.
+- Persist also the last entered g3n-file to 
+- The default *idle time* is 2 seconds and the *long idle_time* 16 seconds that is used when file './genc3wb.yaml' doesn't exist.
+
 ## Released
+
+### [0.5.0.0] - 2026-09-20
+
+**_Main_window_compiler_network_editor_**
+
+Derived work items: definition 0.2.0.0
+
+- Add the *compiler network editor* as the main window: on the left an *input group* that edits a g3n-file, the *network file*, with file selection, *processing state*, saving and restored path like every *input group*; on the right the group for the *network graph*. The former main window is the *node window* 'NodeWindow.qml', which appears when a *node* is opened by a double-click on its vertex and then edits the *meta compiler DSL* and the first *input* of that *node*; a *proxy node* and a file do not open.
+- Let a *build system* that conforms to *genc³api* 0.8.0.0 evaluate the *network file*, instead of parsing it in the workbench: `genc3d` of *genc³* 0.14.0.0, named in a file name field of its own and restored with the settings, is run as `genc3d --network <file> --no-nodes --socket <path>`, so that it starts no *node*. It is restarted when the *network file* or the *build system* is named anew, and shut down by a *shutdown request* when the main window closes.
+- Use the path of the *build system* as soon as the typed text names an executable file: `NetworkEditor::tryBuildSystemPath` is called on every keystroke of its file name field, and leaving the field still names the path whatever it is, so that the indicator shows a file that is not executable.
+- Carry out a *build* on every *text increment* of the code editor, that is after the *idle time* of 1000 milliseconds: the increment is transmitted as an open request the first time and as an edit request with its *edit delta* afterwards, a version mismatch is answered by an open request, and a network query request yields the *nodes*. The *core* components `api_message` (CBOR with the crate `ciborium`, frames), `build_system` (process, Unix domain socket, conversation) and `network_builder` do this on a build thread, so that the editor accepts text while a *build* runs.
+- Derive the *network graph* from the *node descriptions* in `network_graph` and lay it out with `dot` of Graphviz: a *meta compiler-compiler* a blue box, a *proxy node* a grey box in three dimensions, a *source input* a note, a *sink output* a green note, the file of a *connection* an ellipse, from left to right. The graph is a PNG image at 192 dots per inch, presented at half its pixel size, since the Qt installation holds no module `qtsvg`; `dot` is searched on the PATH and in four usual directories.
+- After a successful *build* present its graph; after a failed one keep the graph before it, half transparent, and show the error button with the exclamation mark, which presents the *error message* of the *build system*; the graph button with the network icon leads back. After the *long idle time* of 5000 milliseconds without a change the *error message* of a failed *build* is presented without a click. The *long idle time* event carries no increment and starts no second *build*, as decided at the meeting.
+- On Microsoft Windows the *build system* is reported as not available, since it is reached through a Unix domain socket; the dependency is confined to one type alias and one function of `build_system`.
+- Cover the new *core* components with unit tests, and the process, the socket and `dot` with two ignored integration tests in 'tests/build_system.rs', which run against the `genc3d` named by the environment variable `GENC3D`; describe Graphviz, the *build system* and these tests in 'README.md'.
 
 ### [0.4.0.0] - 2026-09-09
 

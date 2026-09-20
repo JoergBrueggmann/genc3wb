@@ -17,7 +17,7 @@ Dialog {
     Label {
         id: infoText
 
-        text: "genc³wb 0.4.0.0\n"
+        text: "genc³wb 0.5.0.0\n"
               + "The workbench of the compiler-compiler genc³.\n\n"
               + "Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026\n"
               + "Licensed under the GNU General Public License, see the file LICENSE."

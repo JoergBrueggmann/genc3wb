@@ -1,4 +1,4 @@
-// A code editor with line numbers, the highlight of the current line, and the idle timer.
+// A code editor with line numbers, the highlight of the current line, and the two idle timers.
 //
 // Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 // Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -12,9 +12,11 @@ Frame {
     property alias text: textArea.text
     property alias readOnly: textArea.readOnly
     property int maxIdleTime: 1000
+    property int longIdleTime: 5000
 
     signal textEdited()
     signal idleExpired()
+    signal longIdleExpired()
 
     padding: 1
 
@@ -73,6 +75,7 @@ Frame {
             background: null
             onTextChanged: {
                 idleTimer.restart();
+                longIdleTimer.restart();
                 root.textEdited();
             }
         }
@@ -83,5 +86,12 @@ Frame {
 
         interval: root.maxIdleTime
         onTriggered: root.idleExpired()
+    }
+
+    Timer {
+        id: longIdleTimer
+
+        interval: root.longIdleTime
+        onTriggered: root.longIdleExpired()
     }
 }

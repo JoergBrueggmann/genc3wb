@@ -45,8 +45,10 @@ Window {
             Layout.fillHeight: true
             text: editorWindow.group.text
             maxIdleTime: editorWindow.group.maxIdleTime
+            longIdleTime: editorWindow.group.longIdleTime
             onTextEdited: editorWindow.group.text = editor.text
             onIdleExpired: editorWindow.group.idleExpired()
+            onLongIdleExpired: editorWindow.group.longIdleExpired()
         }
     }
 }

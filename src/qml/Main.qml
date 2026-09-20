@@ -1,4 +1,4 @@
-// The main window: menu bar, status bar, the four groups, the info dialog and the detached windows.
+// The main window, the compiler network editor: menu bar, status bar, the network file and its graph.
 //
 // Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 // Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -7,7 +7,6 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Layouts
 // The types of the module genc3wb are registered by the bridge crate at run time, which writes no type
 // description for qmllint; the import and the unqualified access to the singleton are therefore not linted.
 // qmllint disable import unqualified
@@ -16,10 +15,11 @@ import genc3wb
 ApplicationWindow {
     id: mainWindow
 
-    width: 1200
-    height: 760
+    width: 1280
+    height: 800
     visible: true
     title: "genc³wb"
+    onClosing: Workbench.network.shutDown()
 
     menuBar: MenuBar {
         id: menuBar
@@ -42,50 +42,33 @@ ApplicationWindow {
         id: statusBar
 
         padding: 4
-        text: Workbench.runner.running ? qsTr("The compiler-compiler is running.") : ""
+        text: !Workbench.network.available
+              ? qsTr("The build system is not available on this platform.")
+              : Workbench.network.building ? qsTr("The build system is building.") : ""
     }
 
-    GridLayout {
-        id: layout
+    SplitView {
+        id: splitView
 
         anchors.fill: parent
         anchors.margins: 6
-        columns: 2
+        orientation: Qt.Horizontal
 
         InputGroup {
-            id: ccInputGroup
+            id: networkInputGroup
 
-            group: Workbench.ccInput
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            onDetachRequested: editorWindowModel.append({ "kind": 0 })
+            group: Workbench.networkInput
+            detachable: false
+            SplitView.preferredWidth: 480
+            SplitView.minimumWidth: 240
         }
 
-        OutputGroup {
-            id: outputGroup
+        NetworkGraphGroup {
+            id: networkGraphGroup
 
-            output: Workbench.output
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            Layout.rowSpan: 2
-            onDetachRequested: outputWindowModel.append({ "number": outputWindowModel.count })
-        }
-
-        InputGroup {
-            id: cInputGroup
-
-            group: Workbench.cInput
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            onDetachRequested: editorWindowModel.append({ "kind": 1 })
-        }
-
-        RunnerGroup {
-            id: runnerGroup
-
-            runner: Workbench.runner
-            Layout.fillWidth: true
-            Layout.columnSpan: 2
+            network: Workbench.network
+            SplitView.fillWidth: true
+            SplitView.minimumWidth: 240
         }
     }
 
@@ -93,39 +76,21 @@ ApplicationWindow {
         id: infoDialog
     }
 
-    ListModel {
-        id: outputWindowModel
+    NodeWindow {
+        id: nodeWindow
+
+        transientParent: mainWindow
+        visible: false
     }
 
-    ListModel {
-        id: editorWindowModel
-    }
+    Connections {
+        target: Workbench.network
 
-    Instantiator {
-        id: outputWindows
-
-        model: outputWindowModel
-        delegate: OutputWindow {
-            required property int index
-
-            transientParent: mainWindow
-            visible: true
-            onClosing: outputWindowModel.remove(index)
-        }
-    }
-
-    Instantiator {
-        id: editorWindows
-
-        model: editorWindowModel
-        delegate: EditorWindow {
-            required property int index
-            required property int kind
-
-            group: kind === 0 ? Workbench.ccInput : Workbench.cInput
-            transientParent: mainWindow
-            visible: true
-            onClosing: editorWindowModel.remove(index)
+        function onNodeOpened(name) {
+            nodeWindow.nodeName = name;
+            nodeWindow.show();
+            nodeWindow.raise();
+            nodeWindow.requestActivate();
         }
     }
 }

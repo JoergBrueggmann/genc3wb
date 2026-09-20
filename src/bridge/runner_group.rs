@@ -22,7 +22,8 @@ pub struct RunnerGroup {
     executable: bool,
     /// whether the *compiler-compiler* can be run
     ready: bool,
-    /// the *processing state* of each *input group*, indexed by `InputKind::index`
+    /// the *processing state* of each *input group* of the *node window*, indexed by
+    /// `InputKind::index`
     input_states: [ProcessingState; 2],
     /// whether a run is in progress
     running: bool,
@@ -122,7 +123,12 @@ impl RunnerGroup {
         ) else {
             return;
         };
-        self.input_states[kind.index()] = state;
+        // the *network file* is no input of the *compiler-compiler* (FR-026)
+        let slot = match kind {
+            InputKind::CompilerCompilerInput | InputKind::CompilerInput => kind.index(),
+            InputKind::Network => return,
+        };
+        self.input_states[slot] = state;
         self.update_readiness();
     }
 }

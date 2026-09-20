@@ -7,22 +7,26 @@ use std::fmt;
 use std::fs;
 use std::path::Path;
 
-// realises FR-001
-/// Which of the two input files an *input group* edits.
+// realises FR-001, FR-063
+/// Which of the three input files an *input group* edits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputKind {
     /// the file that configures syntax and generators
     CompilerCompilerInput,
     /// the file that is parsed according to that configuration
     CompilerInput,
+    /// the *network file* of the *compiler network editor*
+    Network,
 }
 
 impl InputKind {
-    /// Yields the index of the kind: 0 for the *compiler-compiler input file*, 1 for the other.
+    /// Yields the index of the kind: 0 for the *compiler-compiler input file*, 1 for the
+    /// *compiler input file*, 2 for the *network file*.
     pub fn index(self) -> usize {
         match self {
             InputKind::CompilerCompilerInput => 0,
             InputKind::CompilerInput => 1,
+            InputKind::Network => 2,
         }
     }
 
@@ -31,6 +35,7 @@ impl InputKind {
         match index {
             0 => Some(InputKind::CompilerCompilerInput),
             1 => Some(InputKind::CompilerInput),
+            2 => Some(InputKind::Network),
             _ => None,
         }
     }
@@ -41,13 +46,17 @@ impl InputKind {
         match self {
             InputKind::CompilerCompilerInput => "Compiler-compiler input file",
             InputKind::CompilerInput => "Compiler input file",
+            InputKind::Network => "Compiler network file",
         }
     }
 
     // realises FR-011
     /// Yields the file filter of the file selector, as a file dialog names it.
     pub fn file_filter(self) -> &'static str {
-        "All files (*)"
+        match self {
+            InputKind::CompilerCompilerInput | InputKind::CompilerInput => "All files (*)",
+            InputKind::Network => "Compiler network files (*.g3n)",
+        }
     }
 }
 
@@ -389,9 +398,13 @@ mod tests {
             assert_eq!(ProcessingState::of_index(state.index()), Some(state));
         }
         assert_eq!(ProcessingState::of_index(4), None);
-        for kind in [InputKind::CompilerCompilerInput, InputKind::CompilerInput] {
+        for kind in [
+            InputKind::CompilerCompilerInput,
+            InputKind::CompilerInput,
+            InputKind::Network,
+        ] {
             assert_eq!(InputKind::of_index(kind.index()), Some(kind));
         }
-        assert_eq!(InputKind::of_index(2), None);
+        assert_eq!(InputKind::of_index(3), None);
     }
 }

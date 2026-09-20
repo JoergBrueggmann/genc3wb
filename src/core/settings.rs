@@ -20,6 +20,10 @@ pub const MAX_FILE_NUMBER: u8 = 9;
 const KEY_CC_INPUT_PATH: &str = "cc_input_path";
 /// The key of the path of the *compiler input file* in the settings file.
 const KEY_C_INPUT_PATH: &str = "c_input_path";
+/// The key of the path of the *network file* in the settings file.
+const KEY_NETWORK_PATH: &str = "network_path";
+/// The key of the path of the *build system* in the settings file.
+const KEY_BUILD_SYSTEM_PATH: &str = "build_system_path";
 /// The key of the path of the *compiler-compiler* in the settings file.
 const KEY_COMPILER_COMPILER_PATH: &str = "compiler_compiler_path";
 /// The prefix of the key of the path of an *output file* in the settings file, followed by its number.
@@ -56,14 +60,16 @@ impl fmt::Display for SettingsError {
 
 impl std::error::Error for SettingsError {}
 
-// realises FR-031, FR-048, FR-049
+// realises FR-031, FR-048, FR-049, FR-090, FR-091
 /// The paths *product* restores between sessions.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Settings {
     /// the path of each input file, indexed by `InputKind::index`
-    input_paths: [String; 2],
+    input_paths: [String; 3],
     /// the path of the *compiler-compiler*
     compiler_compiler_path: String,
+    /// the path of the *build system*
+    build_system_path: String,
     /// the path of each enabled *output file*, by its number
     output_paths: BTreeMap<u8, String>,
 }
@@ -107,6 +113,8 @@ impl Settings {
                     settings.set_input_path(InputKind::CompilerCompilerInput, value)
                 }
                 KEY_C_INPUT_PATH => settings.set_input_path(InputKind::CompilerInput, value),
+                KEY_NETWORK_PATH => settings.set_input_path(InputKind::Network, value),
+                KEY_BUILD_SYSTEM_PATH => settings.set_build_system_path(value),
                 KEY_COMPILER_COMPILER_PATH => settings.set_compiler_compiler_path(value),
                 _ => {
                     if let Some(number) = key.strip_prefix(KEY_OUTPUT_PATH_PREFIX) {
@@ -138,6 +146,11 @@ impl Settings {
         let mut content = String::new();
         content.push_str(&format!("{KEY_CC_INPUT_PATH} = {}\n", self.input_paths[0]));
         content.push_str(&format!("{KEY_C_INPUT_PATH} = {}\n", self.input_paths[1]));
+        content.push_str(&format!("{KEY_NETWORK_PATH} = {}\n", self.input_paths[2]));
+        content.push_str(&format!(
+            "{KEY_BUILD_SYSTEM_PATH} = {}\n",
+            self.build_system_path
+        ));
         content.push_str(&format!(
             "{KEY_COMPILER_COMPILER_PATH} = {}\n",
             self.compiler_compiler_path
@@ -168,6 +181,17 @@ impl Settings {
     /// Sets the path of the *compiler-compiler*.
     pub fn set_compiler_compiler_path(&mut self, path: &str) {
         self.compiler_compiler_path = path.to_owned();
+    }
+
+    /// Yields the path of the *build system*, empty where none is stored.
+    pub fn build_system_path(&self) -> &str {
+        &self.build_system_path
+    }
+
+    // realises FR-066, FR-091
+    /// Sets the path of the *build system*.
+    pub fn set_build_system_path(&mut self, path: &str) {
+        self.build_system_path = path.to_owned();
     }
 
     // realises FR-031, FR-038
@@ -287,11 +311,13 @@ mod tests {
 
     #[test]
     fn settings_survive_save_and_load() {
-        // FR-048, FR-049, IR-011, IR-012
+        // FR-048, FR-049, FR-090, FR-091, IR-011, IR-012
         let file = case_file("roundtrip");
         let mut settings = Settings::default();
         settings.set_input_path(InputKind::CompilerCompilerInput, "/tmp/a b.cc");
         settings.set_input_path(InputKind::CompilerInput, "/tmp/b.c");
+        settings.set_input_path(InputKind::Network, "/tmp/n.g3n");
+        settings.set_build_system_path("/opt/genc3d");
         settings.set_compiler_compiler_path("/opt/genc3");
         settings
             .set_output_path(2, "/tmp/out2.txt")
