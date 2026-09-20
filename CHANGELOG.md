@@ -31,6 +31,16 @@ and this project adheres to a four-part version number.
 - Persist also the last entered g3n-file to 
 - The default *idle time* is 2 seconds and the *long idle_time* 16 seconds that is used when file './genc3wb.yaml' doesn't exist.
 
+### [A.B.C.D] - YYYY-MM-DD
+
+**_Distribution_with_the_build_system_**
+
+- Add the script 'make-dist.sh', which assembles the distribution folder 'dist': the executable of the workbench under 'bin', the licence, the description and the work items of the package, and, under 'genc3', a copy of the distribution of genc³ with its build system `genc3d`, so that what is distributed holds the workbench and the build system it drives.
+- Let the script first run 'make-dist.sh' of genc³, so that the copy is the distribution that was just built and verified there, and then build the workbench with `cargo build --release`.
+- Take the project folder of genc³ from the first argument of the script, or from the environment variable `GENC3` where no argument is given, so that no folder of another repository is named in the code repository.
+- Check what was assembled where it was assembled: the executable of the workbench is executable, and the copied `genc3d` runs; the script reports the failure and exits with a code other than 0 where it is not so.
+- Describe the script and the folder it assembles in 'README.md', under 'Making a distribution'.
+
 ## Released
 
 ### [0.5.0.0] - 2026-09-20

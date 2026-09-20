@@ -162,6 +162,27 @@ The QML files of the user interface are checked with the linter of Qt:
 qmllint -I src/qml src/qml/*.qml
 ```
 
+### Making a distribution
+
+The script 'make-dist.sh' assembles the folder `dist`: the executable of the
+workbench under `bin`, this description, the licence and the work items of the
+package, and, under `genc3`, a copy of the distribution of genc³ with its build
+system `genc3d`. What is distributed therefore holds the workbench and the
+build system it drives.
+
+The script first runs 'make-dist.sh' of genc³, so that the copy is the
+distribution that was just built and verified there, and then builds the
+workbench with `cargo build --release`. The project folder of genc³ is given as
+the first argument, or in the environment variable `GENC3`:
+
+```bash
+GENC3=/path/to/genc3 ./make-dist.sh
+```
+
+The exit code is 0 where the folder was assembled, the executable of the
+workbench is executable and the copied `genc3d` runs. In the distribution the
+build system is named `genc3/bin/genc3d`, beside the workbench.
+
 ### Where the settings are stored
 
 genc³wb restores the paths of the network file, of the build system, of the
