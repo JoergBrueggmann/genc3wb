@@ -12,6 +12,27 @@ and this project adheres to a four-part version number.
 
 ### [A.B.C.D] - YYYY-MM-DD
 
+**_Diagnostics_with_read_positions_**
+
+- Let a *diagnostic* of a document that is not parsed carry the *read position* range of the fault, as the *error tree* of the parse yields it, instead of the empty range at line 1 and column 1, for the *meta compiler DSL*, for an *input* and for the g3n document alike, so that a client marks the faulty place.
+
+### [A.B.C.D] - YYYY-MM-DD
+
+**_Node_window_from_the_network_file_**
+
+- Rebuild the *node window* so that it shows the *node* opened in the *compiler network editor* as the g3n-file states it: one code editor for its *meta compiler DSL* and one per *input*, each with its file name, its *processing state* and its saving as an *input group* has them, and one read-only page per *output*.
+- Name nothing in the *node window* by hand: take the paths of the *meta compiler DSL*, of the *inputs* and of the *outputs* from the *node description*, resolved against the directory of the g3n-file, and show the name of the *node* in the title.
+- Let the *build system* serve the *node* instead of a *compiler-compiler* that is run as a process: start the *build system* named in the *compiler network editor* for that one *node*, with the options `--socket`, `--meta-dsl`, `--input` and `--output` of *genc³api*, in the directory of the g3n-file.
+- Transmit every *text increment* of an editor of the *node window* to that *node*, as an open request the first time and as an edit request afterwards, and show the *diagnostics* of the response at the editor whose document they concern.
+- Present the *outputs*: send a *store request* after an edit the *node* accepted without a *diagnostic* of severity error, and show the *output* files the *node* wrote.
+- Shut the *node* down by a *shutdown request* when another *node* is opened, when the *node window* closes and when the workbench terminates.
+- Remove the group of the *compiler-compiler*, the file selector and the enabling check box of an *output* page, and the standard output and standard error pages; withdraw the requirements that specify them.
+- Keep the *detached windows* of an editor and of the *outputs*.
+
+## Released
+
+### [0.6.0.1] - 2026-09-20
+
 **_Distribution_with_the_build_system_**
 
 - Add the script 'make-dist.sh', which assembles the distribution folder 'dist': the executable of the workbench under 'bin', the licence, the description and the work items of the package, and, under 'genc3', a copy of the distribution of genc³ with its build system `genc3d`, so that what is distributed holds the workbench and the build system it drives.
@@ -19,8 +40,6 @@ and this project adheres to a four-part version number.
 - Take the project folder of genc³ from the first argument of the script, or from the environment variable `GENC3` where no argument is given, so that no folder of another repository is named in the code repository.
 - Check what was assembled where it was assembled: the executable of the workbench is executable, and the copied `genc3d` runs; the script reports the failure and exits with a code other than 0 where it is not so.
 - Describe the script and the folder it assembles in 'README.md', under 'Making a distribution'.
-
-## Released
 
 ### [0.6.0.0] - 2026-09-20
 
