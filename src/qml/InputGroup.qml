@@ -9,6 +9,10 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Dialogs
 import QtQuick.Layouts
+// The types of the module genc3wb are registered by the bridge crate at run time, which writes no type
+// description for qmllint; the import and the unqualified access to the singleton are therefore not linted.
+// qmllint disable import unqualified
+import genc3wb
 
 GroupBox {
     id: root
@@ -60,8 +64,8 @@ GroupBox {
             Layout.fillWidth: true
             Layout.fillHeight: true
             text: root.group.text
-            maxIdleTime: root.group.maxIdleTime
-            longIdleTime: root.group.longIdleTime
+            idleTime: Workbench.idleTime * 1000
+            longIdleTime: Workbench.longIdleTime * 1000
             onTextEdited: root.group.text = editor.text
             onIdleExpired: root.group.idleExpired()
             onLongIdleExpired: root.group.longIdleExpired()

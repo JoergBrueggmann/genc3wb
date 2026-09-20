@@ -20,6 +20,7 @@ fn main() {
     include_bytes_qml!("qml/OutputWindow.qml", "genc3wb");
     include_bytes_qml!("qml/EditorWindow.qml", "genc3wb");
     include_bytes_qml!("qml/InfoDialog.qml", "genc3wb");
+    include_bytes_qml!("qml/SettingsDialog.qml", "genc3wb");
     include_bytes_qml!("qml/PathOfUrl.qml", "genc3wb");
     include_bytes_qml!("qml/icons/indicatorUntouched.png", "genc3wb");
     include_bytes_qml!("qml/icons/indicatorChanged.png", "genc3wb");

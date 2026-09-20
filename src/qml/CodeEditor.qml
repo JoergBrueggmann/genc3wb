@@ -11,8 +11,8 @@ Frame {
 
     property alias text: textArea.text
     property alias readOnly: textArea.readOnly
-    property int maxIdleTime: 1000
-    property int longIdleTime: 5000
+    property int idleTime: 2000
+    property int longIdleTime: 16000
 
     signal textEdited()
     signal idleExpired()
@@ -84,7 +84,7 @@ Frame {
     Timer {
         id: idleTimer
 
-        interval: root.maxIdleTime
+        interval: root.idleTime
         onTriggered: root.idleExpired()
     }
 

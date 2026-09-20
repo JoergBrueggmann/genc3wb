@@ -25,6 +25,19 @@ ApplicationWindow {
         id: menuBar
 
         Menu {
+            id: settingsMenu
+
+            title: qsTr("&Settings")
+
+            Action {
+                id: settingsAction
+
+                text: qsTr("&Settings...")
+                onTriggered: settingsDialog.open()
+            }
+        }
+
+        Menu {
             id: helpMenu
 
             title: qsTr("&Help")
@@ -74,6 +87,10 @@ ApplicationWindow {
 
     InfoDialog {
         id: infoDialog
+    }
+
+    SettingsDialog {
+        id: settingsDialog
     }
 
     NodeWindow {

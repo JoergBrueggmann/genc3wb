@@ -252,6 +252,10 @@ impl BuildSession {
     /// Starts the *build system* `executable` on `network_path` in the *description mode*, in the
     /// directory of the *network file*, and connects to `socket_path` once it listens.
     ///
+    /// * A relative `executable` is resolved against the working directory of *product* before
+    ///   the process is started, since the process is started in the directory of the *network
+    ///   file* and the operating system would otherwise look for it there.
+    ///
     /// # Errors
     /// Returns [`BuildError::Unsupported`] where the platform offers no Unix domain socket,
     /// [`BuildError::NotExecutable`] where `executable` is not executable,
@@ -278,7 +282,7 @@ impl BuildSession {
             _ => PathBuf::from("."),
         };
         let _ = std::fs::remove_file(socket_path);
-        let mut child = Command::new(executable)
+        let mut child = Command::new(absolute_program(executable))
             .current_dir(directory)
             .arg("--network")
             .arg(&document)
@@ -341,6 +345,23 @@ impl Drop for BuildSession {
         }
         let _ = std::fs::remove_file(&self.socket_path);
     }
+}
+
+// realises FR-067, FR-094, IR-017
+/// Yields the path by which the process of the *build system* is started: `executable` made
+/// absolute against the working directory of *product*.
+///
+/// * The *build system* is started in the directory of the *network file*, so a relative path
+///   would otherwise be resolved against that directory instead of against the one in which the
+///   user named it, which is the working directory of *product* ([`crate::core::runner::is_executable`]).
+/// * Where the path cannot be made absolute, it is yielded as it stands, so that the failure is
+///   the one of the process and not one of this function.
+fn absolute_program(executable: &str) -> PathBuf {
+    let path = Path::new(executable);
+    if path.is_absolute() {
+        return path.to_path_buf();
+    }
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 /// Yields the error of a *response* whose kind does not answer `request`.
@@ -626,6 +647,29 @@ mod tests {
         assert_eq!(
             (result, conversation.stream.requests()),
             (Ok(()), vec![encode_request(1, &Request::Shutdown)])
+        );
+    }
+
+    #[test]
+    fn a_relative_build_system_is_started_by_an_absolute_path() {
+        // FR-067, FR-094, IR-017: the process runs in the directory of the network file
+        let relative = absolute_program("./Cargo.toml");
+        let absolute = absolute_program("/bin/sh");
+        assert_eq!(
+            (
+                relative.is_absolute(),
+                relative.ends_with("Cargo.toml"),
+                absolute
+            ),
+            (true, true, PathBuf::from("/bin/sh"))
+        );
+    }
+
+    #[test]
+    fn a_relative_build_system_that_does_not_exist_stays_as_it_is() {
+        assert_eq!(
+            absolute_program("./nowhere/genc3d"),
+            PathBuf::from("./nowhere/genc3d")
         );
     }
 

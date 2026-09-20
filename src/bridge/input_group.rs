@@ -13,11 +13,6 @@ use std::cell::RefCell;
 use std::io::Write;
 use std::rc::Rc;
 
-/// The *maximum idle time* until another one is set, in milliseconds.
-const DEFAULT_MAX_IDLE_TIME: u32 = 1000;
-/// The *long idle time* until another one is set, in milliseconds.
-const DEFAULT_LONG_IDLE_TIME: u32 = 5000;
-
 // realises FR-007
 /// One *input group* as the *front end* binds to it.
 pub struct InputGroup {
@@ -25,10 +20,6 @@ pub struct InputGroup {
     file: InputFile,
     /// the *provided text* of the code editor of this group
     tracker: IncrementTracker,
-    /// the *maximum idle time* in milliseconds
-    max_idle_time: u32,
-    /// the *long idle time* in milliseconds
-    long_idle_time: u32,
     /// the path waiting to be loaded while the user is asked whether to save
     pending_path: Option<String>,
     /// the *processing state* last pushed to the runner group
@@ -48,8 +39,6 @@ impl Default for InputGroup {
         InputGroup {
             file: InputFile::new(InputKind::CompilerCompilerInput),
             tracker: IncrementTracker::default(),
-            max_idle_time: DEFAULT_MAX_IDLE_TIME,
-            long_idle_time: DEFAULT_LONG_IDLE_TIME,
             pending_path: None,
             pushed_state: ProcessingState::default(),
             settings: None,
@@ -59,8 +48,8 @@ impl Default for InputGroup {
     }
 }
 
-// realises FR-007, FR-011, FR-012, FR-013, FR-014, FR-015, FR-016, FR-017, FR-056, FR-058, FR-059,
-// FR-069, FR-083, FR-084, FR-086, FR-087
+// realises FR-007, FR-011, FR-012, FR-013, FR-014, FR-015, FR-016, FR-017, FR-056, FR-059, FR-069,
+// FR-083, FR-086, FR-087
 #[qobject(NoQmlElement)]
 impl InputGroup {
     qproperty!("caption", Read = caption, Constant);
@@ -68,18 +57,6 @@ impl InputGroup {
     qproperty!("path", Read = path, Write = set_path, Notify = path_changed);
     qproperty!("text", Read = text, Write = set_text, Notify = text_changed);
     qproperty!("state", Read = state, Notify = state_changed);
-    qproperty!(
-        "maxIdleTime",
-        Read = max_idle_time,
-        Write = set_max_idle_time,
-        Notify = max_idle_time_changed
-    );
-    qproperty!(
-        "longIdleTime",
-        Read = long_idle_time,
-        Write = set_long_idle_time,
-        Notify = long_idle_time_changed
-    );
 
     // getters
     fn caption(&self) -> String {
@@ -102,16 +79,8 @@ impl InputGroup {
         self.file.state().index() as i32
     }
 
-    fn max_idle_time(&self) -> u32 {
-        self.max_idle_time
-    }
-
-    fn long_idle_time(&self) -> u32 {
-        self.long_idle_time
-    }
-
     // setters
-    // realises FR-012, FR-013, FR-014, FR-015, FR-049
+    // realises FR-012, FR-013, FR-014, FR-015
     // Names the path: where the editor holds unsaved changes, keeps the path pending and emits
     // `ask_to_save`; otherwise stores the path and loads the file.
     fn set_path(&mut self, path: String) {
@@ -137,26 +106,6 @@ impl InputGroup {
         self.push_state();
     }
 
-    // realises FR-058
-    fn set_max_idle_time(&mut self, max_idle_time: u32) {
-        let max_idle_time = max_idle_time.max(1);
-        if max_idle_time == self.max_idle_time {
-            return;
-        }
-        self.max_idle_time = max_idle_time;
-        self.max_idle_time_changed();
-    }
-
-    // realises FR-084
-    fn set_long_idle_time(&mut self, long_idle_time: u32) {
-        let long_idle_time = long_idle_time.max(1);
-        if long_idle_time == self.long_idle_time {
-            return;
-        }
-        self.long_idle_time = long_idle_time;
-        self.long_idle_time_changed();
-    }
-
     // signals
     #[qsignal(qml_name = "pathChanged")]
     fn path_changed(&mut self);
@@ -166,12 +115,6 @@ impl InputGroup {
 
     #[qsignal(qml_name = "stateChanged")]
     fn state_changed(&mut self);
-
-    #[qsignal(qml_name = "maxIdleTimeChanged")]
-    fn max_idle_time_changed(&mut self);
-
-    #[qsignal(qml_name = "longIdleTimeChanged")]
-    fn long_idle_time_changed(&mut self);
 
     #[qsignal(qml_name = "askToSave")]
     fn ask_to_save(&mut self, path: String);
@@ -259,7 +202,7 @@ impl InputGroup {
         self.receiver = receiver;
     }
 
-    // realises FR-048
+    // realises FR-090
     /// Loads the file at the path the settings hold for this group, and pushes the state.
     pub fn load_initial(&mut self) {
         let path = self

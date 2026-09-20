@@ -1,9 +1,11 @@
-//! The paths of the two input files, of the *compiler-compiler* and of the *output files*, restored and stored.
+//! The *settings file*: the two times and the paths of *product*, restored and stored in YAML.
 //!
 //! Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 //! Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
 
 use crate::core::input_file::InputKind;
+
+use serde::{Deserialize, Serialize};
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -16,26 +18,26 @@ pub const MIN_FILE_NUMBER: u8 = 1;
 /// The number of the last *output file*.
 pub const MAX_FILE_NUMBER: u8 = 9;
 
-/// The key of the path of the *compiler-compiler input file* in the settings file.
-const KEY_CC_INPUT_PATH: &str = "cc_input_path";
-/// The key of the path of the *compiler input file* in the settings file.
-const KEY_C_INPUT_PATH: &str = "c_input_path";
-/// The key of the path of the *network file* in the settings file.
-const KEY_NETWORK_PATH: &str = "network_path";
-/// The key of the path of the *build system* in the settings file.
-const KEY_BUILD_SYSTEM_PATH: &str = "build_system_path";
-/// The key of the path of the *compiler-compiler* in the settings file.
-const KEY_COMPILER_COMPILER_PATH: &str = "compiler_compiler_path";
-/// The prefix of the key of the path of an *output file* in the settings file, followed by its number.
-const KEY_OUTPUT_PATH_PREFIX: &str = "output_path_";
+// realises IR-011, IR-012
+/// The name of the *settings file* in the working directory of *product*.
+pub const SETTINGS_FILE_NAME: &str = "genc3wb.yaml";
+
+// realises FR-094
+/// The *idle time* in seconds where the *settings file* does not hold one.
+pub const DEFAULT_IDLE_TIME: u32 = 2;
+/// The *long idle time* in seconds where the *settings file* does not hold one.
+pub const DEFAULT_LONG_IDLE_TIME: u32 = 16;
+/// The path of the *build system* where the *settings file* does not hold one: the copy that the
+/// distribution carries beside the workbench.
+pub const DEFAULT_BUILD_SYSTEM_PATH: &str = "./genc3/bin/genc3d";
 
 // realises IR-011, IR-012
 /// Why the settings could not be restored or stored.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SettingsError {
-    /// the settings file could not be read or written; carries the reason of the operating system
+    /// the *settings file* could not be read or written; carries the reason of the operating system
     Io(String),
-    /// a line of the settings file is not `key = value`; carries the line
+    /// the *settings file* is no YAML mapping of the keys of [`Settings`]; carries the reason
     Malformed(String),
     /// an *output file* number outside `MIN_FILE_NUMBER..=MAX_FILE_NUMBER`
     FileNumberOutOfRange(u8),
@@ -45,8 +47,8 @@ impl fmt::Display for SettingsError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SettingsError::Io(reason) => write!(formatter, "settings file: {reason}"),
-            SettingsError::Malformed(line) => {
-                write!(formatter, "settings line is not key = value: {line}")
+            SettingsError::Malformed(reason) => {
+                write!(formatter, "settings file is not read: {reason}")
             }
             SettingsError::FileNumberOutOfRange(number) => {
                 write!(
@@ -60,10 +62,16 @@ impl fmt::Display for SettingsError {
 
 impl std::error::Error for SettingsError {}
 
-// realises FR-031, FR-048, FR-049, FR-090, FR-091
-/// The paths *product* restores between sessions.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+// realises FR-031, FR-090, FR-091, FR-093, FR-094
+/// The *idle time*, the *long idle time* and the paths *product* restores between sessions.
+///
+/// * The two times are held in seconds, as the *settings file* and the settings dialog carry them.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
+    /// the *idle time* in seconds
+    idle_time: u32,
+    /// the *long idle time* in seconds
+    long_idle_time: u32,
     /// the path of each input file, indexed by `InputKind::index`
     input_paths: [String; 3],
     /// the path of the *compiler-compiler*
@@ -74,91 +82,138 @@ pub struct Settings {
     output_paths: BTreeMap<u8, String>,
 }
 
+impl Default for Settings {
+    // realises FR-094
+    /// The settings where no *settings file* exists: the two default times, the *build system* of
+    /// the distribution, and no other path.
+    fn default() -> Self {
+        Settings {
+            idle_time: DEFAULT_IDLE_TIME,
+            long_idle_time: DEFAULT_LONG_IDLE_TIME,
+            input_paths: Default::default(),
+            compiler_compiler_path: String::new(),
+            build_system_path: DEFAULT_BUILD_SYSTEM_PATH.to_owned(),
+            output_paths: BTreeMap::new(),
+        }
+    }
+}
+
+// realises FR-093, C-007
+/// The *settings file* as YAML holds it: one key per value, each key absent where its default
+/// holds.
+///
+/// * No path of the *node window* is among the keys: neither those of its two input files, which
+///   opening a *node* names from the *node description* (FR-086, FR-087), nor those of the
+///   *compiler-compiler* and of the *output files*, since a *node* is served by the
+///   *build system* and its outputs stand in the *network file*. They are held for the session
+///   alone.
+#[derive(Debug, Serialize, Deserialize)]
+struct Stored {
+    #[serde(default = "default_idle_time")]
+    idle_time: u32,
+    #[serde(default = "default_long_idle_time")]
+    long_idle_time: u32,
+    #[serde(default)]
+    network_path: String,
+    #[serde(default = "default_build_system_path")]
+    build_system_path: String,
+}
+
+/// The default of the key `idle_time`, for a *settings file* that lacks it.
+fn default_idle_time() -> u32 {
+    DEFAULT_IDLE_TIME
+}
+
+/// The default of the key `long_idle_time`, for a *settings file* that lacks it.
+fn default_long_idle_time() -> u32 {
+    DEFAULT_LONG_IDLE_TIME
+}
+
+/// The default of the key `build_system_path`, for a *settings file* that lacks it.
+fn default_build_system_path() -> String {
+    DEFAULT_BUILD_SYSTEM_PATH.to_owned()
+}
+
 impl Settings {
-    /// Yields the path of the settings file: 'genc3wb/settings.txt' in the configuration directory
-    /// of the user, or in the working directory where the user has none.
+    // realises IR-011, IR-012
+    /// Yields the path of the *settings file*: 'genc3wb.yaml' in the working directory.
     pub fn default_path() -> PathBuf {
-        dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("genc3wb")
-            .join("settings.txt")
+        PathBuf::from(SETTINGS_FILE_NAME)
     }
 
-    // realises FR-048, IR-011
-    /// Restores the paths stored at the last termination.
+    // realises FR-090, FR-094, FR-095, IR-011
+    /// Restores the settings stored at the last termination.
     ///
-    /// * Where the settings file does not exist, the default settings are yielded.
-    /// * A key the settings do not know is ignored, so that a later version's file is read.
+    /// * Where the *settings file* does not exist, the default settings are yielded (FR-094).
+    /// * No path of the *node window* is restored; those are held for the session alone.
+    /// * A key the settings do not know is ignored, and a key that is absent takes its default,
+    ///   so that a file of another version is read.
     ///
     /// # Errors
     /// Returns [`SettingsError::Io`] where the file exists but cannot be read, and
-    /// [`SettingsError::Malformed`] where a line is not `key = value`.
+    /// [`SettingsError::Malformed`] where it is no YAML mapping of these keys.
     pub fn load(path: &Path) -> Result<Settings, SettingsError> {
         if !path.is_file() {
             return Ok(Settings::default());
         }
         let content =
             fs::read_to_string(path).map_err(|error| SettingsError::Io(error.to_string()))?;
-        let mut settings = Settings::default();
-        for line in content.lines() {
-            if line.trim().is_empty() {
-                continue;
-            }
-            let (key, value) = line
-                .split_once('=')
-                .ok_or_else(|| SettingsError::Malformed(line.to_owned()))?;
-            let (key, value) = (key.trim(), value.trim());
-            match key {
-                KEY_CC_INPUT_PATH => {
-                    settings.set_input_path(InputKind::CompilerCompilerInput, value)
-                }
-                KEY_C_INPUT_PATH => settings.set_input_path(InputKind::CompilerInput, value),
-                KEY_NETWORK_PATH => settings.set_input_path(InputKind::Network, value),
-                KEY_BUILD_SYSTEM_PATH => settings.set_build_system_path(value),
-                KEY_COMPILER_COMPILER_PATH => settings.set_compiler_compiler_path(value),
-                _ => {
-                    if let Some(number) = key.strip_prefix(KEY_OUTPUT_PATH_PREFIX) {
-                        let number = number.parse::<u8>().unwrap_or(0);
-                        let _ = settings.set_output_path(number, value);
-                    }
-                }
-            }
-        }
-        Ok(settings)
+        let stored: Stored = serde_norway::from_str(&content)
+            .map_err(|error| SettingsError::Malformed(error.to_string()))?;
+        Ok(Settings {
+            idle_time: stored.idle_time.max(1),
+            long_idle_time: stored.long_idle_time.max(1),
+            input_paths: [String::new(), String::new(), stored.network_path],
+            compiler_compiler_path: String::new(),
+            build_system_path: stored.build_system_path,
+            output_paths: BTreeMap::new(),
+        })
     }
 
-    // realises FR-049, IR-012
-    /// Stores the paths, to be restored at the next start.
+    // realises FR-091, FR-099, IR-012
+    /// Stores the settings, to be restored at the next start.
     ///
     /// * The directory of the file is created where it does not exist.
     ///
     /// # Errors
     /// Returns [`SettingsError::Io`] where the file cannot be written.
     pub fn save(&self, path: &Path) -> Result<(), SettingsError> {
-        if let Some(directory) = path.parent() {
+        if let Some(directory) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
             fs::create_dir_all(directory).map_err(|error| SettingsError::Io(error.to_string()))?;
         }
-        fs::write(path, self.rendering()).map_err(|error| SettingsError::Io(error.to_string()))
+        let stored = Stored {
+            idle_time: self.idle_time,
+            long_idle_time: self.long_idle_time,
+            network_path: self.input_paths[2].clone(),
+            build_system_path: self.build_system_path.clone(),
+        };
+        let content = serde_norway::to_string(&stored)
+            .map_err(|error| SettingsError::Malformed(error.to_string()))?;
+        fs::write(path, content).map_err(|error| SettingsError::Io(error.to_string()))
     }
 
-    /// Yields the content of the settings file: one `key = value` line per path.
-    fn rendering(&self) -> String {
-        let mut content = String::new();
-        content.push_str(&format!("{KEY_CC_INPUT_PATH} = {}\n", self.input_paths[0]));
-        content.push_str(&format!("{KEY_C_INPUT_PATH} = {}\n", self.input_paths[1]));
-        content.push_str(&format!("{KEY_NETWORK_PATH} = {}\n", self.input_paths[2]));
-        content.push_str(&format!(
-            "{KEY_BUILD_SYSTEM_PATH} = {}\n",
-            self.build_system_path
-        ));
-        content.push_str(&format!(
-            "{KEY_COMPILER_COMPILER_PATH} = {}\n",
-            self.compiler_compiler_path
-        ));
-        for (number, path) in &self.output_paths {
-            content.push_str(&format!("{KEY_OUTPUT_PATH_PREFIX}{number} = {path}\n"));
-        }
-        content
+    // realises FR-093, FR-095
+    /// Yields the *idle time* in seconds.
+    pub fn idle_time(&self) -> u32 {
+        self.idle_time
+    }
+
+    // realises FR-099
+    /// Sets the *idle time*; a value below 1 second becomes 1 second.
+    pub fn set_idle_time(&mut self, seconds: u32) {
+        self.idle_time = seconds.max(1);
+    }
+
+    // realises FR-093, FR-095
+    /// Yields the *long idle time* in seconds.
+    pub fn long_idle_time(&self) -> u32 {
+        self.long_idle_time
+    }
+
+    // realises FR-099
+    /// Sets the *long idle time*; a value below 1 second becomes 1 second.
+    pub fn set_long_idle_time(&mut self, seconds: u32) {
+        self.long_idle_time = seconds.max(1);
     }
 
     /// Yields the path of one input file, empty where none is stored.
@@ -166,7 +221,7 @@ impl Settings {
         &self.input_paths[kind.index()]
     }
 
-    // realises FR-012, FR-049
+    // realises FR-012
     /// Sets the path of one input file.
     pub fn set_input_path(&mut self, kind: InputKind, path: &str) {
         self.input_paths[kind.index()] = path.to_owned();
@@ -177,7 +232,7 @@ impl Settings {
         &self.compiler_compiler_path
     }
 
-    // realises FR-024, FR-049
+    // realises FR-024
     /// Sets the path of the *compiler-compiler*.
     pub fn set_compiler_compiler_path(&mut self, path: &str) {
         self.compiler_compiler_path = path.to_owned();
@@ -200,7 +255,7 @@ impl Settings {
         self.output_paths.get(&number).map(String::as_str)
     }
 
-    // realises FR-038, FR-049
+    // realises FR-038
     /// Sets the path of one *output file*, enabling it.
     ///
     /// # Errors
@@ -240,7 +295,7 @@ mod tests {
         let dir =
             std::env::temp_dir().join(format!("genc3wb-settings-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
-        dir.join("sub").join("settings.txt")
+        dir.join("sub").join(SETTINGS_FILE_NAME)
     }
 
     #[test]
@@ -254,7 +309,7 @@ mod tests {
 
     #[test]
     fn paths_of_each_kind_are_held_apart() {
-        // FR-048, FR-049
+        // FR-091
         let mut settings = Settings::default();
         settings.set_input_path(InputKind::CompilerCompilerInput, "a.cc");
         settings.set_input_path(InputKind::CompilerInput, "b.c");
@@ -311,20 +366,28 @@ mod tests {
 
     #[test]
     fn settings_survive_save_and_load() {
-        // FR-048, FR-049, FR-090, FR-091, IR-011, IR-012
+        // FR-090, FR-091, FR-093, IR-011, IR-012
         let file = case_file("roundtrip");
         let mut settings = Settings::default();
         settings.set_input_path(InputKind::CompilerCompilerInput, "/tmp/a b.cc");
         settings.set_input_path(InputKind::CompilerInput, "/tmp/b.c");
         settings.set_input_path(InputKind::Network, "/tmp/n.g3n");
         settings.set_build_system_path("/opt/genc3d");
+        settings.set_idle_time(3);
+        settings.set_long_idle_time(9);
         settings.set_compiler_compiler_path("/opt/genc3");
         settings
             .set_output_path(2, "/tmp/out2.txt")
             .expect("2 is within range");
         settings.set_output_path(7, "").expect("7 is within range");
         assert_eq!(settings.save(&file), Ok(()));
-        assert_eq!(Settings::load(&file), Ok(settings));
+        // no path of the *node window* is stored: they are held for the session alone
+        let mut expected = Settings::default();
+        expected.set_input_path(InputKind::Network, "/tmp/n.g3n");
+        expected.set_build_system_path("/opt/genc3d");
+        expected.set_idle_time(3);
+        expected.set_long_idle_time(9);
+        assert_eq!(Settings::load(&file), Ok(expected));
         let _ = fs::remove_dir_all(
             file.parent()
                 .and_then(Path::parent)
@@ -334,28 +397,68 @@ mod tests {
 
     #[test]
     fn missing_settings_file_yields_the_defaults() {
-        // FR-048
+        // FR-094
         let file = case_file("missing");
         assert_eq!(Settings::load(&file), Ok(Settings::default()));
     }
 
     #[test]
-    fn malformed_line_is_reported_and_unknown_key_ignored() {
-        // IR-011
-        let file = case_file("malformed");
+    fn unknown_key_is_ignored_and_an_absent_key_takes_its_default() {
+        // FR-094, FR-095, IR-011
+        let file = case_file("unknown");
         fs::create_dir_all(file.parent().expect("a parent")).expect("the directory can be created");
-        fs::write(&file, "cc_input_path = a\nfuture_key = b\n\n").expect("the file can be written");
+        fs::write(&file, "network_path: a\nfuture_key: b\n").expect("the file can be written");
         let settings = Settings::load(&file).expect("an unknown key is no error");
-        assert_eq!(settings.input_path(InputKind::CompilerCompilerInput), "a");
-        fs::write(&file, "no equals sign\n").expect("the file can be written");
         assert_eq!(
-            Settings::load(&file),
-            Err(SettingsError::Malformed("no equals sign".into()))
+            (
+                settings.input_path(InputKind::Network),
+                settings.idle_time(),
+                settings.long_idle_time(),
+                settings.build_system_path()
+            ),
+            (
+                "a",
+                DEFAULT_IDLE_TIME,
+                DEFAULT_LONG_IDLE_TIME,
+                DEFAULT_BUILD_SYSTEM_PATH
+            )
         );
         let _ = fs::remove_dir_all(
             file.parent()
                 .and_then(Path::parent)
                 .expect("the case directory"),
         );
+    }
+
+    #[test]
+    fn a_file_that_is_no_yaml_mapping_is_reported() {
+        // IR-011
+        let file = case_file("notyaml");
+        fs::create_dir_all(file.parent().expect("a parent")).expect("the directory can be created");
+        fs::write(&file, "idle_time: [1, 2\n").expect("the file can be written");
+        assert!(matches!(
+            Settings::load(&file),
+            Err(SettingsError::Malformed(_))
+        ));
+        let _ = fs::remove_dir_all(
+            file.parent()
+                .and_then(Path::parent)
+                .expect("the case directory"),
+        );
+    }
+
+    #[test]
+    fn the_two_times_are_held_and_never_fall_below_one_second() {
+        // FR-093, FR-099
+        let mut settings = Settings::default();
+        settings.set_idle_time(5);
+        settings.set_long_idle_time(0);
+        assert_eq!((settings.idle_time(), settings.long_idle_time()), (5, 1));
+    }
+
+    #[test]
+    fn the_settings_file_lies_in_the_working_directory() {
+        // IR-011, IR-012
+        assert_eq!(Settings::default_path(), Path::new(SETTINGS_FILE_NAME));
     }
 }

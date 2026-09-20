@@ -417,7 +417,7 @@ mod tests {
 
     #[test]
     fn pages_of_the_settings_enable_the_stored_files() {
-        // FR-048
+        // FR-031
         let mut settings = Settings::default();
         settings
             .set_output_path(4, "four.txt")

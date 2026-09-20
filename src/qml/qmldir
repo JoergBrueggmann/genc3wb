@@ -9,4 +9,5 @@ OutputGroup 1.0 OutputGroup.qml
 OutputWindow 1.0 OutputWindow.qml
 EditorWindow 1.0 EditorWindow.qml
 InfoDialog 1.0 InfoDialog.qml
+SettingsDialog 1.0 SettingsDialog.qml
 singleton PathOfUrl 1.0 PathOfUrl.qml

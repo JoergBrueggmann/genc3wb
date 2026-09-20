@@ -165,10 +165,14 @@ qmllint -I src/qml src/qml/*.qml
 ### Making a distribution
 
 The script 'make-dist.sh' assembles the folder `dist`: the executable of the
-workbench under `bin`, this description, the licence and the work items of the
-package, and, under `genc3`, a copy of the distribution of genc³ with its build
-system `genc3d`. What is distributed therefore holds the workbench and the
-build system it drives.
+workbench under `bin`, the scripts `start` and `start.bat`, this description,
+the licence and the work items of the package, and, under `genc3`, a copy of the
+distribution of genc³ with its build system `genc3d`. What is distributed
+therefore holds the workbench and the build system it drives.
+
+**The distribution is started by a double-click on `start`, or on `start.bat` on
+Windows.** Each script changes to the folder it lies in, so that the workbench
+finds its settings file and the build system beside itself.
 
 The script first runs 'make-dist.sh' of genc³, so that the copy is the
 distribution that was just built and verified there, and then builds the
@@ -180,13 +184,20 @@ GENC3=/path/to/genc3 ./make-dist.sh
 ```
 
 The exit code is 0 where the folder was assembled, the executable of the
-workbench is executable and the copied `genc3d` runs. In the distribution the
-build system is named `genc3/bin/genc3d`, beside the workbench.
+workbench and the script `start` are executable, and the copied `genc3d` runs.
+In the distribution the build system is named `./genc3/bin/genc3d`, beside the
+workbench, which is the path genc³wb uses where it has none stored.
 
 ### Where the settings are stored
 
-genc³wb restores the paths of the network file, of the build system, of the
-input files, of the compiler-compiler and of the output files at its start, from `genc3wb/settings.txt` in the configuration
-directory of the user: `~/.config` on Linux, `~/Library/Application Support` on
-macOS, `%APPDATA%` on Windows. The file is plain text, one `key = value` line
-per path.
+genc³wb reads the file `genc3wb.yaml` of its working directory at its start and
+writes it whenever a value changes. Started by a double-click on `start`, the
+working directory is the root of the distribution, so the file lies there.
+
+The file is YAML and holds the idle time and the long idle time in seconds,
+the path of the network file and the path of the build system. What the node
+window names — its input files, its compiler-compiler and its output files — is
+held for the session alone, since a node is opened from the network file. Where the file does not
+exist, the idle time is 2 seconds, the long idle time 16 seconds and the build
+system `./genc3/bin/genc3d`. The two times are set in the dialog of the settings
+menu.

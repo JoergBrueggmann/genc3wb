@@ -59,7 +59,7 @@ impl RunnerGroup {
     }
 
     // setters
-    // realises FR-024, FR-025, FR-049
+    // realises FR-024, FR-025
     // Names the path, stores it, determines whether it is executable, and updates the readiness.
     fn set_path(&mut self, path: String) {
         if path == self.path {
@@ -142,7 +142,7 @@ impl RunnerGroup {
         self.output = Some(output);
     }
 
-    // realises FR-048
+    // realises FR-090
     /// Names the path the settings hold for the *compiler-compiler*.
     pub fn load_initial(&mut self) {
         let path = self

@@ -5,8 +5,8 @@ target/
 build/
 dist/
 
-# The settings product stores at run time, where it is started with the working directory as configuration directory.
-genc3wb/settings.txt
+# The settings file product writes into the working directory it is started in.
+genc3wb.yaml
 
 # The output of a test run.
 reports/

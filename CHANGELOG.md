@@ -10,27 +10,6 @@ and this project adheres to a four-part version number.
 
 ## Unreleased
 
-### [0.6.0.0] - YYYY-MM-DD
-
-**_Editing_of_the_input_files_**
-
-- Implement the component 'genc3wb::inputfile': drive one input group with its file name field, its file selector button, its code editor and its processing state indicator, as the design declares it.
-- Present a file selector dialog on the file selector button, with the caption and the file filter of that input group, and write the selected path into the file name field.
-- Load the named file into the code editor where it exists, leave the editor unchanged where it does not, and ask the user whether to save before discarding unsaved changes.
-- Save the content of the code editor to the named file after the configured pause in typing, driven by the watchdog.
-- Determine the processing state from whether the named file exists and whether the edited text differs from it, and show it in the indicator.
-- Announce that the file or its content changed, so that the group of the compiler-compiler can tell whether it may run.
-- Connect the two input groups of the main window to the settings, so that the paths are restored at the start and stored at the end.
-- Cover the component with a test group and its test cases, reading and writing files in a directory of the run.
-
-### [A.B.C.D] - YYYY-MM-DD
-
-**_Local_workbench_settings_in_YAML_**
-
-- Add a settings dialog to set *idle time* and *long idle_time* that is persisted in file './genc3wb.yaml'.
-- Persist also the last entered g3n-file to 
-- The default *idle time* is 2 seconds and the *long idle_time* 16 seconds that is used when file './genc3wb.yaml' doesn't exist.
-
 ### [A.B.C.D] - YYYY-MM-DD
 
 **_Distribution_with_the_build_system_**
@@ -42,6 +21,28 @@ and this project adheres to a four-part version number.
 - Describe the script and the folder it assembles in 'README.md', under 'Making a distribution'.
 
 ## Released
+
+### [0.6.0.0] - 2026-09-20
+
+**_Local_workbench_settings_in_YAML_**
+
+Derived work items: definition 0.3.0.0
+
+- Change the distribution script to do the following:
+    - Add the scripts 'start' and 'start.bat' that start the workbench from the root of the distribution folder on double-click, each changing to the folder it lies in first, so that the current folder of the workbench is that root.
+    - Change the 'README.md' to just stating that the workbench will be started on double-click.
+- Make the settings persistent in the file 'genc3wb.yaml' of the current folder, in place of the file in the configuration directory of the user: the two times and every path the workbench restores.
+- Add a settings dialog to set *idle time* and *long idle time* that is persisted in file 'genc3wb.yaml', reached from a menu of its own beside the help menu.
+- Persist also the last entered g3n-file to file 'genc3wb.yaml'.
+- Persist no path of the *node window*: its two input files are named from the *node* that is opened by a double-click, and its *compiler-compiler* and its *output files* are held for the session alone, since a *node* is served by the build system and its outputs stand in the g3n-file. The file therefore holds the two times, the g3n-file and the build system, as the entries above name them.
+- Persist also the path to the compiler network application in file 'genc3wb.yaml'.
+- Set the path to the compiler network application to './genc3/bin/genc3d' where that file does not exist; the user may change the path, and the change is persisted.
+- The default *idle time* is 2 seconds and the *long idle time* 16 seconds that is used for every code editor when file 'genc3wb.yaml' doesn't exist.
+- Rename the term *maximum idle time* to *idle time*, in the specification, in the design and in the code.
+- Exclude 'genc3wb.yaml' from version control, since it is written wherever the workbench is started.
+- Hold the *idle time* and the *long idle time* on the *workbench object* instead of on each *input group*, since they hold for every code editor: a code editor takes them by a binding, which the settings dialog changes for all of them at once.
+- Resolve a relative path of the *build system* against the working directory of the workbench before its process is started, since that process is started in the directory of the g3n-file and the operating system would look for the program there; without it the default './genc3/bin/genc3d' failed with 'No such file or directory'.
+- Read and write the file with the crates `serde` and `serde_norway`, since the standard library reads no YAML, and drop the crate `dirs`, which named the configuration directory of the user that is no longer used.
 
 ### [0.5.0.0] - 2026-09-20
 

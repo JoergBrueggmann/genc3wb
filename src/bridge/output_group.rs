@@ -109,7 +109,7 @@ impl OutputGroup {
     }
 
     // setters
-    // realises FR-037, FR-038, FR-049
+    // realises FR-037, FR-038
     // Enables the *output file* of the presented page at its path, or disables it and removes its
     // path from the settings.
     fn set_file_enabled(&mut self, enabled: bool) {
@@ -131,7 +131,7 @@ impl OutputGroup {
         self.results_changed();
     }
 
-    // realises FR-038, FR-039, FR-049
+    // realises FR-038, FR-039
     // Names the path of the *output file* of the presented page, stores it, and reads the file.
     fn set_file_path(&mut self, path: String) {
         let Some(number) = self.pages.current_number() else {
