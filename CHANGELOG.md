@@ -8,30 +8,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to a four-part version number.
 
 
-## Unreleased
+## [Unreleased]
 
-### [A.B.C.D] - YYYY-MM-DD
+At the moment, nothing unreleased here.
 
-**_Diagnostics_with_read_positions_**
+## [0.6.0.2] - 2026-09-21
 
-- Let a *diagnostic* of a document that is not parsed carry the *read position* range of the fault, as the *error tree* of the parse yields it, instead of the empty range at line 1 and column 1, for the *meta compiler DSL*, for an *input* and for the g3n document alike, so that a client marks the faulty place.
+**_Changelog_layout_of_the_management_requirements_**
 
-### [A.B.C.D] - YYYY-MM-DD
+Leading work item: definition 0.8.0.1 (genc3api)
 
-**_Node_window_from_the_network_file_**
+- Bring 'CHANGELOG.md' in line with the layout of the management requirements 0.3.0.0: the section '## [Unreleased]', one heading '## [&lt;version&gt;] - &lt;date&gt;' per released version, and no section '## Released'.
+- Raise the headings of the released versions 0.3.0.3 and 0.0.0.15, which still stood at the third level, to the second level.
+- Carry what was changed in this file outside a *change cycle*: the conversion of the layout, and the removal of the unreleased *work items* '**_Diagnostics_with_read_positions_**' and '**_Node_window_from_the_network_file_**', which moved to the roadmap.
+- Changes nothing of what the *project folder* delivers: a build bump.
 
-- Rebuild the *node window* so that it shows the *node* opened in the *compiler network editor* as the g3n-file states it: one code editor for its *meta compiler DSL* and one per *input*, each with its file name, its *processing state* and its saving as an *input group* has them, and one read-only page per *output*.
-- Name nothing in the *node window* by hand: take the paths of the *meta compiler DSL*, of the *inputs* and of the *outputs* from the *node description*, resolved against the directory of the g3n-file, and show the name of the *node* in the title.
-- Let the *build system* serve the *node* instead of a *compiler-compiler* that is run as a process: start the *build system* named in the *compiler network editor* for that one *node*, with the options `--socket`, `--meta-dsl`, `--input` and `--output` of *genc³api*, in the directory of the g3n-file.
-- Transmit every *text increment* of an editor of the *node window* to that *node*, as an open request the first time and as an edit request afterwards, and show the *diagnostics* of the response at the editor whose document they concern.
-- Present the *outputs*: send a *store request* after an edit the *node* accepted without a *diagnostic* of severity error, and show the *output* files the *node* wrote.
-- Shut the *node* down by a *shutdown request* when another *node* is opened, when the *node window* closes and when the workbench terminates.
-- Remove the group of the *compiler-compiler*, the file selector and the enabling check box of an *output* page, and the standard output and standard error pages; withdraw the requirements that specify them.
-- Keep the *detached windows* of an editor and of the *outputs*.
-
-## Released
-
-### [0.6.0.1] - 2026-09-20
+## [0.6.0.1] - 2026-09-20
 
 **_Distribution_with_the_build_system_**
 
@@ -41,7 +33,7 @@ and this project adheres to a four-part version number.
 - Check what was assembled where it was assembled: the executable of the workbench is executable, and the copied `genc3d` runs; the script reports the failure and exits with a code other than 0 where it is not so.
 - Describe the script and the folder it assembles in 'README.md', under 'Making a distribution'.
 
-### [0.6.0.0] - 2026-09-20
+## [0.6.0.0] - 2026-09-20
 
 **_Local_workbench_settings_in_YAML_**
 
@@ -63,7 +55,7 @@ Derived work items: definition 0.3.0.0
 - Resolve a relative path of the *build system* against the working directory of the workbench before its process is started, since that process is started in the directory of the g3n-file and the operating system would look for the program there; without it the default './genc3/bin/genc3d' failed with 'No such file or directory'.
 - Read and write the file with the crates `serde` and `serde_norway`, since the standard library reads no YAML, and drop the crate `dirs`, which named the configuration directory of the user that is no longer used.
 
-### [0.5.0.0] - 2026-09-20
+## [0.5.0.0] - 2026-09-20
 
 **_Main_window_compiler_network_editor_**
 
@@ -78,7 +70,7 @@ Derived work items: definition 0.2.0.0
 - On Microsoft Windows the *build system* is reported as not available, since it is reached through a Unix domain socket; the dependency is confined to one type alias and one function of `build_system`.
 - Cover the new *core* components with unit tests, and the process, the socket and `dot` with two ignored integration tests in 'tests/build_system.rs', which run against the `genc3d` named by the environment variable `GENC3D`; describe Graphviz, the *build system* and these tests in 'README.md'.
 
-### [0.4.0.0] - 2026-09-09
+## [0.4.0.0] - 2026-09-09
 
 **_Implementation_in_Rust_with_Qt_Bridge_for_Rust_**
 
@@ -94,14 +86,14 @@ Derived work items: definition 0.1.1.0, management 0.1.1.0
 - Add the QML singleton `PathOfUrl`, which yields the path of the URL a file dialog selects, and the 'qmldir' listing the components of the front end, which a QML singleton requires.
 - Adapt '.gitignore' to the cargo build output.
 
-### [0.3.0.3] - 2026-09-07
+## [0.3.0.3] - 2026-09-07
 
 **_Exclusion_of_the_agent_documents_**
 
 - Exclude the directory 'AIAgent' from version control by naming it in '.gitignore'. It holds the know-how of dealing with AI agents — the definition of the agent, the guidelines, the requirements and the design it works from — which is no part of *product* and is kept rather than published.
 - Remove the eight files of that directory from the index as well, without which git would carry on tracking what it already tracks and the entry in '.gitignore' would take no effect. The files stay on the disk where they are; only their tracking ends.
 
-### [0.3.0.2] - 2026-09-07
+## [0.3.0.2] - 2026-09-07
 
 **_Description_of_the_preconditions_and_of_the_start_**
 
@@ -113,7 +105,7 @@ Derived work items: definition 0.1.1.0, management 0.1.1.0
 - Write every command of that description literally, and name the directory it is run in, so that it can be taken as it stands rather than filled in first.
 - Name the executable within the bundle in the report of 'deploy.sh' as the second way to start on macOS, and write the commands of that report literally as well. Started as a bundle the application is handed to the window server, and what it writes to standard output does not reach the terminal; started as the executable within the bundle it stays attached to the terminal, where the increments the code editor writes can be read.
 
-### [0.3.0.1] - 2026-09-07
+## [0.3.0.1] - 2026-09-07
 
 **_Diagnosis_and_permissions_of_the_deployment_**
 
@@ -123,7 +115,7 @@ Derived work items: definition 0.1.1.0, management 0.1.1.0
 - Mark 'Gc3CodeEditorWidget::setPlainText' as overriding, which it does and did not state, and on which the compiler warned wherever the header was included.
 - Exclude the metadata the Finder of macOS leaves behind from version control, which no file of *product* is.
 
-### [0.3.0.0] - 2026-09-07
+## [0.3.0.0] - 2026-09-07
 
 **_Editing_of_the_input_files_**
 
@@ -144,7 +136,7 @@ Derived work items: definition 0.1.1.0, management 0.1.1.0
 - Cover the increments with twelve test cases: the first increment, an insertion, a deletion, a replacement, an unmodified text, a modification made by the *product*, the composition of a whole text from its increments, the rendering, the maximum idle time, the provision on idle with an event loop, the derivation from one megabyte within the bound of NFR-005, and the bytes written to standard output.
 - Read the bytes back from standard output in that last test case, rather than assert the encoding where it is configured, so that the test fails where the encoding written is not UTF-8.
 
-### [0.2.0.2] - 2026-09-06
+## [0.2.0.2] - 2026-09-06
 
 **_Deployment_on_every_platform_**
 
@@ -159,7 +151,7 @@ Derived work items: definition 0.1.1.0, management 0.1.1.0
 - Write the run path of the binaries anew, so that each names the library directory of the bundle relative to itself. The linker writes the path of the installation either as RPATH, which is searched before the library path of the environment, or as RUNPATH, which is searched after it; the same sources and the same flags yield either one, and where it was the first the application loaded Qt from the installation and not from the bundle.
 - Verify the result on Linux and on macOS as well, and not on Windows alone: every library imported must be carried along or belong to the operating system, and a library that is carried yet still answered from the installation is named, since what is read on this machine is then not what the target machine would load.
 
-### [0.2.0.1] - 2026-09-06
+## [0.2.0.1] - 2026-09-06
 
 **_Reporting_of_a_failed_deployment_**
 
@@ -169,7 +161,7 @@ Derived work items: definition 0.1.1.0, management 0.1.1.0
 - Refuse the deployment where the output directory cannot be replaced, naming the application to close, instead of failing with the message of the remove command.
 - Report at the end the name, the size and the time of the executable produced, so that a bundle left over from an earlier run is recognised as such.
 
-### [0.2.0.0] - 2026-09-06
+## [0.2.0.0] - 2026-09-06
 
 **_Main_window_of_the_workbench_**
 
@@ -181,7 +173,7 @@ Derived work items: definition 0.1.1.0, management 0.1.1.0
 - Declare 'InputGroup', 'initResources' and the accessors of the main window in the design, which the implementation needs and the design did not declare.
 - Cover the main window with a test group of ten test cases, and assert that the four images of the indicator resolve.
 
-### [0.1.0.1] - 2026-09-06
+## [0.1.0.1] - 2026-09-06
 
 **_Portable_build_of_the_application_**
 
@@ -192,7 +184,7 @@ Derived work items: definition 0.1.1.0, management 0.1.1.0
 - Pin the plugins of the folder with a 'qt.conf', so that a Qt installation of the target machine cannot divert the application to the plugins of another build.
 - Exclude the folder of the portable build from version control.
 
-### [0.1.0.0] - 2026-09-06
+## [0.1.0.0] - 2026-09-06
 
 **_Implementation_of_the_foundation_**
 
@@ -207,7 +199,7 @@ Derived work items: definition 0.1.1.0, management 0.1.1.0
 - Define in the test guideline the entry point that runs the root of the test suite and yields its result as the exit code.
 - Exclude the build output and the stored settings from version control.
 
-### [0.0.0.15] - 2026-09-06
+## [0.0.0.15] - 2026-09-06
 
 **_Settlement_of_the_open_items_**
 
@@ -219,7 +211,7 @@ Derived work items: definition 0.1.1.0, management 0.1.1.0
 - Write no changelog entry for a change that alters no meaning, and enter a correction that does change meaning.
 - Correct the namespace examples of the design guideline and of the test guideline, which still name the product of the predecessor.
 
-### [0.0.0.14] - 2026-09-06
+## [0.0.0.14] - 2026-09-06
 
 **_Design_of_the_user_interface_**
 
@@ -229,7 +221,7 @@ Derived work items: definition 0.1.1.0, management 0.1.1.0
 - Follow the design guideline: decompose into components with acyclic dependency, declare the types and the functions in C++ without bodies, show every class in a class diagram, and state the data flow, the error handling strategy, the side-effect boundaries and the traceability to the requirements.
 - Decompose *product* into the seven components 'widget', 'settings', 'inputfile', 'output', 'runner', 'editorwindow' and 'mainwindow', in that dependency order.
 
-### [0.0.0.13] - 2026-09-06
+## [0.0.0.13] - 2026-09-06
 
 **_Requirements_regarding_UI_**
 
@@ -238,7 +230,7 @@ Derived work items: definition 0.1.1.0, management 0.1.1.0
 - Specify the graphical user interface, the file system and the compiler-compiler as the three interfaces of *product*, as IR-001 to IR-014.
 - Constrain *product* to C++ with the Qt framework, and to running the compiler-compiler as a separate process, as C-001 to C-004.
 
-### [0.0.0.12] - 2026-09-06
+## [0.0.0.12] - 2026-09-06
 
 **_Coding_guideline_**
 
@@ -252,7 +244,7 @@ Derived work items: definition 0.1.1.0, management 0.1.1.0
 - Require a Doxygen comment on every declaration of a public interface, which the predecessor carries nowhere.
 - Declare an enumeration as 'enum class', as the design guideline requires, instead of the typedef of the predecessor.
 
-### [0.0.0.11] - 2026-09-06
+## [0.0.0.11] - 2026-09-06
 
 **_Imperative_changelog_entries_**
 
@@ -260,7 +252,7 @@ Derived work items: definition 0.1.1.0, management 0.1.1.0
 - Read an entry of 'Unreleased' as what is to be done, and the same entry of 'Released' as what was done.
 - Rewrite the entries of the released versions 0.0.0.1 to 0.0.0.10 in the imperative.
 
-### [0.0.0.10] - 2026-09-06
+## [0.0.0.10] - 2026-09-06
 
 **_Test_guideline_**
 
@@ -268,7 +260,7 @@ Derived work items: definition 0.1.1.0, management 0.1.1.0
 - Extend the framework by the assertion macro 'TEST_ASSERT', which names the expression, the file and the line where an expectation broke.
 - Exclude the folder 'old_tst' from version control, and record it in '00_agents.md' as reference material next to 'old_src'.
 
-### [0.0.0.9] - 2026-09-05
+## [0.0.0.9] - 2026-09-05
 
 **_Design_guideline_**
 
@@ -279,7 +271,7 @@ Derived work items: definition 0.1.1.0, management 0.1.1.0
 - Require a section 'Class diagram' in which every declared class appears with its relationships to the other classes, given as Mermaid source.
 - Rename the section 'Purity and effect boundaries' to 'Side-effect boundaries', stating which parts of *product* are free of side effects and which perform I/O, with 'const' as the marker in the declaration.
 
-### [0.0.0.8] - 2026-09-05
+## [0.0.0.8] - 2026-09-05
 
 **_Requirements_guideline_**
 
@@ -288,42 +280,42 @@ Derived work items: definition 0.1.1.0, management 0.1.1.0
 - Name the framework of *product* in the constraint example.
 - Exclude the folder 'old_src', the predecessor of *product*, from version control, and record it in '00_agents.md' as reference material.
 
-### [0.0.0.7] - 2026-09-05
+## [0.0.0.7] - 2026-09-05
 
 **_Attribution_in_the_readme_instead_of_the_commits_**
 
 - Carry no co-author trailer in a commit message, and state the assistance of the agent once in 'README.md'.
 - Define the form of a commit message.
 
-### [0.0.0.6] - 2026-09-05
+## [0.0.0.6] - 2026-09-05
 
 **_Code_phrases_of_the_trigger_points_**
 
 - Enter the code phrases 'start change cycle', 'agreed' and 'abort change cycle' for the trigger points TP-1 to TP-3.
 - Define that a code phrase fires its trigger point wherever it appears in the client's prompt.
 
-### [0.0.0.5] - 2026-09-05
+## [0.0.0.5] - 2026-09-05
 
 **_Deletion_of_the_change_branch_**
 
 - Delete the change branch after the push is verified, and keep it where the change cycle is aborted.
 - Delete the change branches of the versions 0.0.0.1 to 0.0.0.4.
 
-### [0.0.0.4] - 2026-09-05
+## [0.0.0.4] - 2026-09-05
 
 **_Explicit_adding_of_all_files_**
 
 - Add the whole working tree with 'git add .' before committing, and verify afterwards that no untracked file is left.
 - List adding as a step of its own in the release and integration step, and verify the push against the remote.
 
-### [0.0.0.3] - 2026-09-05
+## [0.0.0.3] - 2026-09-05
 
 **_Separation_of_released_versions_**
 
 - Hold unreleased work items in section 'Unreleased' and released versions in section 'Released', the most recent first.
 - Move a work item to 'Released' when the change cycle releases it.
 
-### [0.0.0.2] - 2026-09-05
+## [0.0.0.2] - 2026-09-05
 
 **_Version_control_of_all_project_files_**
 
@@ -332,7 +324,7 @@ Derived work items: definition 0.1.1.0, management 0.1.1.0
 - Place the guideline, requirement and design documents under version control unchanged, to be adapted later.
 - Name *product*, its year and its author in the licence notice.
 
-### [0.0.0.1] - 2026-09-05
+## [0.0.0.1] - 2026-09-05
 
 **_Finalisation_of_agent_and_management_definition_**
 
