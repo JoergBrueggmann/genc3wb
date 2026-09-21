@@ -55,7 +55,7 @@ impl InputKind {
     pub fn file_filter(self) -> &'static str {
         match self {
             InputKind::CompilerCompilerInput | InputKind::CompilerInput => "All files (*)",
-            InputKind::Network => "Compiler network files (*.g3n)",
+            InputKind::Network => "Compiler network files (*.gc3n)",
         }
     }
 }

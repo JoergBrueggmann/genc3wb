@@ -371,7 +371,7 @@ mod tests {
         let mut settings = Settings::default();
         settings.set_input_path(InputKind::CompilerCompilerInput, "/tmp/a b.cc");
         settings.set_input_path(InputKind::CompilerInput, "/tmp/b.c");
-        settings.set_input_path(InputKind::Network, "/tmp/n.g3n");
+        settings.set_input_path(InputKind::Network, "/tmp/n.gc3n");
         settings.set_build_system_path("/opt/genc3d");
         settings.set_idle_time(3);
         settings.set_long_idle_time(9);
@@ -383,7 +383,7 @@ mod tests {
         assert_eq!(settings.save(&file), Ok(()));
         // no path of the *node window* is stored: they are held for the session alone
         let mut expected = Settings::default();
-        expected.set_input_path(InputKind::Network, "/tmp/n.g3n");
+        expected.set_input_path(InputKind::Network, "/tmp/n.gc3n");
         expected.set_build_system_path("/opt/genc3d");
         expected.set_idle_time(3);
         expected.set_long_idle_time(9);

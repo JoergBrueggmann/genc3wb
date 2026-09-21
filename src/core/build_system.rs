@@ -467,8 +467,8 @@ mod tests {
         NodeDescription {
             name: "a".to_owned(),
             kind: NodeKind::MetaCompilerCompiler,
-            transformation: "a.g3".to_owned(),
-            socket: "a.g3.sock".to_owned(),
+            transformation: "a.gc3".to_owned(),
+            socket: "a.gc3.sock".to_owned(),
             inputs: vec![],
             outputs: vec![],
         }
@@ -499,13 +499,13 @@ mod tests {
     #[test]
     fn first_build_opens_the_document_with_the_provided_text_and_queries_the_network() {
         let stream = Scripted::answering(&[(1, diagnostics(0)), (2, network(0))]);
-        let mut conversation = Conversation::new(stream, "n.g3n");
+        let mut conversation = Conversation::new(stream, "n.gc3n");
         let result = conversation.build("", &increment(0, 0, "abc"), "abc");
         let expected = vec![
             encode_request(
                 1,
                 &Request::Open {
-                    document: "n.g3n".to_owned(),
+                    document: "n.gc3n".to_owned(),
                     text: "abc".to_owned(),
                 },
             ),
@@ -531,13 +531,13 @@ mod tests {
             (3, diagnostics(1)),
             (4, network(1)),
         ]);
-        let mut conversation = Conversation::new(stream, "n.g3n");
+        let mut conversation = Conversation::new(stream, "n.gc3n");
         let _ = conversation.build("", &increment(0, 0, "ab\ncd"), "ab\ncd");
         let _ = conversation.build("ab\ncd", &increment(3, 2, "x"), "ab\nx");
         let edit = encode_request(
             3,
             &Request::Edit {
-                document: "n.g3n".to_owned(),
+                document: "n.gc3n".to_owned(),
                 version: 0,
                 deltas: vec![crate::core::api_message::EditDelta {
                     start: ReadPosition { line: 2, column: 1 },
@@ -564,13 +564,13 @@ mod tests {
             (4, diagnostics(0)),
             (5, network(0)),
         ]);
-        let mut conversation = Conversation::new(stream, "n.g3n");
+        let mut conversation = Conversation::new(stream, "n.gc3n");
         let _ = conversation.build("", &increment(0, 0, "a"), "a");
         let result = conversation.build("a", &increment(1, 0, "b"), "ab");
         let reopened = encode_request(
             4,
             &Request::Open {
-                document: "n.g3n".to_owned(),
+                document: "n.gc3n".to_owned(),
                 text: "ab".to_owned(),
             },
         );
@@ -589,7 +589,7 @@ mod tests {
             (1, diagnostics(0)),
             (2, Response::Error("not well formed".to_owned())),
         ]);
-        let mut conversation = Conversation::new(stream, "n.g3n");
+        let mut conversation = Conversation::new(stream, "n.gc3n");
         assert_eq!(
             conversation.build("", &increment(0, 0, "x"), "x"),
             Err(BuildError::Refused("not well formed".to_owned()))
@@ -603,7 +603,7 @@ mod tests {
             (2, network(0)),
             (3, Response::Error("invalid range".to_owned())),
         ]);
-        let mut conversation = Conversation::new(stream, "n.g3n");
+        let mut conversation = Conversation::new(stream, "n.gc3n");
         let _ = conversation.build("", &increment(0, 0, "a"), "a");
         let _ = conversation.build("a", &increment(5, 0, "b"), "ab");
         assert!(!conversation.opened);
@@ -616,14 +616,14 @@ mod tests {
             (1, diagnostics(0)),
             (2, network(0)),
         ]);
-        let mut conversation = Conversation::new(stream, "n.g3n");
+        let mut conversation = Conversation::new(stream, "n.gc3n");
         assert!(conversation.build("", &increment(0, 0, "a"), "a").is_ok());
     }
 
     #[test]
     fn unexpected_response_to_the_network_query_is_a_protocol_error() {
         let stream = Scripted::answering(&[(1, diagnostics(0)), (2, Response::Acknowledged)]);
-        let mut conversation = Conversation::new(stream, "n.g3n");
+        let mut conversation = Conversation::new(stream, "n.gc3n");
         assert!(matches!(
             conversation.build("", &increment(0, 0, "a"), "a"),
             Err(BuildError::Protocol(_))
@@ -632,7 +632,7 @@ mod tests {
 
     #[test]
     fn stream_that_ends_is_a_connection_error() {
-        let mut conversation = Conversation::new(Scripted::answering(&[]), "n.g3n");
+        let mut conversation = Conversation::new(Scripted::answering(&[]), "n.gc3n");
         assert!(matches!(
             conversation.build("", &increment(0, 0, "a"), "a"),
             Err(BuildError::Connection(_))
@@ -642,7 +642,7 @@ mod tests {
     #[test]
     fn shutdown_transmits_the_shutdown_request() {
         let mut conversation =
-            Conversation::new(Scripted::answering(&[(1, Response::Acknowledged)]), "n.g3n");
+            Conversation::new(Scripted::answering(&[(1, Response::Acknowledged)]), "n.gc3n");
         let result = conversation.shut_down();
         assert_eq!(
             (result, conversation.stream.requests()),
@@ -677,7 +677,7 @@ mod tests {
     fn build_system_that_is_not_executable_is_not_started() {
         let result = BuildSession::start(
             "/nonexistent/genc3d",
-            "/tmp/n.g3n",
+            "/tmp/n.gc3n",
             Path::new("/tmp/unused.sock"),
         );
         let expected = if BuildSession::is_available() {

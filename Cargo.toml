@@ -3,7 +3,7 @@
 
 [package]
 name = "genc3wb"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2024"
 description = "The workbench of the compiler-compiler genc³: edits its inputs, runs it, and presents its results."
 
