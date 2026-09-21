@@ -12,6 +12,16 @@ and this project adheres to a four-part version number.
 
 At the moment, nothing unreleased here.
 
+## [0.7.0.0] - 2026-09-21
+
+**_Consistent_and_collision_free_file_extensions_**
+
+Leading work item: definition 0.18.0.0 (genc3)
+
+- Read 'gc3' and 'gc3n' where the code, the tests and 'README.md' said 'g3' and 'g3n', so that the workbench opens the *network file* and names the *meta compiler DSL* files of a *node* by the new extensions.
+- Cite genc³api 0.9.0.0 and genc³ 0.18.0.0 in 'README.md' and in the tests, where 0.8.0.0 and 0.14.0.0 were cited, and version the package 0.7.0.
+- Changes what the *project folder* delivers incompatibly, the extensions it reads: a 'B' bump as long as the major part is 0.
+
 ## [0.6.0.2] - 2026-09-21
 
 **_Changelog_layout_of_the_management_requirements_**

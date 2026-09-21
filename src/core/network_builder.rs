@@ -224,7 +224,7 @@ mod tests {
     fn restart_without_both_paths_starts_nothing() {
         let mut builder = builder("nothing");
         assert_eq!(
-            (builder.restart("", "/tmp/n.g3n"), builder.session.is_none()),
+            (builder.restart("", "/tmp/n.gc3n"), builder.session.is_none()),
             (Ok(()), true)
         );
     }
@@ -232,7 +232,7 @@ mod tests {
     #[test]
     fn build_system_that_is_not_executable_is_the_error_message_of_the_build() {
         let mut builder = builder("notexecutable");
-        let _ = builder.restart("/nonexistent/genc3d", "/tmp/n.g3n");
+        let _ = builder.restart("/nonexistent/genc3d", "/tmp/n.gc3n");
         let message = builder
             .build("", &increment(), "a")
             .err()

@@ -335,8 +335,8 @@ mod tests {
         NodeDescription {
             name: name.to_owned(),
             kind,
-            transformation: format!("{name}.g3"),
-            socket: format!("{name}.g3.sock"),
+            transformation: format!("{name}.gc3"),
+            socket: format!("{name}.gc3.sock"),
             inputs: inputs.iter().map(|path| (*path).to_owned()).collect(),
             outputs: outputs.iter().map(|path| (*path).to_owned()).collect(),
         }
@@ -489,7 +489,7 @@ mod tests {
         assert_eq!(
             files,
             Some(NodeFiles {
-                meta_dsl: "/net/a.g3".to_owned(),
+                meta_dsl: "/net/a.gc3".to_owned(),
                 first_input: Some("/net/a.in".to_owned()),
             })
         );
