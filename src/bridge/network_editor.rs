@@ -3,10 +3,10 @@
 //! Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 //! Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
 
-use crate::core::api_message::NodeDescription;
+use crate::core::api_message::{NodeDescription, marks_of_diagnostics};
 use crate::core::build_system::BuildSession;
 use crate::core::executable;
-use crate::core::network_builder::{BuiltGraph, NetworkBuilder};
+use crate::core::network_builder::{BuildOutcome, BuiltGraph, NetworkBuilder};
 use crate::core::network_graph::{GraphLayout, files_of_node, node_index_of_vertex};
 use crate::core::settings::Settings;
 use crate::core::text_increment::TextIncrement;
@@ -41,8 +41,9 @@ enum Command {
 
 /// What the build thread reports to the main thread.
 enum Report {
-    /// the outcome of a *build*: the graph, or the *error message*
-    Built(Result<BuiltGraph, String>),
+    /// the outcome of a *build*: the *diagnostics* of the change, and the graph or the
+    /// *error message*
+    Built(BuildOutcome),
     /// the *build system* could not be started; carries the *error message*
     NotStarted(String),
     /// the build thread ended
@@ -81,9 +82,13 @@ pub struct NetworkEditor {
     settings: Option<Rc<RefCell<Settings>>>,
     /// the invoker of the *node editor*, which receives the opened *node*
     node: Option<QmlMethodInvoker>,
+    /// the invoker of the *input group* of the *network file*, which receives the marks of the
+    /// *diagnostics* of a *build*
+    network_input: Option<QmlMethodInvoker>,
 }
 
-// realises FR-064 to FR-069, FR-078 to FR-083, FR-085 to FR-088, FR-091, FR-092, FR-102 to FR-104
+// realises FR-064 to FR-069, FR-078 to FR-083, FR-085 to FR-088, FR-091, FR-092, FR-102 to FR-104,
+// FR-128
 #[qobject(NoQmlElement)]
 impl NetworkEditor {
     qproperty!(
@@ -334,8 +339,11 @@ impl NetworkEditor {
         self.show_error();
     }
 
-    // realises FR-078, FR-079
+    // realises FR-078, FR-079, FR-128
     /// Takes the reports of the build thread; scheduled by that thread on the main thread.
+    ///
+    /// * The *diagnostics* of a *build* are marked in the *input group* of the *network file*,
+    ///   at their offsets in the *provided text*.
     #[qslot(qml_name = "reportArrived")]
     fn report_arrived(&mut self) {
         let reports: Vec<Report> = self
@@ -350,7 +358,18 @@ impl NetworkEditor {
                     if self.builds_pending == 0 {
                         self.building_changed();
                     }
-                    self.take_outcome(outcome);
+                    if let Some(network_input) = &self.network_input {
+                        let marks = marks_of_diagnostics(&self.provided, &outcome.diagnostics);
+                        invoke_method!(
+                            network_input,
+                            "setDiagnostics",
+                            marks.starts,
+                            marks.ends,
+                            marks.severities,
+                            marks.texts
+                        );
+                    }
+                    self.take_outcome(outcome.graph);
                 }
                 Report::NotStarted(message) => self.take_outcome(Err(message)),
                 Report::Stopped => {}
@@ -360,12 +379,19 @@ impl NetworkEditor {
 }
 
 impl NetworkEditor {
-    /// Wires the group: the settings, and the invoker of the *node editor*.
+    /// Wires the group: the settings, the invoker of the *node editor*, and the invoker of the
+    /// *input group* of the *network file*.
     ///
     /// * Called by the *workbench object* once, before the *front end* binds to the group.
-    pub fn configure(&mut self, settings: Rc<RefCell<Settings>>, node: QmlMethodInvoker) {
+    pub fn configure(
+        &mut self,
+        settings: Rc<RefCell<Settings>>,
+        node: QmlMethodInvoker,
+        network_input: QmlMethodInvoker,
+    ) {
         self.settings = Some(settings);
         self.node = Some(node);
+        self.network_input = Some(network_input);
     }
 
     // realises FR-090

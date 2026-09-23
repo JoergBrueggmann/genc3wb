@@ -3,6 +3,7 @@
 //! Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 //! Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
 
+use crate::core::api_message::Marks;
 use crate::core::input_file::{InputFile, InputKind, ProcessingState};
 use crate::core::settings::Settings;
 use crate::core::text_increment::IncrementTracker;
@@ -30,8 +31,8 @@ pub struct InputGroup {
     producer: String,
     /// whether the text was edited since the document was named
     edited_since_named: bool,
-    /// the *diagnostics* of the document, rendered one per line; empty where there is none
-    diagnostics: String,
+    /// the marks of the *diagnostics* of the document; none where there is none
+    marks: Marks,
     /// the settings, to store the path; wired by the *workbench object* for the *network file*
     settings: Option<Rc<RefCell<Settings>>>,
     /// the invoker of the receiver of the *text increments*: the network editor for the
@@ -50,7 +51,7 @@ impl Default for InputGroup {
             identifier: String::new(),
             producer: String::new(),
             edited_since_named: false,
-            diagnostics: String::new(),
+            marks: Marks::default(),
             settings: None,
             receiver: None,
         }
@@ -58,7 +59,7 @@ impl Default for InputGroup {
 }
 
 // realises FR-007, FR-011 to FR-017, FR-056, FR-059, FR-069, FR-083, FR-086, FR-087, FR-106,
-// FR-107, FR-108, FR-113, FR-114, FR-116
+// FR-107, FR-108, FR-113, FR-114, FR-116, FR-126, FR-127, FR-128
 #[qobject(NoQmlElement)]
 impl InputGroup {
     qproperty!("caption", Read = caption, Constant);
@@ -74,8 +75,23 @@ impl InputGroup {
         Notify = state_changed
     );
     qproperty!(
-        "diagnostics",
-        Read = diagnostics,
+        "diagnosticStarts",
+        Read = diagnostic_starts,
+        Notify = diagnostics_changed
+    );
+    qproperty!(
+        "diagnosticEnds",
+        Read = diagnostic_ends,
+        Notify = diagnostics_changed
+    );
+    qproperty!(
+        "diagnosticSeverities",
+        Read = diagnostic_severities,
+        Notify = diagnostics_changed
+    );
+    qproperty!(
+        "diagnosticTexts",
+        Read = diagnostic_texts,
         Notify = diagnostics_changed
     );
 
@@ -115,9 +131,22 @@ impl InputGroup {
         !self.producer.is_empty() && self.edited_since_named
     }
 
-    // realises FR-107, FR-108
-    fn diagnostics(&self) -> String {
-        self.diagnostics.clone()
+    // realises FR-107, FR-108, FR-126
+    fn diagnostic_starts(&self) -> Vec<i32> {
+        self.marks.starts.clone()
+    }
+
+    fn diagnostic_ends(&self) -> Vec<i32> {
+        self.marks.ends.clone()
+    }
+
+    fn diagnostic_severities(&self) -> Vec<i32> {
+        self.marks.severities.clone()
+    }
+
+    // realises FR-127
+    fn diagnostic_texts(&self) -> Vec<String> {
+        self.marks.texts.clone()
     }
 
     // setters
@@ -231,18 +260,32 @@ impl InputGroup {
         self.producer = producer;
         self.tracker = IncrementTracker::default();
         self.document_changed();
-        self.set_diagnostics(String::new());
+        self.set_diagnostics(vec![], vec![], vec![], vec![]);
         self.name_path(path);
     }
 
-    // realises FR-107, FR-108
-    /// Replaces the rendering of the *diagnostics*; scheduled by the *node editor*.
+    // realises FR-107, FR-108, FR-126, FR-127, FR-128
+    /// Replaces the marks of the *diagnostics*: per *diagnostic* the start and the end of its
+    /// range as offsets in UTF-16 code units, the index of its severity and its message text;
+    /// scheduled by the *node editor* or by the network editor.
     #[qslot(qml_name = "setDiagnostics")]
-    fn set_diagnostics(&mut self, text: String) {
-        if text == self.diagnostics {
+    fn set_diagnostics(
+        &mut self,
+        starts: Vec<i32>,
+        ends: Vec<i32>,
+        severities: Vec<i32>,
+        texts: Vec<String>,
+    ) {
+        let marks = Marks {
+            starts,
+            ends,
+            severities,
+            texts,
+        };
+        if marks == self.marks {
             return;
         }
-        self.diagnostics = text;
+        self.marks = marks;
         self.diagnostics_changed();
     }
 }

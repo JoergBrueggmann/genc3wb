@@ -31,22 +31,25 @@ pub struct Workbench {
 }
 
 impl Default for Workbench {
-    /// Restores the settings, creates the groups, and wires them: the output group first, the
-    /// *node editor* with it, the network editor with the *node editor*, and the *input group*
-    /// of the *network file* with the network editor, the two last with their paths.
+    /// Restores the settings, creates the groups, and wires them: the *node editor* with the
+    /// output group, the network editor with the *node editor* and the *input group* of the
+    /// *network file*, and that *input group* with the network editor, the two last with their
+    /// paths.
     fn default() -> Self {
         let settings = Rc::new(RefCell::new(
             Settings::load(&Settings::default_path()).unwrap_or_default(),
         ));
         let output = OutputGroup::default_with_attached_qobject();
         let node = NodeEditor::default_with_attached_qobject();
+        let network = NetworkEditor::default_with_attached_qobject();
+        let network_input = InputGroup::default_with_attached_qobject();
         node.borrow_mut()
             .configure(output.borrow().get_qml_method_invoker());
-        let network = NetworkEditor::default_with_attached_qobject();
-        network
-            .borrow_mut()
-            .configure(Rc::clone(&settings), node.borrow().get_qml_method_invoker());
-        let network_input = InputGroup::default_with_attached_qobject();
+        network.borrow_mut().configure(
+            Rc::clone(&settings),
+            node.borrow().get_qml_method_invoker(),
+            network_input.borrow().get_qml_method_invoker(),
+        );
         network_input.borrow_mut().configure(
             InputKind::Network,
             Some(Rc::clone(&settings)),

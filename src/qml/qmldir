@@ -3,6 +3,7 @@ NodeWindow 1.0 NodeWindow.qml
 NetworkGraphGroup 1.0 NetworkGraphGroup.qml
 InputGroup 1.0 InputGroup.qml
 CodeEditor 1.0 CodeEditor.qml
+DiagnosticMark 1.0 DiagnosticMark.qml
 ProcessingStateIndicator 1.0 ProcessingStateIndicator.qml
 OutputGroup 1.0 OutputGroup.qml
 OutputWindow 1.0 OutputWindow.qml

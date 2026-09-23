@@ -53,18 +53,10 @@ Window {
             onTextEdited: editorWindow.group.text = editor.text
             onIdleExpired: editorWindow.group.idleExpired()
             onLongIdleExpired: editorWindow.group.longIdleExpired()
-        }
-
-        TextArea {
-            id: diagnosticsArea
-
-            Layout.fillWidth: true
-            Layout.maximumHeight: 120
-            readOnly: true
-            wrapMode: TextEdit.NoWrap
-            font.family: "Courier New"
-            text: editorWindow.group.diagnostics
-            visible: editorWindow.group.diagnostics.length > 0
+            markStarts: editorWindow.group.diagnosticStarts
+            markEnds: editorWindow.group.diagnosticEnds
+            markSeverities: editorWindow.group.diagnosticSeverities
+            markTexts: editorWindow.group.diagnosticTexts
         }
     }
 }

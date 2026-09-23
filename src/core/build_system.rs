@@ -43,6 +43,17 @@ pub struct NetworkDescription {
     pub nodes: Vec<NodeDescription>,
 }
 
+// realises FR-070, FR-073, FR-128
+/// What a *build* yields once the change of the *network file* is transmitted: the *diagnostics*
+/// of that change, and the *network response* or why the network was not yielded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuildResult {
+    /// the *diagnostics* of the open or edit request
+    pub diagnostics: Vec<Diagnostic>,
+    /// the *network response*, or why the *network query request* failed
+    pub network: Result<NetworkDescription, BuildError>,
+}
+
 // realises FR-073, FR-074, FR-112, C-005
 /// Why a *build* or a *request* failed, or why a process of the *build system* was not reached.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -403,21 +414,31 @@ impl BuildSession {
         })
     }
 
-    // realises FR-069, FR-070, FR-073
+    // realises FR-069, FR-070, FR-073, FR-128
     /// Carries out a *build*: transmits the change of the *network file*
     /// ([`Conversation::transmit`]), then queries the network ([`Conversation::query_network`]).
     ///
+    /// * The *diagnostics* of the change are yielded with the outcome of the query, so that a
+    ///   *network file* that is not well formed is marked where its fault lies.
+    ///
     /// # Errors
-    /// Returns what the two functions of [`Conversation`] return.
+    /// Returns what [`Conversation::transmit`] returns.
     pub fn build(
         &mut self,
         provided_before: &str,
         increment: &TextIncrement,
         provided_after: &str,
-    ) -> Result<NetworkDescription, BuildError> {
-        self.conversation
-            .transmit(&self.document, provided_before, increment, provided_after)?;
-        self.conversation.query_network()
+    ) -> Result<BuildResult, BuildError> {
+        let diagnostics = self.conversation.transmit(
+            &self.document,
+            provided_before,
+            increment,
+            provided_after,
+        )?;
+        Ok(BuildResult {
+            diagnostics,
+            network: self.conversation.query_network(),
+        })
     }
 
     // realises FR-068

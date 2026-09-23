@@ -1,4 +1,4 @@
-//! The *outputs* of the opened *node*, arranged as *output pages* with their navigation.
+//! The *outputs* of the opened *node* and its *diagnostics*, arranged as pages with their navigation.
 //!
 //! Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 //! Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -15,16 +15,19 @@ pub struct OutputFile {
     pub content: String,
 }
 
-// realises FR-027, FR-032, FR-033, FR-034, FR-035, FR-036, FR-122
-/// The *output pages* of the opened *node* and which of them is presented.
+// realises FR-027, FR-032, FR-033, FR-034, FR-035, FR-036, FR-122, FR-125
+/// The pages of the output group: the *output pages* of the opened *node*, then the
+/// *diagnostics page*, and which of them is presented.
 ///
-/// * The pages are the *outputs* in the order of the *node description*; there is none before a
-///   *node* is opened.
+/// * The *output pages* are the *outputs* in the order of the *node description*; there is none
+///   before a *node* is opened, and the *diagnostics page* is the one page then.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct OutputPages {
     /// the *outputs*, in the order of the *node description*
     files: Vec<OutputFile>,
-    /// the index of the presented page, 0 where there is none
+    /// the text of the *diagnostics page*: the *diagnostics* of every document, one per line
+    diagnostics: String,
+    /// the index of the presented page
     current: usize,
 }
 
@@ -53,8 +56,27 @@ impl OutputPages {
                     content: content_of(path),
                 })
                 .collect(),
+            diagnostics: String::new(),
             current: 0,
         }
+    }
+
+    // realises FR-107, FR-108, FR-125
+    /// Replaces the text of the *diagnostics page*.
+    pub fn set_diagnostics(&mut self, text: &str) {
+        self.diagnostics = text.to_owned();
+    }
+
+    // realises FR-125
+    /// Yields the text of the *diagnostics page*.
+    pub fn diagnostics(&self) -> &str {
+        &self.diagnostics
+    }
+
+    // realises FR-027, FR-036
+    /// Yields whether the presented page is the *diagnostics page*.
+    pub fn is_diagnostics_page(&self) -> bool {
+        self.current >= self.files.len()
     }
 
     // realises FR-111, IR-009
@@ -66,17 +88,17 @@ impl OutputPages {
     }
 
     // realises FR-027, FR-036
-    /// Yields the number of pages: the number of *outputs*.
+    /// Yields the number of pages: the number of *outputs*, plus the *diagnostics page*.
     pub fn page_count(&self) -> usize {
-        self.files.len()
+        self.files.len() + 1
     }
 
-    /// Yields the index of the presented page, 0 where there is none.
+    /// Yields the index of the presented page.
     pub fn current(&self) -> usize {
         self.current
     }
 
-    /// Yields the *output* of the presented page, `None` where there is no page.
+    /// Yields the *output* of the presented page, `None` on the *diagnostics page*.
     pub fn current_file(&self) -> Option<&OutputFile> {
         self.files.get(self.current)
     }
@@ -119,7 +141,8 @@ impl OutputPages {
  * independence     : ✅
  * edge cases       : ✅
  * conforms to doc  : ✅
- * covers bridge    : OutputGroup::next, OutputGroup::previous, OutputGroup::set_paths, OutputGroup::reload */
+ * covers bridge    : OutputGroup::next, OutputGroup::previous, OutputGroup::set_paths, OutputGroup::reload,
+ *                    OutputGroup::set_diagnostics */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,46 +160,74 @@ mod tests {
     }
 
     #[test]
-    fn pages_of_no_node_are_none() {
-        // FR-027, FR-036
+    fn pages_of_no_node_are_the_diagnostics_page_alone() {
+        // FR-027, FR-036, FR-125
         let pages = OutputPages::default();
         assert_eq!(
             (
                 pages.page_count(),
                 pages.current(),
                 pages.current_file(),
+                pages.is_diagnostics_page(),
                 pages.has_next(),
                 pages.has_previous()
             ),
-            (0, 0, None, false, false)
+            (1, 0, None, true, false, false)
         );
     }
 
     #[test]
-    fn pages_are_the_outputs_in_their_order_and_the_first_is_presented() {
-        // FR-027, FR-102, FR-122
+    fn pages_are_the_outputs_in_their_order_then_the_diagnostics_and_the_first_is_presented() {
+        // FR-027, FR-102, FR-122, FR-125
         let pages = OutputPages::of_paths(&paths(&["b.txt", "a.txt"]));
         assert_eq!(
             (
                 pages.page_count(),
                 pages.current(),
-                pages.current_file().map(|file| file.path.as_str())
+                pages.current_file().map(|file| file.path.as_str()),
+                pages.is_diagnostics_page()
             ),
-            (2, 0, Some("b.txt"))
+            (3, 0, Some("b.txt"), false)
         );
     }
 
     #[test]
-    fn navigation_stops_at_both_ends() {
-        // FR-032, FR-033, FR-034, FR-035
-        let mut pages = OutputPages::of_paths(&paths(&["a", "b", "c"]));
+    fn navigation_stops_at_both_ends_and_ends_on_the_diagnostics_page() {
+        // FR-032, FR-033, FR-034, FR-035, FR-125
+        let mut pages = OutputPages::of_paths(&paths(&["a", "b"]));
         let at_start = (pages.has_previous(), pages.previous());
         let forward = (pages.next(), pages.next(), pages.current());
-        let at_end = (pages.has_next(), pages.next());
-        let back = (pages.previous(), pages.current());
+        let at_end = (
+            pages.has_next(),
+            pages.next(),
+            pages.is_diagnostics_page(),
+            pages.current_file().is_none(),
+        );
+        let back = (
+            pages.previous(),
+            pages.current(),
+            pages.is_diagnostics_page(),
+        );
         assert_eq!(
             (at_start, forward, at_end, back),
-            ((false, false), (true, true, 2), (false, false), (true, 1))
+            (
+                (false, false),
+                (true, true, 2),
+                (false, false, true, true),
+                (true, 1, false)
+            )
+        );
+    }
+
+    #[test]
+    fn the_diagnostics_page_holds_the_text_set_for_it() {
+        // FR-107, FR-125
+        let mut pages = OutputPages::default();
+        let before = pages.diagnostics().to_owned();
+        pages.set_diagnostics("a.gc3: error 1:1-1:1: fault");
+        assert_eq!(
+            (before, pages.diagnostics()),
+            (String::new(), "a.gc3: error 1:1-1:1: fault")
         );
     }
 

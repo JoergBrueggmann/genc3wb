@@ -1,5 +1,5 @@
-// The node window: the meta compiler DSL, the inputs with their navigation, the outputs, the status line, and
-// the detached windows.
+// The node window as a machine: the inputs, the machine logo, the outputs, the meta compiler DSL as its control,
+// the status line, and the detached windows.
 //
 // Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 // Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -27,26 +27,7 @@ Window {
 
         anchors.fill: parent
         anchors.margins: 6
-        columns: 2
-
-        InputGroup {
-            id: metaDslGroup
-
-            group: Workbench.node.metaDsl
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            onDetachRequested: editorWindowModel.append({ "input": -1 })
-        }
-
-        OutputGroup {
-            id: outputGroup
-
-            output: Workbench.output
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            Layout.rowSpan: 2
-            onDetachRequested: outputWindowModel.append({ "number": outputWindowModel.count })
-        }
+        columns: 3
 
         GroupBox {
             id: inputsGroup
@@ -54,6 +35,7 @@ Window {
             title: qsTr("Inputs")
             Layout.fillWidth: true
             Layout.fillHeight: true
+            Layout.preferredWidth: 1
 
             ColumnLayout {
                 anchors.fill: parent
@@ -104,10 +86,71 @@ Window {
             }
         }
 
+        ColumnLayout {
+            id: machineColumn
+
+            Layout.fillHeight: true
+            Layout.alignment: Qt.AlignVCenter
+
+            RowLayout {
+                Layout.alignment: Qt.AlignHCenter
+
+                Label {
+                    id: inputArrow
+
+                    text: "\u2192"
+                    font.pointSize: 28
+                }
+
+                Image {
+                    id: machineLogo
+
+                    source: "qrc:/genc3wb/qml/icons/machine.png"
+                    sourceSize.width: 96
+                    sourceSize.height: 96
+                }
+
+                Label {
+                    id: outputArrow
+
+                    text: "\u2192"
+                    font.pointSize: 28
+                }
+            }
+
+            Label {
+                id: controlArrow
+
+                Layout.alignment: Qt.AlignHCenter
+                text: "\u2191"
+                font.pointSize: 28
+            }
+        }
+
+        OutputGroup {
+            id: outputGroup
+
+            output: Workbench.output
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            Layout.preferredWidth: 1
+            onDetachRequested: outputWindowModel.append({ "number": outputWindowModel.count })
+        }
+
+        InputGroup {
+            id: metaDslGroup
+
+            group: Workbench.node.metaDsl
+            Layout.columnSpan: 3
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            onDetachRequested: editorWindowModel.append({ "input": -1 })
+        }
+
         Label {
             id: statusLine
 
-            Layout.columnSpan: 2
+            Layout.columnSpan: 3
             text: Workbench.node.status.length > 0
                   ? Workbench.node.status
                   : !Workbench.node.served

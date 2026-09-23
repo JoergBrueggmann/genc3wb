@@ -14,6 +14,7 @@ fn main() {
     include_bytes_qml!("qml/NetworkGraphGroup.qml", "genc3wb");
     include_bytes_qml!("qml/InputGroup.qml", "genc3wb");
     include_bytes_qml!("qml/CodeEditor.qml", "genc3wb");
+    include_bytes_qml!("qml/DiagnosticMark.qml", "genc3wb");
     include_bytes_qml!("qml/ProcessingStateIndicator.qml", "genc3wb");
     include_bytes_qml!("qml/OutputGroup.qml", "genc3wb");
     include_bytes_qml!("qml/OutputWindow.qml", "genc3wb");
@@ -27,6 +28,7 @@ fn main() {
     include_bytes_qml!("qml/icons/indicatorUnknownFileChanged.png", "genc3wb");
     include_bytes_qml!("qml/icons/error.png", "genc3wb");
     include_bytes_qml!("qml/icons/network.png", "genc3wb");
+    include_bytes_qml!("qml/icons/machine.png", "genc3wb");
     let exit_code = QApp::new()
         .application_name("genc3wb")
         .register::<Workbench>()

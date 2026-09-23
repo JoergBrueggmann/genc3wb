@@ -1,7 +1,10 @@
-// A code editor with line numbers, the highlight of the current line, and the two idle timers.
+// A code editor with line numbers, the highlight of the current line, the marks of the diagnostics, and the two
+// idle timers.
 //
 // Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 // Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
+
+pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls
@@ -13,6 +16,12 @@ Frame {
     property alias readOnly: textArea.readOnly
     property int idleTime: 2000
     property int longIdleTime: 16000
+    // the marks of the diagnostics: per diagnostic its start and its end as offsets of the text,
+    // the index of its severity, and its message text
+    property var markStarts: []
+    property var markEnds: []
+    property var markSeverities: []
+    property var markTexts: []
 
     signal textEdited()
     signal idleExpired()
@@ -77,6 +86,23 @@ Frame {
                 idleTimer.restart();
                 longIdleTimer.restart();
                 root.textEdited();
+            }
+        }
+
+        Repeater {
+            id: markRepeater
+
+            model: root.markTexts.length
+            delegate: DiagnosticMark {
+                required property int index
+
+                x: textArea.x
+                y: textArea.y
+                textArea: textArea
+                start: root.markStarts[index]
+                end: root.markEnds[index]
+                severity: root.markSeverities[index]
+                message: root.markTexts[index]
             }
         }
     }

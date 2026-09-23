@@ -29,7 +29,7 @@ fn case_directory(case: &str, text: &str) -> PathBuf {
 }
 
 // FR-067, FR-069, FR-070, FR-073, FR-075, FR-077, IR-017 to IR-022
-// needs the service executable genc3d of genc³ 0.18.0.0 or later, named by the environment
+// needs the service executable genc3d of genc³ 0.19.0.0 or later, named by the environment
 // variable GENC3D, and the program dot of Graphviz
 #[test]
 #[ignore]
@@ -38,7 +38,9 @@ fn build_yields_the_nodes_and_the_laid_out_graph() {
     let network_path = directory.join("n.gc3n").to_string_lossy().into_owned();
     let mut builder = NetworkBuilder::new(directory.join("scratch"));
     let started = builder.restart(&build_system(), &network_path);
-    let built = builder.build("", &increment_between("", TWO_NODES), TWO_NODES);
+    let built = builder
+        .build("", &increment_between("", TWO_NODES), TWO_NODES)
+        .graph;
     let summary = built.as_ref().map(|graph| {
         (
             graph
@@ -68,7 +70,7 @@ fn build_yields_the_nodes_and_the_laid_out_graph() {
     );
 }
 
-// FR-069, FR-070, FR-071, FR-073, FR-074
+// FR-069, FR-070, FR-071, FR-073, FR-074, FR-128
 // needs the service executable genc3d, named by the environment variable GENC3D, and dot
 #[test]
 #[ignore]
@@ -81,15 +83,23 @@ fn faulty_edit_fails_with_the_fault_and_its_correction_succeeds_again() {
     let first = builder.build("", &increment_between("", TWO_NODES), TWO_NODES);
     let second = builder.build(TWO_NODES, &increment_between(TWO_NODES, &faulty), &faulty);
     let third = builder.build(&faulty, &increment_between(&faulty, TWO_NODES), TWO_NODES);
+    let marked = second.diagnostics.iter().any(|diagnostic| {
+        diagnostic.start.line == 7 && diagnostic.end.column > diagnostic.start.column
+    });
     drop(builder);
     let _ = fs::remove_dir_all(&directory);
     assert_eq!(
         (
-            first.is_ok(),
-            second.as_ref().err().map(|message| !message.is_empty()),
-            third.map(|graph| graph.nodes.len())
+            first.graph.is_ok(),
+            second
+                .graph
+                .as_ref()
+                .err()
+                .map(|message| !message.is_empty()),
+            marked,
+            third.graph.map(|graph| graph.nodes.len())
         ),
-        (true, Some(true), Ok(2))
+        (true, Some(true), true, Ok(2))
     );
 }
 
@@ -100,7 +110,7 @@ const COPY_META_DSL: &str = "syntax\n  root = chars, EOS ;\n  chars = chars, ch 
     generator copy input \"a.in\" output \"x.txt\"\n  root => flat(#1) ;\n";
 
 // FR-104 to FR-109, FR-111, IR-026 to IR-028
-// needs the service executable genc3d of genc³ 0.18.0.0 or later, named by the environment
+// needs the service executable genc3d of genc³ 0.19.0.0 or later, named by the environment
 // variable GENC3D
 #[test]
 #[ignore]

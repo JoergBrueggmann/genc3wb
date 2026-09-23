@@ -3,7 +3,7 @@
 //! Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 //! Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
 
-use crate::core::api_message::NodeDescription;
+use crate::core::api_message::{Diagnostic, NodeDescription};
 use crate::core::build_system::{BuildError, BuildSession};
 use crate::core::network_graph::{GraphLayout, dot_of_network, render};
 use crate::core::text_increment::TextIncrement;
@@ -21,6 +21,17 @@ pub struct BuiltGraph {
     pub layout: GraphLayout,
     /// the *node descriptions*, in the order of the vertices `n<index>`
     pub nodes: Vec<NodeDescription>,
+}
+
+// realises FR-069, FR-073, FR-074, FR-128
+/// What a *build* yields for the *front end*: the *diagnostics* of the change of the
+/// *network file*, and the laid out graph or the *error message*.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BuildOutcome {
+    /// the *diagnostics* of the open or edit request; none where it was not answered
+    pub diagnostics: Vec<Diagnostic>,
+    /// the graph of a successful *build*, or the *error message* of a failed one
+    pub graph: Result<BuiltGraph, String>,
 }
 
 // realises FR-067, FR-068, FR-069, FR-074
@@ -82,63 +93,90 @@ impl NetworkBuilder {
         self.start()
     }
 
-    // realises FR-069, FR-073, FR-074, FR-075, FR-077
+    // realises FR-069, FR-073, FR-074, FR-075, FR-077, FR-128
     /// Carries out a *build* and lays out its *network graph*.
     ///
     /// * Where no *build system* runs although one is named, it is started first.
     /// * Where the connection fails, the *build system* is given up, so that the next *build*
     ///   starts it again.
     /// * The image of the *build* before is removed once the new one is written.
-    ///
-    /// # Errors
-    /// Returns the *error message*: that of the [`BuildError`], or that of the
-    /// [`crate::core::network_graph::GraphError`] where `dot` fails.
+    /// * The graph is the *error message* where the *build* failed: that of the [`BuildError`],
+    ///   or that of the [`crate::core::network_graph::GraphError`] where `dot` fails.
     pub fn build(
         &mut self,
         provided_before: &str,
         increment: &TextIncrement,
         provided_after: &str,
-    ) -> Result<BuiltGraph, String> {
+    ) -> BuildOutcome {
+        let (diagnostics, graph) = self.built(provided_before, increment, provided_after);
+        BuildOutcome { diagnostics, graph }
+    }
+
+    /// Carries out the *build* of [`NetworkBuilder::build`]; the *diagnostics* are those of the
+    /// change where it was answered, none otherwise.
+    fn built(
+        &mut self,
+        provided_before: &str,
+        increment: &TextIncrement,
+        provided_after: &str,
+    ) -> (Vec<Diagnostic>, Result<BuiltGraph, String>) {
         let restarted = self.session.is_none();
         if restarted {
             if self.executable.is_empty() {
-                return Err("No build system is named.".to_owned());
+                return (vec![], Err("No build system is named.".to_owned()));
             }
             if self.network_path.is_empty() {
-                return Err("No compiler network file is named.".to_owned());
+                return (vec![], Err("No compiler network file is named.".to_owned()));
             }
-            self.start().map_err(|error| error.to_string())?;
+            if let Err(error) = self.start() {
+                return (vec![], Err(error.to_string()));
+            }
         }
         let session = self
             .session
             .as_mut()
             .expect("a build system runs after a successful start");
-        let description = match session.build(provided_before, increment, provided_after) {
+        let result = match session.build(provided_before, increment, provided_after) {
+            Ok(result) => result,
+            Err(error) => {
+                self.give_up_on(&error);
+                return (vec![], Err(error.to_string()));
+            }
+        };
+        let description = match result.network {
             Ok(description) => description,
             Err(error) => {
-                match error {
-                    BuildError::Connection(_)
-                    | BuildError::Process(_)
-                    | BuildError::Protocol(_) => self.session = None,
-                    BuildError::Unsupported
-                    | BuildError::NotExecutable(_)
-                    | BuildError::Refused(_) => {}
-                }
-                return Err(error.to_string());
+                self.give_up_on(&error);
+                return (result.diagnostics, Err(error.to_string()));
             }
         };
         self.images_written += 1;
         let stem = format!("graph-{}", self.images_written);
-        let rendered = render(&dot_of_network(&description.nodes), &self.directory, &stem)
-            .map_err(|error| error.to_string())?;
+        let rendered = match render(&dot_of_network(&description.nodes), &self.directory, &stem) {
+            Ok(rendered) => rendered,
+            Err(error) => return (result.diagnostics, Err(error.to_string())),
+        };
         if let Some(previous) = self.last_image.replace(rendered.image_path.clone()) {
             let _ = std::fs::remove_file(previous);
         }
-        Ok(BuiltGraph {
-            image_path: rendered.image_path,
-            layout: rendered.layout,
-            nodes: description.nodes,
-        })
+        (
+            result.diagnostics,
+            Ok(BuiltGraph {
+                image_path: rendered.image_path,
+                layout: rendered.layout,
+                nodes: description.nodes,
+            }),
+        )
+    }
+
+    /// Gives the *build system* up where `error` says that it is not reached any more.
+    fn give_up_on(&mut self, error: &BuildError) {
+        match error {
+            BuildError::Connection(_) | BuildError::Process(_) | BuildError::Protocol(_) => {
+                self.session = None;
+            }
+            BuildError::Unsupported | BuildError::NotExecutable(_) | BuildError::Refused(_) => {}
+        }
     }
 
     // realises FR-068
@@ -205,7 +243,7 @@ mod tests {
     #[test]
     fn build_without_a_named_build_system_fails_with_its_message() {
         assert_eq!(
-            builder("unnamed").build("", &increment(), "a"),
+            builder("unnamed").build("", &increment(), "a").graph,
             Err("No build system is named.".to_owned())
         );
     }
@@ -215,7 +253,7 @@ mod tests {
         let mut builder = builder("nofile");
         let _ = builder.restart("/bin/sh", "");
         assert_eq!(
-            builder.build("", &increment(), "a"),
+            builder.build("", &increment(), "a").graph,
             Err("No compiler network file is named.".to_owned())
         );
     }
@@ -238,6 +276,7 @@ mod tests {
         let _ = builder.restart("/nonexistent/genc3d", "/tmp/n.gc3n");
         let message = builder
             .build("", &increment(), "a")
+            .graph
             .err()
             .unwrap_or_default();
         assert!(message.contains("/nonexistent/genc3d") || message.contains("not available"));

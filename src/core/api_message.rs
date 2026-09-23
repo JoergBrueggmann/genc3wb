@@ -122,6 +122,17 @@ impl Severity {
         }
     }
 
+    // realises FR-126
+    /// Yields the index of the severity, in the order error, warning, information, by which the
+    /// *front end* colours a mark.
+    pub fn index(self) -> usize {
+        match self {
+            Severity::Error => 0,
+            Severity::Warning => 1,
+            Severity::Information => 2,
+        }
+    }
+
     /// Yields the severity as its rendering names it.
     fn name(self) -> &'static str {
         match self {
@@ -271,15 +282,76 @@ pub fn delta_of_increment(provided: &str, increment: &TextIncrement) -> EditDelt
     }
 }
 
-// realises FR-107, IR-029
-/// Yields the *diagnostics* as text, one rendering per line, in their order; empty where there
-/// is none.
-pub fn rendering_of_diagnostics(diagnostics: &[Diagnostic]) -> String {
-    diagnostics
+// realises FR-107, FR-125, IR-029
+/// Yields the *diagnostics* of several documents as text, one line per *diagnostic* carrying the
+/// *document identifier*, a colon, a space and the rendering, the documents in their order;
+/// empty where there is none.
+pub fn rendering_of_documents(documents: &[(String, Vec<Diagnostic>)]) -> String {
+    documents
         .iter()
-        .map(Diagnostic::rendering)
+        .flat_map(|(document, diagnostics)| {
+            diagnostics
+                .iter()
+                .map(move |diagnostic| format!("{document}: {}", diagnostic.rendering()))
+        })
         .collect::<Vec<String>>()
         .join("\n")
+}
+
+// realises FR-126
+/// The marks of the *diagnostics* of one document, as the *front end* draws them: per
+/// *diagnostic*, the start and the end of its range as offsets of the text in UTF-16 code units,
+/// which a QML string counts, the index of its severity, and its message text.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Marks {
+    pub starts: Vec<i32>,
+    pub ends: Vec<i32>,
+    pub severities: Vec<i32>,
+    pub texts: Vec<String>,
+}
+
+// realises FR-126
+/// Yields the offset of `position` in `text`, in UTF-16 code units.
+///
+/// * A position beyond the end of a line, or beyond the last line, yields the offset of the
+///   end of that line, or of the text.
+pub fn utf16_offset_of_position(text: &str, position: ReadPosition) -> usize {
+    let mut offset = 0;
+    let mut line = 1;
+    let mut column = 1;
+    for character in text.chars() {
+        if line == position.line && column == position.column {
+            return offset;
+        }
+        if character == '\n' {
+            if line == position.line {
+                return offset;
+            }
+            line += 1;
+            column = 1;
+        } else {
+            column += 1;
+        }
+        offset += character.len_utf16();
+    }
+    offset
+}
+
+// realises FR-126
+/// Yields the marks of `diagnostics` in `text`, in their order.
+pub fn marks_of_diagnostics(text: &str, diagnostics: &[Diagnostic]) -> Marks {
+    let offset = |position: ReadPosition| {
+        i32::try_from(utf16_offset_of_position(text, position)).unwrap_or(i32::MAX)
+    };
+    Marks {
+        starts: diagnostics.iter().map(|d| offset(d.start)).collect(),
+        ends: diagnostics.iter().map(|d| offset(d.end)).collect(),
+        severities: diagnostics
+            .iter()
+            .map(|d| d.severity.index() as i32)
+            .collect(),
+        texts: diagnostics.iter().map(|d| d.text.clone()).collect(),
+    }
 }
 
 // realises FR-109
@@ -714,23 +786,79 @@ mod tests {
     }
 
     #[test]
-    fn diagnostics_render_one_per_line_and_none_as_the_empty_text() {
-        // FR-107, FR-108, IR-029
+    fn diagnostics_of_documents_render_one_per_line_with_their_document() {
+        // FR-107, FR-108, FR-125, IR-029
         let error = Diagnostic {
             severity: Severity::Error,
             start: ReadPosition { line: 1, column: 1 },
             end: ReadPosition { line: 1, column: 1 },
             text: "fault".to_owned(),
         };
+        let documents = vec![
+            ("a.gc3".to_owned(), vec![error, diagnostic()]),
+            ("a.in".to_owned(), vec![]),
+            ("b.in".to_owned(), vec![diagnostic()]),
+        ];
         assert_eq!(
             (
-                rendering_of_diagnostics(&[error, diagnostic()]),
-                rendering_of_diagnostics(&[])
+                rendering_of_documents(&documents),
+                rendering_of_documents(&[])
             ),
             (
-                "error 1:1-1:1: fault\nwarning 2:3-2:7: doubtful".to_owned(),
+                "a.gc3: error 1:1-1:1: fault\na.gc3: warning 2:3-2:7: doubtful\n\
+                 b.in: warning 2:3-2:7: doubtful"
+                    .to_owned(),
                 String::new()
             )
+        );
+    }
+
+    #[test]
+    fn offset_of_a_position_counts_utf16_units_and_lines() {
+        // FR-126: 'ä' is one unit, the emoji two
+        let text = "a\u{e4}\n\u{1f600}bc\nd";
+        assert_eq!(
+            [
+                utf16_offset_of_position(text, ReadPosition { line: 1, column: 1 }),
+                utf16_offset_of_position(text, ReadPosition { line: 1, column: 3 }),
+                utf16_offset_of_position(text, ReadPosition { line: 2, column: 2 }),
+                utf16_offset_of_position(text, ReadPosition { line: 2, column: 4 }),
+                utf16_offset_of_position(text, ReadPosition { line: 3, column: 2 }),
+            ],
+            [0, 2, 5, 7, 9]
+        );
+    }
+
+    #[test]
+    fn offset_beyond_a_line_or_beyond_the_text_is_the_end_of_that_line_or_of_the_text() {
+        // FR-126
+        assert_eq!(
+            [
+                utf16_offset_of_position("ab\ncd", ReadPosition { line: 1, column: 9 }),
+                utf16_offset_of_position("ab\ncd", ReadPosition { line: 7, column: 1 }),
+                utf16_offset_of_position("", ReadPosition { line: 1, column: 1 }),
+            ],
+            [2, 5, 0]
+        );
+    }
+
+    #[test]
+    fn marks_carry_the_offsets_the_severity_index_and_the_text_of_every_diagnostic() {
+        // FR-126, FR-127
+        let error = Diagnostic {
+            severity: Severity::Error,
+            start: ReadPosition { line: 1, column: 2 },
+            end: ReadPosition { line: 1, column: 2 },
+            text: "fault".to_owned(),
+        };
+        assert_eq!(
+            marks_of_diagnostics("ab\ncdefgh", &[error, diagnostic()]),
+            Marks {
+                starts: vec![1, 5],
+                ends: vec![1, 9],
+                severities: vec![0, 1],
+                texts: vec!["fault".to_owned(), "doubtful".to_owned()],
+            }
         );
     }
 

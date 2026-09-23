@@ -1,4 +1,4 @@
-// The output group: navigation, page label, detach button and the output pages.
+// The output group: navigation, page label, detach button, the output pages and the diagnostics page.
 //
 // Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 // Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -34,7 +34,9 @@ GroupBox {
             Label {
                 id: pageLabel
 
-                text: qsTr("output %1 of %2").arg(root.output.pageIndex + 1).arg(root.output.pageCount)
+                text: root.output.diagnosticsPage
+                      ? qsTr("Diagnostics (page %1 of %2)").arg(root.output.pageIndex + 1).arg(root.output.pageCount)
+                      : qsTr("output %1 of %2").arg(root.output.pageIndex + 1).arg(root.output.pageCount)
             }
 
             Button {
@@ -58,21 +60,38 @@ GroupBox {
             }
         }
 
-        TextField {
-            id: filePathField
-
-            Layout.fillWidth: true
-            readOnly: true
-            text: root.output.filePath
-        }
-
-        CodeEditor {
-            id: fileContentEditor
+        StackLayout {
+            id: pages
 
             Layout.fillWidth: true
             Layout.fillHeight: true
-            readOnly: true
-            text: root.output.fileContent
+            currentIndex: root.output.diagnosticsPage ? 1 : 0
+
+            ColumnLayout {
+                TextField {
+                    id: filePathField
+
+                    Layout.fillWidth: true
+                    readOnly: true
+                    text: root.output.filePath
+                }
+
+                CodeEditor {
+                    id: fileContentEditor
+
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    readOnly: true
+                    text: root.output.fileContent
+                }
+            }
+
+            CodeEditor {
+                id: diagnosticsEditor
+
+                readOnly: true
+                text: root.output.diagnostics
+            }
         }
     }
 }

@@ -15,15 +15,22 @@ pub struct OutputGroup {
     pages: OutputPages,
 }
 
-// realises FR-027, FR-030, FR-032 to FR-036, FR-042, FR-044, FR-102, FR-110, FR-111, FR-122
+// realises FR-027, FR-030, FR-032 to FR-036, FR-042, FR-044, FR-102, FR-107, FR-108, FR-110,
+// FR-111, FR-122, FR-125
 #[qobject(NoQmlElement)]
 impl OutputGroup {
     qproperty!("pageIndex", Read = page_index, Notify = page_changed);
     qproperty!("pageCount", Read = page_count, Notify = page_changed);
     qproperty!("hasNext", Read = has_next, Notify = page_changed);
     qproperty!("hasPrevious", Read = has_previous, Notify = page_changed);
+    qproperty!(
+        "diagnosticsPage",
+        Read = diagnostics_page,
+        Notify = page_changed
+    );
     qproperty!("filePath", Read = file_path, Notify = page_changed);
     qproperty!("fileContent", Read = file_content, Notify = content_changed);
+    qproperty!("diagnostics", Read = diagnostics, Notify = content_changed);
 
     // getters
     fn page_index(&self) -> i32 {
@@ -40,6 +47,16 @@ impl OutputGroup {
 
     fn has_previous(&self) -> bool {
         self.pages.has_previous()
+    }
+
+    // realises FR-036, FR-125
+    fn diagnostics_page(&self) -> bool {
+        self.pages.is_diagnostics_page()
+    }
+
+    // realises FR-125
+    fn diagnostics(&self) -> String {
+        self.pages.diagnostics().to_owned()
     }
 
     fn file_path(&self) -> String {
@@ -97,6 +114,18 @@ impl OutputGroup {
     #[qslot(qml_name = "reload")]
     fn reload(&mut self) {
         self.pages.reload();
+        self.content_changed();
+    }
+
+    // realises FR-107, FR-108, FR-125
+    /// Replaces the text of the *diagnostics page* and emits `content_changed`; scheduled by the
+    /// *node editor*.
+    #[qslot(qml_name = "setDiagnostics")]
+    fn set_diagnostics(&mut self, text: String) {
+        if text == self.pages.diagnostics() {
+            return;
+        }
+        self.pages.set_diagnostics(&text);
         self.content_changed();
     }
 }

@@ -1,5 +1,5 @@
-// One input group: file name field, file selector, indicator, the icon of an input of a producer, code editor,
-// the diagnostics, detach button, and the dialogs of that group.
+// One input group: file name field, file selector, indicator, the icon of an input of a producer, code editor
+// with the marks of the diagnostics, detach button, and the dialogs of that group.
 //
 // Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 // Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -87,18 +87,10 @@ GroupBox {
             onTextEdited: root.group.text = editor.text
             onIdleExpired: root.group.idleExpired()
             onLongIdleExpired: root.group.longIdleExpired()
-        }
-
-        TextArea {
-            id: diagnosticsArea
-
-            Layout.fillWidth: true
-            Layout.maximumHeight: 120
-            readOnly: true
-            wrapMode: TextEdit.NoWrap
-            font.family: "Courier New"
-            text: root.group.diagnostics
-            visible: root.group.diagnostics.length > 0
+            markStarts: root.group.diagnosticStarts
+            markEnds: root.group.diagnosticEnds
+            markSeverities: root.group.diagnosticSeverities
+            markTexts: root.group.diagnosticTexts
         }
     }
 

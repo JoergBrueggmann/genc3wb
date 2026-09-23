@@ -38,7 +38,7 @@ bridging code against Qt.
   that the module `qtsvg` of Qt is not needed.
 
 - A build system that conforms to genc³api 0.9.0.0 and offers the description
-  mode, which is `genc3d` of genc³ 0.18.0.0 or later. It is named in the
+  mode, which is `genc3d` of genc³ 0.19.0.0 or later. It is named in the
   compiler network editor; without it a network file is edited, but no graph is
   shown. genc³wb reaches it through a Unix domain socket, so that in this
   version the graph is shown on Linux and macOS alone.
@@ -207,14 +207,20 @@ the settings menu.
 
 ### The node window
 
-A double-click on a meta compiler-compiler in the graph opens it. The build
-system named in the compiler network editor is started for that one node, in
-the directory of the network file, and shut down when another node is opened,
-when the node window closes and when the workbench terminates. An edit of the
-meta compiler DSL or of an input is saved after the idle time and transmitted to
-the node, which answers with its diagnostics; they are shown below the editor.
-After every change the node accepts without an error, its outputs are stored and
-shown on the output pages.
+A double-click on a meta compiler-compiler in the graph opens it. The window
+shows the node as a machine: the inputs on the left, the outputs on the right,
+the gear in the middle, and the meta compiler DSL below as its control. The
+build system named in the compiler network editor is started for that one node,
+in the directory of the network file, and shut down when another node is
+opened, when the node window closes and when the workbench terminates. An edit
+of the meta compiler DSL or of an input is saved after the idle time and
+transmitted to the node, which answers with its diagnostics: each is marked in
+its editor by a wavy line under the faulty place — red for an error, orange for
+a warning, blue for information — whose tooltip shows the message, and all of
+them are listed on the last page of the outputs, 'Diagnostics'. After every
+change the node accepts without an error, its outputs are stored and shown on
+the output pages. The diagnostics of the network file are marked in its editor
+the same way.
 
 An input that another node produces is editable all the same. As soon as it is
 edited, an exclamation mark appears beside its file name, whose tooltip names

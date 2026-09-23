@@ -4,7 +4,9 @@
 //! Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
 
 use crate::bridge::input_group::InputGroup;
-use crate::core::api_message::{Diagnostic, has_error, rendering_of_diagnostics};
+use crate::core::api_message::{
+    Diagnostic, has_error, marks_of_diagnostics, rendering_of_documents,
+};
 use crate::core::input_file::InputKind;
 use crate::core::network_builder::NetworkBuilder;
 use crate::core::network_graph::path_of_identifier;
@@ -75,6 +77,9 @@ pub struct NodeEditor {
     input_page: usize,
     /// the *provided text* of each document, by its *document identifier*, as a receiver holds it
     provided: BTreeMap<String, String>,
+    /// the *diagnostics* of each document, by its *document identifier*, as the *node* last
+    /// answered them
+    diagnostics: BTreeMap<String, Vec<Diagnostic>>,
     /// the *originals* of the served *node*
     originals: Originals,
     /// whether the *node* is served
@@ -104,6 +109,7 @@ impl Default for NodeEditor {
             documents: Vec::new(),
             input_page: 0,
             provided: BTreeMap::new(),
+            diagnostics: BTreeMap::new(),
             originals: Originals::default(),
             served: false,
             status: String::new(),
@@ -115,7 +121,7 @@ impl Default for NodeEditor {
     }
 }
 
-// realises FR-001, FR-086, FR-087, FR-102 to FR-112, FR-115, FR-117 to FR-123
+// realises FR-001, FR-086, FR-087, FR-102 to FR-112, FR-115, FR-117 to FR-123, FR-125, FR-126
 #[qobject(NoQmlElement)]
 impl NodeEditor {
     qproperty!("name", Read = name, Notify = node_changed);
@@ -246,6 +252,7 @@ impl NodeEditor {
         self.restore_originals();
         self.originals = Originals::capture(&produced_paths(&directory, &inputs, &producers));
         self.provided.clear();
+        self.diagnostics.clear();
         self.name = name;
         self.documents = std::iter::once(meta_dsl.clone())
             .chain(inputs.iter().cloned())
@@ -271,6 +278,7 @@ impl NodeEditor {
                 .map(|identifier| path_of_identifier(&directory, identifier))
                 .collect();
             invoke_method!(output, "setPaths", paths);
+            invoke_method!(output, "setDiagnostics", String::new());
         }
         self.served = false;
         self.status.clear();
@@ -339,7 +347,7 @@ impl NodeEditor {
         }
     }
 
-    // realises FR-107, FR-108, FR-109, FR-111, FR-112
+    // realises FR-107, FR-108, FR-109, FR-111, FR-112, FR-125, FR-126
     /// Takes every report of the *node thread*; scheduled by that thread on the main thread.
     #[qslot(qml_name = "reportArrived")]
     fn report_arrived(&mut self) {
@@ -358,13 +366,7 @@ impl NodeEditor {
                     self.uncount_request();
                     match outcome {
                         Ok(diagnostics) => {
-                            if let Some(group) = self.group_of(&document) {
-                                invoke_method!(
-                                    group,
-                                    "setDiagnostics",
-                                    rendering_of_diagnostics(&diagnostics)
-                                );
-                            }
+                            self.present_diagnostics(&document, &diagnostics);
                             if !has_error(&diagnostics) {
                                 self.send(NodeCommand::Store);
                                 self.count_request();
@@ -420,6 +422,44 @@ impl NodeEditor {
             path_of_identifier(directory, identifier),
             producer.to_owned()
         );
+    }
+
+    // realises FR-107, FR-108, FR-125, FR-126, FR-127
+    /// Records the *diagnostics* of `document`, schedules `setDiagnostics` of its *input group*
+    /// with their marks in the *provided text* of the document, and `setDiagnostics` of the
+    /// output group with the rendering of those of every document, in the order of the
+    /// documents.
+    fn present_diagnostics(&mut self, document: &str, diagnostics: &[Diagnostic]) {
+        self.diagnostics
+            .insert(document.to_owned(), diagnostics.to_vec());
+        let text = self.provided.get(document).cloned().unwrap_or_default();
+        if let Some(group) = self.group_of(document) {
+            let marks = marks_of_diagnostics(&text, diagnostics);
+            invoke_method!(
+                group,
+                "setDiagnostics",
+                marks.starts,
+                marks.ends,
+                marks.severities,
+                marks.texts
+            );
+        }
+        if let Some(output) = &self.output {
+            let documents: Vec<(String, Vec<Diagnostic>)> = self
+                .documents
+                .iter()
+                .map(|identifier| {
+                    (
+                        identifier.clone(),
+                        self.diagnostics
+                            .get(identifier)
+                            .cloned()
+                            .unwrap_or_default(),
+                    )
+                })
+                .collect();
+            invoke_method!(output, "setDiagnostics", rendering_of_documents(&documents));
+        }
     }
 
     // realises FR-115

@@ -12,6 +12,19 @@ and this project adheres to a four-part version number.
 
 At the moment, nothing unreleased here.
 
+## [0.9.0.0] - 2026-09-23
+
+**_Diagnostics_with_read_positions_**
+
+Leading work item: definition 0.19.0.0 (genc3)
+
+- Read the *diagnostics* of a response and display each at its span as a wavy line in the code editor whose document it concerns, red for severity error, orange for warning and blue for information, with its message text as a tooltip while the pointer rests on the line; the *network file* alike, from the *diagnostic* response of the *build system* to its open and edit requests.
+- Rearrange the *node window* as a machine: the *inputs* on the left, the machine logo in the middle with an arrow from the *inputs* and an arrow to the *outputs*, the output group on the right, the *meta compiler DSL* below as the control of the machine with an arrow up to the logo, and the status line at the bottom.
+- Present the *diagnostics* as an *output* of the machine: a page 'Diagnostics' of the output group, after the *outputs*, lists those of every document of the *node* with its path; the area below each editor is removed.
+- Let a *build* carry the *diagnostics* of the *network file* beside its graph or its *error message* (`BuildResult`, `BuildOutcome`), so that the network editor marks them; compute the marks in the *core* (`Marks`, `marks_of_diagnostics`) as offsets in UTF-16 code units, which a QML string counts, in the *provided text* the *diagnostics* were computed from; draw them in the new component 'DiagnosticMark.qml' as a `Canvas` per line of text over the text area, with a `HoverHandler` for the tooltip; hold the *diagnostics* of every document in the *node editor* and render them for the *diagnostics page* (`rendering_of_documents`); add the *machine logo* 'icons/machine.png', a gear drawn for the purpose.
+- Cite genc³ 0.19.0.0 in 'README.md' and in the tests, where 0.18.0.0 was cited, and version the package 0.9.0.
+- Changes what the *project folder* delivers incompatibly, the *node window* and the presentation of the *diagnostics*: a 'B' bump as long as the major part is 0.
+
 ## [0.8.0.0] - 2026-09-23
 
 **_Node_window_from_the_network_file_**
