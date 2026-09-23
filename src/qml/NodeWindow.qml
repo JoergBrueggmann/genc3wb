@@ -1,4 +1,5 @@
-// The node window: the four groups of one node, a status line, and the detached windows.
+// The node window: the meta compiler DSL, the inputs with their navigation, the outputs, the status line, and
+// the detached windows.
 //
 // Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 // Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -16,11 +17,10 @@ import genc3wb
 Window {
     id: nodeWindow
 
-    property string nodeName: ""
-
     width: 1200
     height: 760
-    title: nodeWindow.nodeName.length > 0 ? "genc³wb - " + nodeWindow.nodeName : "genc³wb"
+    title: Workbench.node.name.length > 0 ? "genc³wb - " + Workbench.node.name : "genc³wb"
+    onClosing: Workbench.node.close()
 
     GridLayout {
         id: layout
@@ -30,12 +30,12 @@ Window {
         columns: 2
 
         InputGroup {
-            id: ccInputGroup
+            id: metaDslGroup
 
-            group: Workbench.ccInput
+            group: Workbench.node.metaDsl
             Layout.fillWidth: true
             Layout.fillHeight: true
-            onDetachRequested: editorWindowModel.append({ "kind": 0 })
+            onDetachRequested: editorWindowModel.append({ "input": -1 })
         }
 
         OutputGroup {
@@ -48,28 +48,71 @@ Window {
             onDetachRequested: outputWindowModel.append({ "number": outputWindowModel.count })
         }
 
-        InputGroup {
-            id: cInputGroup
+        GroupBox {
+            id: inputsGroup
 
-            group: Workbench.cInput
+            title: qsTr("Inputs")
             Layout.fillWidth: true
             Layout.fillHeight: true
-            onDetachRequested: editorWindowModel.append({ "kind": 1 })
-        }
 
-        RunnerGroup {
-            id: runnerGroup
+            ColumnLayout {
+                anchors.fill: parent
 
-            runner: Workbench.runner
-            Layout.fillWidth: true
-            Layout.columnSpan: 2
+                RowLayout {
+                    Button {
+                        id: previousInputButton
+
+                        text: "<"
+                        enabled: Workbench.node.hasPreviousInput
+                        onClicked: Workbench.node.previousInput()
+                    }
+
+                    Label {
+                        id: inputLabel
+
+                        text: qsTr("input %1 of %2").arg(Workbench.node.inputPage + 1).arg(Workbench.node.inputCount)
+                    }
+
+                    Button {
+                        id: nextInputButton
+
+                        text: ">"
+                        enabled: Workbench.node.hasNextInput
+                        onClicked: Workbench.node.nextInput()
+                    }
+                }
+
+                StackLayout {
+                    id: inputPages
+
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    currentIndex: Workbench.node.inputPage
+
+                    Repeater {
+                        id: inputRepeater
+
+                        model: Workbench.node.inputCount
+                        delegate: InputGroup {
+                            required property int index
+
+                            group: Workbench.node.inputAt(index)
+                            onDetachRequested: editorWindowModel.append({ "input": index })
+                        }
+                    }
+                }
+            }
         }
 
         Label {
-            id: runLabel
+            id: statusLine
 
             Layout.columnSpan: 2
-            text: Workbench.runner.running ? qsTr("The compiler-compiler is running.") : ""
+            text: Workbench.node.status.length > 0
+                  ? Workbench.node.status
+                  : !Workbench.node.served
+                    ? qsTr("The node is not served.")
+                    : Workbench.node.busy ? qsTr("The node is processing.") : qsTr("The node is served.")
         }
     }
 
@@ -100,9 +143,9 @@ Window {
         model: editorWindowModel
         delegate: EditorWindow {
             required property int index
-            required property int kind
+            required property int input
 
-            group: kind === 0 ? Workbench.ccInput : Workbench.cInput
+            group: input < 0 ? Workbench.node.metaDsl : Workbench.node.inputAt(input)
             transientParent: nodeWindow
             visible: true
             onClosing: editorWindowModel.remove(index)

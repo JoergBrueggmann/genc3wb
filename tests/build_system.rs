@@ -3,7 +3,7 @@
 //! Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 //! Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
 
-use genc3wb::core::api_message::NodeKind;
+use genc3wb::core::api_message::{NodeKind, has_error};
 use genc3wb::core::network_builder::NetworkBuilder;
 use genc3wb::core::text_increment::increment_between;
 
@@ -90,5 +90,65 @@ fn faulty_edit_fails_with_the_fault_and_its_correction_succeeds_again() {
             third.map(|graph| graph.nodes.len())
         ),
         (true, Some(true), Ok(2))
+    );
+}
+
+/// A *meta compiler DSL* whose *input* is copied to its *output*: a syntax matching the letters of
+/// 'hello world', and a generator emitting the matched text.
+const COPY_META_DSL: &str = "syntax\n  root = chars, EOS ;\n  chars = chars, ch | ch ;\n  \
+    ch = 'h' | 'e' | 'l' | 'o' | 'w' | 'r' | 'd' | ' ' ;\n\
+    generator copy input \"a.in\" output \"x.txt\"\n  root => flat(#1) ;\n";
+
+// FR-104 to FR-109, FR-111, IR-026 to IR-028
+// needs the service executable genc3d of genc³ 0.18.0.0 or later, named by the environment
+// variable GENC3D
+#[test]
+#[ignore]
+fn node_is_served_and_answers_a_change_with_diagnostics_and_a_store() {
+    use genc3wb::core::node_runner::{NodeRunner, NodeStart};
+
+    let directory = case_directory("node", TWO_NODES);
+    fs::write(directory.join("a.gc3"), COPY_META_DSL)
+        .expect("the meta compiler DSL can be written");
+    fs::write(directory.join("a.in"), "hello").expect("the input can be written");
+    let mut runner = NodeRunner::new(directory.join("scratch"));
+    let started = runner.start(&NodeStart {
+        executable: build_system(),
+        directory: directory.clone(),
+        meta_dsl: "a.gc3".to_owned(),
+        inputs: vec!["a.in".to_owned()],
+        outputs: vec!["x.txt".to_owned()],
+    });
+    let transmitted = runner.transmit(
+        "a.in",
+        "",
+        &increment_between("", "hello world"),
+        "hello world",
+    );
+    let stored = runner.store();
+    let output = fs::read_to_string(directory.join("x.txt")).ok();
+    let faulty = runner.transmit(
+        "a.in",
+        "hello world",
+        &increment_between("hello world", "hello x"),
+        "hello x",
+    );
+    drop(runner);
+    let _ = fs::remove_dir_all(&directory);
+    assert_eq!(
+        (
+            started,
+            transmitted,
+            stored,
+            output,
+            faulty.map(|diagnostics| has_error(&diagnostics))
+        ),
+        (
+            Ok(()),
+            Ok(vec![]),
+            Ok(()),
+            Some("hello world".to_owned()),
+            Ok(true)
+        )
     );
 }

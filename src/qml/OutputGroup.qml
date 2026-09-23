@@ -7,7 +7,6 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Dialogs
 import QtQuick.Layouts
 
 GroupBox {
@@ -18,7 +17,7 @@ GroupBox {
 
     signal detachRequested()
 
-    title: qsTr("Output")
+    title: qsTr("Outputs")
 
     ColumnLayout {
         anchors.fill: parent
@@ -35,7 +34,7 @@ GroupBox {
             Label {
                 id: pageLabel
 
-                text: qsTr("page %1 of %2").arg(root.output.pageIndex + 1).arg(root.output.pageCount)
+                text: qsTr("output %1 of %2").arg(root.output.pageIndex + 1).arg(root.output.pageCount)
             }
 
             Button {
@@ -59,86 +58,21 @@ GroupBox {
             }
         }
 
-        StackLayout {
-            id: pages
+        TextField {
+            id: filePathField
+
+            Layout.fillWidth: true
+            readOnly: true
+            text: root.output.filePath
+        }
+
+        CodeEditor {
+            id: fileContentEditor
 
             Layout.fillWidth: true
             Layout.fillHeight: true
-            currentIndex: root.output.pageKind
-
-            CodeEditor {
-                id: stdOutEditor
-
-                readOnly: true
-                text: root.output.stdOut
-            }
-
-            ColumnLayout {
-                CodeEditor {
-                    id: stdErrEditor
-
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    readOnly: true
-                    text: root.output.stdErr
-                }
-
-                RowLayout {
-                    Label {
-                        text: qsTr("Exit code:")
-                    }
-
-                    TextField {
-                        id: exitCodeField
-
-                        readOnly: true
-                        text: root.output.hasRun ? root.output.exitCode : ""
-                    }
-                }
-            }
-
-            ColumnLayout {
-                RowLayout {
-                    CheckBox {
-                        id: fileEnabledBox
-
-                        text: qsTr("Output file %1").arg(root.output.fileNumber)
-                        checked: root.output.fileEnabled
-                        onToggled: root.output.fileEnabled = fileEnabledBox.checked
-                    }
-
-                    TextField {
-                        id: filePathField
-
-                        Layout.fillWidth: true
-                        text: root.output.filePath
-                        onEditingFinished: root.output.filePath = filePathField.text
-                    }
-
-                    ToolButton {
-                        id: fileSelectButton
-
-                        text: "..."
-                        onClicked: fileDialog.open()
-                    }
-                }
-
-                CodeEditor {
-                    id: fileContentEditor
-
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    readOnly: true
-                    text: root.output.fileContent
-                }
-            }
+            readOnly: true
+            text: root.output.fileContent
         }
-    }
-
-    FileDialog {
-        id: fileDialog
-
-        title: qsTr("Output file %1").arg(root.output.fileNumber)
-        onAccepted: root.output.filePath = PathOfUrl.path(fileDialog.selectedFile)
     }
 }

@@ -13,7 +13,7 @@ use std::cell::RefCell;
 use std::io::Write;
 use std::rc::Rc;
 
-// realises FR-007
+// realises FR-007, FR-113
 /// One *input group* as the *front end* binds to it.
 pub struct InputGroup {
     /// the input file
@@ -22,41 +22,62 @@ pub struct InputGroup {
     tracker: IncrementTracker,
     /// the path waiting to be loaded while the user is asked whether to save
     pending_path: Option<String>,
-    /// the *processing state* last pushed to the runner group
-    pushed_state: ProcessingState,
-    /// the settings, to store the path; wired by the *workbench object*
+    /// the *processing state* last announced to the *front end*
+    announced_state: ProcessingState,
+    /// the *document identifier* of the file at the *node*; empty for the *network file*
+    identifier: String,
+    /// the name of the *producer* of the *input*; empty where it has none
+    producer: String,
+    /// whether the text was edited since the document was named
+    edited_since_named: bool,
+    /// the *diagnostics* of the document, rendered one per line; empty where there is none
+    diagnostics: String,
+    /// the settings, to store the path; wired by the *workbench object* for the *network file*
     settings: Option<Rc<RefCell<Settings>>>,
-    /// the invoker of the runner group, to push the *processing state* to; wired by the
-    /// *workbench object* for an *input group* of the *node window*
-    runner: Option<QmlMethodInvoker>,
-    /// the invoker of the network editor, which receives the path, the *text increments* and the
-    /// expiry of the *long idle time*; wired by the *workbench object* for the *network file*
+    /// the invoker of the receiver of the *text increments*: the network editor for the
+    /// *network file*, which receives the path and the expiry of the *long idle time* as well,
+    /// and the *node editor* for an *input group* of the *node window*
     receiver: Option<QmlMethodInvoker>,
 }
 
 impl Default for InputGroup {
     fn default() -> Self {
         InputGroup {
-            file: InputFile::new(InputKind::CompilerCompilerInput),
+            file: InputFile::new(InputKind::MetaDsl),
             tracker: IncrementTracker::default(),
             pending_path: None,
-            pushed_state: ProcessingState::default(),
+            announced_state: ProcessingState::default(),
+            identifier: String::new(),
+            producer: String::new(),
+            edited_since_named: false,
+            diagnostics: String::new(),
             settings: None,
-            runner: None,
             receiver: None,
         }
     }
 }
 
-// realises FR-007, FR-011, FR-012, FR-013, FR-014, FR-015, FR-016, FR-017, FR-056, FR-059, FR-069,
-// FR-083, FR-086, FR-087
+// realises FR-007, FR-011 to FR-017, FR-056, FR-059, FR-069, FR-083, FR-086, FR-087, FR-106,
+// FR-107, FR-108, FR-113, FR-114, FR-116
 #[qobject(NoQmlElement)]
 impl InputGroup {
     qproperty!("caption", Read = caption, Constant);
     qproperty!("fileFilter", Read = file_filter, Constant);
+    qproperty!("selectable", Read = selectable, Constant);
     qproperty!("path", Read = path, Write = set_path, Notify = path_changed);
     qproperty!("text", Read = text, Write = set_text, Notify = text_changed);
     qproperty!("state", Read = state, Notify = state_changed);
+    qproperty!("producer", Read = producer, Notify = document_changed);
+    qproperty!(
+        "temporaryEdit",
+        Read = temporary_edit,
+        Notify = state_changed
+    );
+    qproperty!(
+        "diagnostics",
+        Read = diagnostics,
+        Notify = diagnostics_changed
+    );
 
     // getters
     fn caption(&self) -> String {
@@ -65,6 +86,11 @@ impl InputGroup {
 
     fn file_filter(&self) -> String {
         self.file.kind().file_filter().to_owned()
+    }
+
+    // realises FR-007, FR-116
+    fn selectable(&self) -> bool {
+        self.file.kind().is_selectable()
     }
 
     fn path(&self) -> String {
@@ -79,6 +105,21 @@ impl InputGroup {
         self.file.state().index() as i32
     }
 
+    // realises FR-114
+    fn producer(&self) -> String {
+        self.producer.clone()
+    }
+
+    // realises FR-113
+    fn temporary_edit(&self) -> bool {
+        !self.producer.is_empty() && self.edited_since_named
+    }
+
+    // realises FR-107, FR-108
+    fn diagnostics(&self) -> String {
+        self.diagnostics.clone()
+    }
+
     // setters
     // realises FR-012, FR-013, FR-014, FR-015
     // Names the path: where the editor holds unsaved changes, keeps the path pending and emits
@@ -87,23 +128,21 @@ impl InputGroup {
         if path == self.file.path() {
             return;
         }
-        if self.file.has_unsaved_changes() {
-            self.pending_path = Some(path.clone());
-            self.ask_to_save(path);
-            return;
-        }
-        self.apply_path(&path);
+        self.name_path(path);
     }
 
-    // realises FR-019, FR-021, FR-055
-    // Replaces the text where it differs, and pushes the *processing state* to the runner group.
+    // realises FR-019, FR-021, FR-055, FR-113
+    // Replaces the text where it differs, records that the document was edited, and announces
+    // the *processing state*.
     fn set_text(&mut self, text: String) {
         if text == self.file.text() {
             return;
         }
         self.file.set_text(&text);
+        let temporary_before = self.temporary_edit();
+        self.edited_since_named = true;
         self.text_changed();
-        self.push_state();
+        self.announce_state(temporary_before != self.temporary_edit());
     }
 
     // signals
@@ -115,6 +154,12 @@ impl InputGroup {
 
     #[qsignal(qml_name = "stateChanged")]
     fn state_changed(&mut self);
+
+    #[qsignal(qml_name = "documentChanged")]
+    fn document_changed(&mut self);
+
+    #[qsignal(qml_name = "diagnosticsChanged")]
+    fn diagnostics_changed(&mut self);
 
     #[qsignal(qml_name = "askToSave")]
     fn ask_to_save(&mut self, path: String);
@@ -135,11 +180,11 @@ impl InputGroup {
         }
     }
 
-    // realises FR-016, FR-056, FR-057, FR-059, FR-069, IR-015, IR-016
+    // realises FR-016, FR-056, FR-057, FR-059, FR-069, FR-106, IR-015, IR-016
     /// Provides the pending *text increment*, writes its rendering to standard output followed by
-    /// a line separator, emits `increment_provided`, schedules `applyIncrement` of the network
-    /// editor where one is wired, and saves the input file where it holds unsaved changes and a
-    /// path is named.
+    /// a line separator, emits `increment_provided`, schedules `applyIncrement` of the receiver
+    /// with the *document identifier* where one is wired, and saves the input file where it
+    /// holds unsaved changes and a path is named.
     #[qslot(qml_name = "idleExpired")]
     fn idle_expired(&mut self) {
         if let Some(increment) = self.tracker.provide(self.file.text()) {
@@ -152,6 +197,7 @@ impl InputGroup {
                 invoke_method!(
                     receiver,
                     "applyIncrement",
+                    self.identifier.clone(),
                     i32::try_from(increment.position).unwrap_or(i32::MAX),
                     i32::try_from(increment.range).unwrap_or(i32::MAX),
                     increment.text
@@ -160,102 +206,129 @@ impl InputGroup {
         }
         if self.file.has_unsaved_changes() && !self.file.path().is_empty() {
             let _ = self.file.save();
-            self.push_state();
+            self.announce_state(false);
         }
     }
 
     // realises FR-083
-    /// Schedules `longIdleExpired` of the network editor where one is wired: the text was not
-    /// modified for the *long idle time*.
+    /// Schedules `longIdleExpired` of the network editor, for the *network file* alone: the text
+    /// was not modified for the *long idle time*.
     #[qslot(qml_name = "longIdleExpired")]
     fn long_idle_expired(&mut self) {
-        if let Some(receiver) = &self.receiver {
+        if let (Some(receiver), InputKind::Network) = (&self.receiver, self.file.kind()) {
             invoke_method!(receiver, "longIdleExpired");
         }
     }
 
-    // realises FR-086, FR-087
-    /// Names `path`, as the file name field does; scheduled by the network editor when a *node*
-    /// is opened.
-    #[qslot(qml_name = "namePath")]
-    fn name_path(&mut self, path: String) {
-        self.set_path(path);
+    // realises FR-086, FR-087, FR-113, FR-114
+    /// Names the document of a *node*: records `identifier` and `producer`, forgets the
+    /// *provided text* and the *diagnostics*, so that the next *text increment* carries the
+    /// whole text, and names `path` as the file name field does, loading the file even where the
+    /// path is the one before, since the file may have changed; scheduled by the *node editor*.
+    #[qslot(qml_name = "nameDocument")]
+    fn name_document(&mut self, identifier: String, path: String, producer: String) {
+        self.identifier = identifier;
+        self.producer = producer;
+        self.tracker = IncrementTracker::default();
+        self.document_changed();
+        self.set_diagnostics(String::new());
+        self.name_path(path);
+    }
+
+    // realises FR-107, FR-108
+    /// Replaces the rendering of the *diagnostics*; scheduled by the *node editor*.
+    #[qslot(qml_name = "setDiagnostics")]
+    fn set_diagnostics(&mut self, text: String) {
+        if text == self.diagnostics {
+            return;
+        }
+        self.diagnostics = text;
+        self.diagnostics_changed();
     }
 }
 
 impl InputGroup {
-    /// Wires the group: which input file it edits, the settings, the invoker of the runner group
-    /// for an *input group* of the *node window*, and the invoker of the network editor for the
-    /// *input group* of the *network file*.
+    /// Wires the group: which file it edits, the settings for the *input group* of the *network
+    /// file*, and the invoker of the receiver of its *text increments*: the network editor for
+    /// the *network file*, the *node editor* for an *input group* of the *node window*.
     ///
-    /// * Called by the *workbench object* once, before the *front end* binds to the group.
+    /// * Called by the *workbench object* or by the *node editor* once, before the *front end*
+    ///   binds to the group.
     pub fn configure(
         &mut self,
         kind: InputKind,
-        settings: Rc<RefCell<Settings>>,
-        runner: Option<QmlMethodInvoker>,
+        settings: Option<Rc<RefCell<Settings>>>,
         receiver: Option<QmlMethodInvoker>,
     ) {
         self.file = InputFile::new(kind);
-        self.settings = Some(settings);
-        self.runner = runner;
+        self.settings = settings;
         self.receiver = receiver;
     }
 
     // realises FR-090
-    /// Loads the file at the path the settings hold for this group, and pushes the state.
+    /// Loads the file at the path the settings hold for the *network file*, announces the state,
+    /// and announces the path to the network editor where one is wired.
     pub fn load_initial(&mut self) {
         let path = self
             .settings
             .as_ref()
-            .map(|settings| settings.borrow().input_path(self.file.kind()).to_owned())
+            .filter(|_| self.file.kind() == InputKind::Network)
+            .map(|settings| settings.borrow().network_path().to_owned())
             .unwrap_or_default();
         let _ = self.file.load(&path);
-        self.push_state();
+        self.announce_state(false);
         self.announce_path();
     }
 
+    // realises FR-013, FR-014, FR-015
+    /// Names `path`: where the editor holds unsaved changes, keeps the path pending and emits
+    /// `ask_to_save`; otherwise applies it.
+    fn name_path(&mut self, path: String) {
+        if self.file.has_unsaved_changes() {
+            self.pending_path = Some(path.clone());
+            self.ask_to_save(path);
+            return;
+        }
+        self.apply_path(&path);
+    }
+
     // realises FR-067
-    /// Schedules `setNetworkPath` of the network editor where one is wired.
+    /// Schedules `setNetworkPath` of the network editor, for the *network file* alone.
     fn announce_path(&self) {
-        if let Some(receiver) = &self.receiver {
+        if let (Some(receiver), InputKind::Network) = (&self.receiver, self.file.kind()) {
             invoke_method!(receiver, "setNetworkPath", self.file.path().to_owned());
         }
     }
 
-    /// Stores `path` in the settings, loads the file, and notifies the *front end*.
+    // realises FR-012, FR-013, FR-091
+    /// Stores `path` in the settings for the *network file*, loads the file, and notifies the
+    /// *front end*.
     fn apply_path(&mut self, path: &str) {
-        if let Some(settings) = &self.settings {
+        if let (Some(settings), InputKind::Network) = (&self.settings, self.file.kind()) {
             let mut settings = settings.borrow_mut();
-            settings.set_input_path(self.file.kind(), path);
+            settings.set_network_path(path);
             let _ = settings.save(&Settings::default_path());
         }
         let text_before = self.file.text().to_owned();
         let _ = self.file.load(path);
+        let temporary_before = self.temporary_edit();
+        self.edited_since_named = false;
         self.path_changed();
         if self.file.text() != text_before {
             self.text_changed();
         }
-        self.push_state();
+        self.announce_state(temporary_before != self.temporary_edit());
         self.announce_path();
     }
 
-    // realises FR-017, FR-026
-    /// Emits `state_changed` and schedules `setInputState` of the runner group where the state changed.
-    fn push_state(&mut self) {
+    // realises FR-017, FR-113
+    /// Emits `state_changed` where the *processing state* changed, or where `temporary_changed`.
+    fn announce_state(&mut self, temporary_changed: bool) {
         let state = self.file.state();
-        if state == self.pushed_state {
+        if state == self.announced_state && !temporary_changed {
             return;
         }
-        self.pushed_state = state;
+        self.announced_state = state;
         self.state_changed();
-        if let Some(runner) = &self.runner {
-            invoke_method!(
-                runner,
-                "setInputState",
-                self.file.kind().index() as i32,
-                state.index() as i32
-            );
-        }
     }
 }

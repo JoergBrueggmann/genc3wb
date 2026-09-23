@@ -28,6 +28,7 @@ const KEY_NODES: u64 = 14;
 /// The kinds of the *messages* *product* encodes and decodes.
 const KIND_OPEN: u64 = 1;
 const KIND_EDIT: u64 = 2;
+const KIND_STORE: u64 = 9;
 const KIND_SHUTDOWN: u64 = 10;
 const KIND_QUERY_NETWORK: u64 = 11;
 const KIND_ACKNOWLEDGED: u64 = 32;
@@ -89,8 +90,82 @@ pub struct NodeDescription {
     pub outputs: Vec<String>,
 }
 
-// realises IR-019
-/// A *request* *product* transmits to the *build system*.
+// realises FR-107, IR-028
+/// The severity of a *diagnostic* (\[AD5\] IR-023).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Severity {
+    /// the document is faulty
+    Error,
+    /// the document is doubtful
+    Warning,
+    /// a finding without a fault
+    Information,
+}
+
+impl Severity {
+    /// Yields the severity as the message schema numbers it.
+    fn number(self) -> u64 {
+        match self {
+            Severity::Error => 1,
+            Severity::Warning => 2,
+            Severity::Information => 3,
+        }
+    }
+
+    /// Yields the severity of a number of the message schema, `None` where the number names none.
+    fn of_number(number: u64) -> Option<Severity> {
+        match number {
+            1 => Some(Severity::Error),
+            2 => Some(Severity::Warning),
+            3 => Some(Severity::Information),
+            _ => None,
+        }
+    }
+
+    /// Yields the severity as its rendering names it.
+    fn name(self) -> &'static str {
+        match self {
+            Severity::Error => "error",
+            Severity::Warning => "warning",
+            Severity::Information => "information",
+        }
+    }
+}
+
+// realises FR-107, FR-109, IR-028, IR-029
+/// A *diagnostic* of a *diagnostic* response: its severity, its *read position* range and its
+/// message text (\[AD5\] IR-023).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Diagnostic {
+    /// its severity
+    pub severity: Severity,
+    /// the first position of the range, inclusive
+    pub start: ReadPosition,
+    /// the position after the last one of the range
+    pub end: ReadPosition,
+    /// its message text
+    pub text: String,
+}
+
+impl Diagnostic {
+    // realises FR-107, IR-029
+    /// Yields the *diagnostic* as text: the severity, a space, the range as
+    /// `<line>:<column>-<line>:<column>`, a colon, a space, and the message text.
+    pub fn rendering(&self) -> String {
+        format!(
+            "{} {}:{}-{}:{}: {}",
+            self.severity.name(),
+            self.start.line,
+            self.start.column,
+            self.end.line,
+            self.end.column,
+            self.text
+        )
+    }
+}
+
+// realises IR-019, IR-027
+/// A *request* *product* transmits to the *build system* or to the *node*.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Request {
     /// an open request carrying the full text of the document
@@ -101,21 +176,26 @@ pub enum Request {
         version: u64,
         deltas: Vec<EditDelta>,
     },
-    /// a *network query request*
+    /// a *store request*, transmitted to the *node* alone
+    Store,
+    /// a *network query request*, transmitted to the *build system* alone
     QueryNetwork,
     /// a *shutdown request*
     Shutdown,
 }
 
-// realises IR-020
-/// A *response* *product* accepts from the *build system*.
+// realises IR-020, IR-028
+/// A *response* *product* accepts from the *build system* or from the *node*.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Response {
     /// the *request* was carried out
     Acknowledged,
-    /// a *diagnostic* response: the resulting *document version* and the message text of every
-    /// *diagnostic*
-    Diagnostics { version: u64, messages: Vec<String> },
+    /// a *diagnostic* response: the resulting *document version* and the *diagnostics*, in the
+    /// order of the response
+    Diagnostics {
+        version: u64,
+        diagnostics: Vec<Diagnostic>,
+    },
     /// a version mismatch response naming the current *document version*
     VersionMismatch { version: u64 },
     /// an error response with its message text
@@ -191,7 +271,26 @@ pub fn delta_of_increment(provided: &str, increment: &TextIncrement) -> EditDelt
     }
 }
 
-// realises IR-018, IR-019
+// realises FR-107, IR-029
+/// Yields the *diagnostics* as text, one rendering per line, in their order; empty where there
+/// is none.
+pub fn rendering_of_diagnostics(diagnostics: &[Diagnostic]) -> String {
+    diagnostics
+        .iter()
+        .map(Diagnostic::rendering)
+        .collect::<Vec<String>>()
+        .join("\n")
+}
+
+// realises FR-109
+/// Yields whether a *diagnostic* of severity error is among `diagnostics`.
+pub fn has_error(diagnostics: &[Diagnostic]) -> bool {
+    diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.severity == Severity::Error)
+}
+
+// realises IR-018, IR-019, IR-027
 /// Encodes a *request* with its *request identifier* as one CBOR map of the message schema.
 ///
 /// * The map has definite length, its keys ascend, and every integer has its shortest form.
@@ -216,6 +315,7 @@ pub fn encode_request(identifier: u64, request: &Request) -> Vec<u8> {
                 Value::Array(deltas.iter().map(value_of_delta).collect()),
             ));
         }
+        Request::Store => pairs.push((KEY_KIND, unsigned(KIND_STORE))),
         Request::QueryNetwork => pairs.push((KEY_KIND, unsigned(KIND_QUERY_NETWORK))),
         Request::Shutdown => pairs.push((KEY_KIND, unsigned(KIND_SHUTDOWN))),
     }
@@ -234,25 +334,15 @@ pub fn encode_response(identifier: u64, response: &Response) -> Vec<u8> {
     ];
     match response {
         Response::Acknowledged => pairs.push((KEY_KIND, unsigned(KIND_ACKNOWLEDGED))),
-        Response::Diagnostics { version, messages } => {
+        Response::Diagnostics {
+            version,
+            diagnostics,
+        } => {
             pairs.push((KEY_KIND, unsigned(KIND_DIAGNOSTICS)));
             pairs.push((KEY_VERSION, unsigned(*version)));
-            let origin = Value::Array(vec![unsigned(1), unsigned(1)]);
-            let range = Value::Array(vec![origin.clone(), origin]);
             pairs.push((
                 KEY_DIAGNOSTICS,
-                Value::Array(
-                    messages
-                        .iter()
-                        .map(|message| {
-                            Value::Array(vec![
-                                unsigned(1),
-                                range.clone(),
-                                Value::Text(message.clone()),
-                            ])
-                        })
-                        .collect(),
-                ),
+                Value::Array(diagnostics.iter().map(value_of_diagnostic).collect()),
             ));
         }
         Response::VersionMismatch { version } => {
@@ -276,7 +366,7 @@ pub fn encode_response(identifier: u64, response: &Response) -> Vec<u8> {
     bytes_of_pairs(pairs)
 }
 
-// realises IR-018, IR-020
+// realises IR-018, IR-020, IR-028
 /// Decodes a *response*: the *request identifier* it answers, and the *response*.
 ///
 /// * A key the kind does not define is ignored, so that a later version of the message schema
@@ -295,10 +385,10 @@ pub fn decode_response(bytes: &[u8]) -> Result<(u64, Response), MessageError> {
         KIND_ACKNOWLEDGED => Response::Acknowledged,
         KIND_DIAGNOSTICS => Response::Diagnostics {
             version: unsigned_under(&pairs, KEY_VERSION)?,
-            messages: array_under(&pairs, KEY_DIAGNOSTICS)?
+            diagnostics: array_under(&pairs, KEY_DIAGNOSTICS)?
                 .iter()
-                .map(message_of_diagnostic)
-                .collect::<Option<Vec<String>>>()
+                .map(diagnostic_of_value)
+                .collect::<Option<Vec<Diagnostic>>>()
                 .ok_or(MessageError::InvalidValue(KEY_DIAGNOSTICS))?,
         },
         KIND_VERSION_MISMATCH => Response::VersionMismatch {
@@ -446,15 +536,69 @@ fn array_under(pairs: &[(u64, Value)], key: u64) -> Result<&Vec<Value>, MessageE
     }
 }
 
+/// Yields a *read position* as the array `[line, column]` of the message schema.
+fn value_of_position(position: &ReadPosition) -> Value {
+    Value::Array(vec![unsigned(position.line), unsigned(position.column)])
+}
+
+/// Yields the *read position* of the array `[line, column]`, `None` where the value is none.
+fn position_of_value(value: &Value) -> Option<ReadPosition> {
+    let Value::Array(elements) = value else {
+        return None;
+    };
+    let [line, column] = elements.as_slice() else {
+        return None;
+    };
+    Some(ReadPosition {
+        line: unsigned_of(line)?,
+        column: unsigned_of(column)?,
+    })
+}
+
 /// Yields an *edit delta* as the array `[[start, end], text]` of the message schema.
 fn value_of_delta(delta: &EditDelta) -> Value {
-    let position = |position: &ReadPosition| {
-        Value::Array(vec![unsigned(position.line), unsigned(position.column)])
-    };
     Value::Array(vec![
-        Value::Array(vec![position(&delta.start), position(&delta.end)]),
+        Value::Array(vec![
+            value_of_position(&delta.start),
+            value_of_position(&delta.end),
+        ]),
         Value::Text(delta.text.clone()),
     ])
+}
+
+/// Yields a *diagnostic* as the array `[severity, [start, end], text]` of the message schema.
+fn value_of_diagnostic(diagnostic: &Diagnostic) -> Value {
+    Value::Array(vec![
+        unsigned(diagnostic.severity.number()),
+        Value::Array(vec![
+            value_of_position(&diagnostic.start),
+            value_of_position(&diagnostic.end),
+        ]),
+        Value::Text(diagnostic.text.clone()),
+    ])
+}
+
+/// Yields the *diagnostic* of the array `[severity, [start, end], text]`, `None` where the value
+/// is none.
+fn diagnostic_of_value(value: &Value) -> Option<Diagnostic> {
+    let Value::Array(elements) = value else {
+        return None;
+    };
+    let [severity, range, text] = elements.as_slice() else {
+        return None;
+    };
+    let Value::Array(positions) = range else {
+        return None;
+    };
+    let [start, end] = positions.as_slice() else {
+        return None;
+    };
+    Some(Diagnostic {
+        severity: Severity::of_number(unsigned_of(severity)?)?,
+        start: position_of_value(start)?,
+        end: position_of_value(end)?,
+        text: text_of(text)?,
+    })
 }
 
 /// Yields a *node description* as the array of the message schema.
@@ -471,14 +615,6 @@ fn value_of_node(node: &NodeDescription) -> Value {
         paths(&node.inputs),
         paths(&node.outputs),
     ])
-}
-
-/// Yields the message text of a *diagnostic* `[severity, range, text]`.
-fn message_of_diagnostic(value: &Value) -> Option<String> {
-    match value {
-        Value::Array(elements) if elements.len() == 3 => text_of(&elements[2]),
-        _ => None,
-    }
 }
 
 /// Yields the *node description* of the array of the message schema.
@@ -512,10 +648,20 @@ fn node_of_value(value: &Value) -> Option<NodeDescription> {
  * independence     : ✅
  * edge cases       : ✅
  * conforms to doc  : ✅
- * covers bridge    : NetworkEditor::apply_increment, through build_system */
+ * covers bridge    : NetworkEditor::apply_increment and NodeEditor::apply_increment, through build_system;
+ *                    NodeEditor::report_arrived */
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn diagnostic() -> Diagnostic {
+        Diagnostic {
+            severity: Severity::Warning,
+            start: ReadPosition { line: 2, column: 3 },
+            end: ReadPosition { line: 2, column: 7 },
+            text: "doubtful".to_owned(),
+        }
+    }
 
     fn node() -> NodeDescription {
         NodeDescription {
@@ -559,6 +705,82 @@ mod tests {
                 text: "x".to_owned(),
             }
         );
+    }
+
+    #[test]
+    fn diagnostic_renders_its_severity_its_range_and_its_text() {
+        // FR-107, IR-029
+        assert_eq!(diagnostic().rendering(), "warning 2:3-2:7: doubtful");
+    }
+
+    #[test]
+    fn diagnostics_render_one_per_line_and_none_as_the_empty_text() {
+        // FR-107, FR-108, IR-029
+        let error = Diagnostic {
+            severity: Severity::Error,
+            start: ReadPosition { line: 1, column: 1 },
+            end: ReadPosition { line: 1, column: 1 },
+            text: "fault".to_owned(),
+        };
+        assert_eq!(
+            (
+                rendering_of_diagnostics(&[error, diagnostic()]),
+                rendering_of_diagnostics(&[])
+            ),
+            (
+                "error 1:1-1:1: fault\nwarning 2:3-2:7: doubtful".to_owned(),
+                String::new()
+            )
+        );
+    }
+
+    #[test]
+    fn an_error_among_the_diagnostics_is_found() {
+        // FR-109
+        let error = Diagnostic {
+            severity: Severity::Error,
+            ..diagnostic()
+        };
+        let information = Diagnostic {
+            severity: Severity::Information,
+            ..diagnostic()
+        };
+        assert_eq!(
+            (
+                has_error(&[]),
+                has_error(&[diagnostic(), information.clone()]),
+                has_error(&[information, error])
+            ),
+            (false, false, true)
+        );
+    }
+
+    #[test]
+    fn store_request_is_the_canonical_map() {
+        // IR-027: { 0: 9, 1: 3 }
+        assert_eq!(
+            encode_request(3, &Request::Store),
+            vec![0xa2, 0x00, 0x09, 0x01, 0x03]
+        );
+    }
+
+    #[test]
+    fn diagnostic_with_a_severity_outside_one_to_three_is_an_invalid_value() {
+        // IR-028
+        let mut bytes = encode_response(
+            1,
+            &Response::Diagnostics {
+                version: 0,
+                diagnostics: vec![diagnostic()],
+            },
+        );
+        // the severity 2 precedes the range [[2, 3], [2, 7]]
+        let severity = bytes
+            .windows(3)
+            .position(|window| window == [0x02, 0x82, 0x82])
+            .expect("the severity precedes the range");
+        bytes[severity] = 0x04;
+        assert_eq!(decode_response(&bytes), Err(MessageError::InvalidValue(11)));
     }
 
     #[test]
@@ -618,7 +840,7 @@ mod tests {
             Response::Acknowledged,
             Response::Diagnostics {
                 version: 4,
-                messages: vec!["fault".to_owned()],
+                diagnostics: vec![diagnostic()],
             },
             Response::VersionMismatch { version: 9 },
             Response::Error("no".to_owned()),

@@ -65,15 +65,29 @@ pub struct RenderedGraph {
     pub layout: GraphLayout,
 }
 
-// realises FR-086, FR-087
-/// The files the *node window* edits for one *node*, resolved against the directory of the
-/// *network file*.
+// realises FR-086, FR-087, FR-102, FR-113
+/// One file of a *node*: the path as the *node description* carries it, which is its
+/// *document identifier* (\[AD5\] IR-044), and, for an *input*, the name of its *producer*.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NodeFile {
+    /// the path as written in the *network file*
+    pub identifier: String,
+    /// the name of the *producer*, empty where the file has none
+    pub producer: String,
+}
+
+// realises FR-086, FR-087, FR-102, FR-103
+/// The files the *node window* presents for one *node*, in the order of the *node description*.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NodeFiles {
-    /// the path of the *meta compiler DSL* of the *node*
-    pub meta_dsl: String,
-    /// the path of the first *input* of the *node*, `None` where it has none
-    pub first_input: Option<String>,
+    /// the name of the *node*
+    pub name: String,
+    /// its *meta compiler DSL*
+    pub meta_dsl: NodeFile,
+    /// its *inputs*
+    pub inputs: Vec<NodeFile>,
+    /// its *outputs*
+    pub outputs: Vec<NodeFile>,
 }
 
 // realises FR-077, C-006
@@ -244,19 +258,51 @@ pub fn node_index_of_vertex(identifier: &str) -> Option<usize> {
     identifier.strip_prefix('n')?.parse().ok()
 }
 
-// realises FR-086, FR-087, FR-088
-/// Yields the files the *node window* edits for `node`, `None` for a *proxy node*.
+// realises FR-086, FR-087, FR-088, FR-102, FR-103, FR-113
+/// Yields the files the *node window* presents for `node`, `None` for a *proxy node*.
 ///
-/// * A relative path is resolved against `network_directory`, the directory of the *network file*.
-pub fn files_of_node(node: &NodeDescription, network_directory: &Path) -> Option<NodeFiles> {
-    let resolved = |path: &str| network_directory.join(path).to_string_lossy().into_owned();
+/// * The paths are those of the *node description*, which are the *document identifiers*.
+/// * The *producer* of an *input* is the first *node* of `nodes` other than `node` that has an
+///   *output* of the same path; the *meta compiler DSL* and the *outputs* have none.
+pub fn files_of_node(node: &NodeDescription, nodes: &[NodeDescription]) -> Option<NodeFiles> {
+    let without_producer = |path: &String| NodeFile {
+        identifier: path.clone(),
+        producer: String::new(),
+    };
+    let producer_of = |path: &String| {
+        nodes
+            .iter()
+            .filter(|candidate| candidate.name != node.name)
+            .find(|candidate| candidate.outputs.contains(path))
+            .map(|producer| producer.name.clone())
+            .unwrap_or_default()
+    };
     match node.kind {
         NodeKind::ProxyNode => None,
         NodeKind::MetaCompilerCompiler => Some(NodeFiles {
-            meta_dsl: resolved(&node.transformation),
-            first_input: node.inputs.first().map(|path| resolved(path)),
+            name: node.name.clone(),
+            meta_dsl: without_producer(&node.transformation),
+            inputs: node
+                .inputs
+                .iter()
+                .map(|path| NodeFile {
+                    identifier: path.clone(),
+                    producer: producer_of(path),
+                })
+                .collect(),
+            outputs: node.outputs.iter().map(without_producer).collect(),
         }),
     }
+}
+
+// realises FR-086, FR-087, FR-102
+/// Yields the path of a file of a *node*: `identifier` resolved against `network_directory`, the
+/// directory of the *network file*.
+pub fn path_of_identifier(network_directory: &Path, identifier: &str) -> String {
+    network_directory
+        .join(identifier)
+        .to_string_lossy()
+        .into_owned()
 }
 
 // realises FR-077, IR-021, IR-022, C-006
@@ -324,7 +370,7 @@ fn escaped(text: &str) -> String {
  * independence     : ✅
  * edge cases       : ✅
  * conforms to doc  : ✅
- * covers bridge    : NetworkEditor::build_completed, NetworkEditor::open_node_at */
+ * covers bridge    : NetworkEditor::report_arrived, NetworkEditor::open_node_at, NodeEditor::open_node */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -483,29 +529,84 @@ mod tests {
         );
     }
 
+    fn file(identifier: &str, producer: &str) -> NodeFile {
+        NodeFile {
+            identifier: identifier.to_owned(),
+            producer: producer.to_owned(),
+        }
+    }
+
     #[test]
-    fn files_of_a_meta_compiler_compiler_are_resolved_against_the_network_directory() {
-        let files = files_of_node(&two_stages()[0], Path::new("/net"));
+    fn files_of_a_meta_compiler_compiler_are_its_paths_as_written_in_their_order() {
+        // FR-086, FR-087, FR-102, FR-103
+        let nodes = two_stages();
         assert_eq!(
-            files,
+            files_of_node(&nodes[0], &nodes),
             Some(NodeFiles {
-                meta_dsl: "/net/a.gc3".to_owned(),
-                first_input: Some("/net/a.in".to_owned()),
+                name: "a".to_owned(),
+                meta_dsl: file("a.gc3", ""),
+                inputs: vec![file("a.in", "")],
+                outputs: vec![file("x.txt", "")],
             })
         );
     }
 
     #[test]
-    fn proxy_node_has_no_files_to_open() {
-        assert_eq!(files_of_node(&two_stages()[1], Path::new("/net")), None);
+    fn input_that_another_node_outputs_names_that_node_as_its_producer() {
+        // FR-113
+        let nodes = vec![
+            node("a", NodeKind::MetaCompilerCompiler, &["a.in"], &["x.txt"]),
+            node(
+                "b",
+                NodeKind::MetaCompilerCompiler,
+                &["x.txt", "b.in"],
+                &["y.txt"],
+            ),
+            node("c", NodeKind::ProxyNode, &["y.txt"], &["b.in"]),
+        ];
+        let inputs = files_of_node(&nodes[1], &nodes).map(|files| files.inputs);
+        assert_eq!(inputs, Some(vec![file("x.txt", "a"), file("b.in", "c")]));
     }
 
     #[test]
-    fn node_without_input_has_no_first_input() {
-        let files = files_of_node(
-            &node("a", NodeKind::MetaCompilerCompiler, &[], &[]),
-            Path::new("/net"),
+    fn input_the_node_itself_outputs_has_no_producer() {
+        // FR-113: a node that reads its own output is no producer of itself
+        let nodes = vec![node(
+            "a",
+            NodeKind::MetaCompilerCompiler,
+            &["x.txt"],
+            &["x.txt"],
+        )];
+        let inputs = files_of_node(&nodes[0], &nodes).map(|files| files.inputs);
+        assert_eq!(inputs, Some(vec![file("x.txt", "")]));
+    }
+
+    #[test]
+    fn proxy_node_has_no_files_to_open() {
+        // FR-088
+        let nodes = two_stages();
+        assert_eq!(files_of_node(&nodes[1], &nodes), None);
+    }
+
+    #[test]
+    fn node_without_input_and_output_has_the_meta_dsl_alone() {
+        let nodes = vec![node("a", NodeKind::MetaCompilerCompiler, &[], &[])];
+        let files = files_of_node(&nodes[0], &nodes);
+        assert_eq!(
+            files.map(|files| (files.inputs.len(), files.outputs.len())),
+            Some((0, 0))
         );
-        assert_eq!(files.and_then(|files| files.first_input), None);
+    }
+
+    #[test]
+    fn identifier_is_resolved_against_the_network_directory() {
+        // FR-086, FR-087, FR-102
+        assert_eq!(
+            (
+                path_of_identifier(Path::new("/net"), "src/a.in"),
+                path_of_identifier(Path::new("/net"), "/abs/a.in")
+            ),
+            ("/net/src/a.in".to_owned(), "/abs/a.in".to_owned())
+        );
     }
 }

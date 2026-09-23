@@ -5,6 +5,6 @@
 
 pub mod input_group;
 pub mod network_editor;
+pub mod node_editor;
 pub mod output_group;
-pub mod runner_group;
 pub mod workbench;

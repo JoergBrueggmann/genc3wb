@@ -4,8 +4,11 @@ The language workbench of the meta compiler-compiler genc³. Its main window is 
 network editor: it edits a compiler network file (gc3n-file), lets a build system
 such as `genc3d` evaluate it while it is edited, and shows the network it states
 as a graph. A double-click on a node of the graph opens the node window, which
-edits the two input files of genc³, runs it, and presents what it wrote to
-standard output, to standard error and to its output files.
+shows the node as the network file states it: its meta compiler DSL, its inputs
+and its outputs. The build system serves that one node while its files are
+edited: every change is transmitted to it, its diagnostics are shown at the
+editor they concern, and its outputs are stored and presented after every
+change it accepts without an error.
 
 NOTE: Portions of this project's code and documentation were developed with AI
 assistance (Claude), under the author's direction, review, and authorisation.
@@ -148,7 +151,7 @@ with
 mkdir -p reports && cargo test 2>&1 | tee reports/test.txt
 ```
 
-Two tests run the build system and `dot` and are therefore left out of that
+Three tests run the build system and `dot` and are therefore left out of that
 run. They are run with the path of `genc3d` in the environment variable
 `GENC3D`:
 
@@ -195,9 +198,26 @@ writes it whenever a value changes. Started by a double-click on `start`, the
 working directory is the root of the distribution, so the file lies there.
 
 The file is YAML and holds the idle time and the long idle time in seconds,
-the path of the network file and the path of the build system. What the node
-window names — its input files, its compiler-compiler and its output files — is
-held for the session alone, since a node is opened from the network file. Where the file does not
-exist, the idle time is 2 seconds, the long idle time 16 seconds and the build
-system `./genc3/bin/genc3d`. The two times are set in the dialog of the settings
-menu.
+the path of the network file and the path of the build system. The node window
+names nothing of its own: the meta compiler DSL, the inputs and the outputs of a
+node are taken from the network file when the node is opened. Where the file
+does not exist, the idle time is 2 seconds, the long idle time 16 seconds and
+the build system `./genc3/bin/genc3d`. The two times are set in the dialog of
+the settings menu.
+
+### The node window
+
+A double-click on a meta compiler-compiler in the graph opens it. The build
+system named in the compiler network editor is started for that one node, in
+the directory of the network file, and shut down when another node is opened,
+when the node window closes and when the workbench terminates. An edit of the
+meta compiler DSL or of an input is saved after the idle time and transmitted to
+the node, which answers with its diagnostics; they are shown below the editor.
+After every change the node accepts without an error, its outputs are stored and
+shown on the output pages.
+
+An input that another node produces is editable all the same. As soon as it is
+edited, an exclamation mark appears beside its file name, whose tooltip names
+the producing node: the edit is temporary. When the node is shut down, the file
+is written back to what it held when the node was started, so that the
+producing node finds what it stored.

@@ -5,9 +5,9 @@
 
 use crate::core::api_message::NodeDescription;
 use crate::core::build_system::BuildSession;
+use crate::core::executable;
 use crate::core::network_builder::{BuiltGraph, NetworkBuilder};
 use crate::core::network_graph::{GraphLayout, files_of_node, node_index_of_vertex};
-use crate::core::runner;
 use crate::core::settings::Settings;
 use crate::core::text_increment::TextIncrement;
 
@@ -79,13 +79,11 @@ pub struct NetworkEditor {
     reports: Option<Receiver<Report>>,
     /// the settings, to store the path; wired by the *workbench object*
     settings: Option<Rc<RefCell<Settings>>>,
-    /// the invoker of the *input group* of the *compiler-compiler input file*
-    cc_input: Option<QmlMethodInvoker>,
-    /// the invoker of the *input group* of the *compiler input file*
-    c_input: Option<QmlMethodInvoker>,
+    /// the invoker of the *node editor*, which receives the opened *node*
+    node: Option<QmlMethodInvoker>,
 }
 
-// realises FR-064 to FR-069, FR-078 to FR-083, FR-085 to FR-088, FR-091, FR-092
+// realises FR-064 to FR-069, FR-078 to FR-083, FR-085 to FR-088, FR-091, FR-092, FR-102 to FR-104
 #[qobject(NoQmlElement)]
 impl NetworkEditor {
     qproperty!(
@@ -169,7 +167,7 @@ impl NetworkEditor {
             settings.set_build_system_path(&self.build_system_path);
             let _ = settings.save(&Settings::default_path());
         }
-        self.executable = runner::is_executable(&self.build_system_path);
+        self.executable = executable::is_executable(&self.build_system_path);
         self.build_system_path_changed();
         self.restart();
     }
@@ -196,7 +194,7 @@ impl NetworkEditor {
     /// * `path` - the text of the file name field of the *build system*, as the user typed it
     #[qslot(qml_name = "tryBuildSystemPath")]
     fn try_build_system_path(&mut self, path: String) {
-        if runner::is_executable(&path) {
+        if executable::is_executable(&path) {
             self.set_build_system_path(path);
         }
     }
@@ -221,10 +219,12 @@ impl NetworkEditor {
         }
     }
 
-    // realises FR-085, FR-086, FR-087, FR-088, IR-024
-    /// Opens the *node* whose vertex lies at a point of the image: schedules `namePath` of the two
-    /// *input groups* of the *node window* and emits `node_opened`; does nothing for a
-    /// *proxy node*, for a file, and beside every vertex.
+    // realises FR-085, FR-086, FR-087, FR-088, FR-102, FR-103, FR-104, IR-024
+    /// Opens the *node* whose vertex lies at a point of the image: schedules `openNode` of the
+    /// *node editor* with the name, the path of the *build system*, the directory of the
+    /// *network file*, the *document identifiers* of the files and the *producers* of the
+    /// *inputs*, and emits `node_opened`; does nothing for a *proxy node*, for a file, and
+    /// beside every vertex.
     ///
     /// # Arguments
     /// * `horizontal` - the distance from the left edge, as a fraction of the width of the image
@@ -239,20 +239,39 @@ impl NetworkEditor {
         else {
             return;
         };
-        let directory = Path::new(&self.network_path)
-            .parent()
-            .unwrap_or_else(|| Path::new(""));
-        let Some(files) = files_of_node(node, directory) else {
+        let Some(files) = files_of_node(node, &self.nodes) else {
             return;
         };
-        let name = node.name.clone();
-        if let Some(cc_input) = &self.cc_input {
-            invoke_method!(cc_input, "namePath", files.meta_dsl);
+        let directory = Path::new(&self.network_path)
+            .parent()
+            .unwrap_or_else(|| Path::new(""))
+            .to_string_lossy()
+            .into_owned();
+        let identifiers = |files: &[crate::core::network_graph::NodeFile]| {
+            files
+                .iter()
+                .map(|file| file.identifier.clone())
+                .collect::<Vec<String>>()
+        };
+        let producers: Vec<String> = files
+            .inputs
+            .iter()
+            .map(|file| file.producer.clone())
+            .collect();
+        if let Some(node) = &self.node {
+            invoke_method!(
+                node,
+                "openNode",
+                files.name.clone(),
+                self.build_system_path.clone(),
+                directory,
+                files.meta_dsl.identifier.clone(),
+                identifiers(&files.inputs),
+                producers,
+                identifiers(&files.outputs)
+            );
         }
-        if let (Some(c_input), Some(first_input)) = (&self.c_input, files.first_input) {
-            invoke_method!(c_input, "namePath", first_input);
-        }
-        self.node_opened(name);
+        self.node_opened(files.name);
     }
 
     // realises FR-068
@@ -287,8 +306,11 @@ impl NetworkEditor {
     // realises FR-069, FR-070
     /// Takes a *text increment* of the code editor of the *network file*, carries it into the
     /// *provided text*, and hands the *build* to the build thread; scheduled by the *input group*.
+    ///
+    /// * `_document` is passed over: the *document identifier* of the *network file* is its file
+    ///   name, which the build session names (IR-019).
     #[qslot(qml_name = "applyIncrement")]
-    fn apply_increment(&mut self, position: i32, range: i32, text: String) {
+    fn apply_increment(&mut self, _document: String, position: i32, range: i32, text: String) {
         let increment = TextIncrement {
             position: usize::try_from(position).unwrap_or(0),
             range: usize::try_from(range).unwrap_or(0),
@@ -338,19 +360,12 @@ impl NetworkEditor {
 }
 
 impl NetworkEditor {
-    /// Wires the group: the settings, and the invokers of the two *input groups* of the
-    /// *node window*.
+    /// Wires the group: the settings, and the invoker of the *node editor*.
     ///
     /// * Called by the *workbench object* once, before the *front end* binds to the group.
-    pub fn configure(
-        &mut self,
-        settings: Rc<RefCell<Settings>>,
-        cc_input: QmlMethodInvoker,
-        c_input: QmlMethodInvoker,
-    ) {
+    pub fn configure(&mut self, settings: Rc<RefCell<Settings>>, node: QmlMethodInvoker) {
         self.settings = Some(settings);
-        self.cc_input = Some(cc_input);
-        self.c_input = Some(c_input);
+        self.node = Some(node);
     }
 
     // realises FR-090

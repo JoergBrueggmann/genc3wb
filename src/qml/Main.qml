@@ -19,7 +19,10 @@ ApplicationWindow {
     height: 800
     visible: true
     title: "genc³wb"
-    onClosing: Workbench.network.shutDown()
+    onClosing: {
+        Workbench.network.shutDown();
+        Workbench.node.shutDown();
+    }
 
     menuBar: MenuBar {
         id: menuBar
@@ -104,7 +107,6 @@ ApplicationWindow {
         target: Workbench.network
 
         function onNodeOpened(name) {
-            nodeWindow.nodeName = name;
             nodeWindow.show();
             nodeWindow.raise();
             nodeWindow.requestActivate();

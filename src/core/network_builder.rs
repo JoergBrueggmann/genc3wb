@@ -224,7 +224,10 @@ mod tests {
     fn restart_without_both_paths_starts_nothing() {
         let mut builder = builder("nothing");
         assert_eq!(
-            (builder.restart("", "/tmp/n.gc3n"), builder.session.is_none()),
+            (
+                builder.restart("", "/tmp/n.gc3n"),
+                builder.session.is_none()
+            ),
             (Ok(()), true)
         );
     }

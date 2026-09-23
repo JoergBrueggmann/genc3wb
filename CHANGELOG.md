@@ -12,6 +12,27 @@ and this project adheres to a four-part version number.
 
 At the moment, nothing unreleased here.
 
+## [0.8.0.0] - 2026-09-23
+
+**_Node_window_from_the_network_file_**
+
+Derived work items: definition 0.5.0.0
+
+- Rebuild the *node window* so that it shows the *node* opened in the *compiler network editor* as the gc3n-file states it: one code editor for its *meta compiler DSL* and one per *input*, each with its file name, its *processing state* and its saving as an *input group* has them, and one read-only page per *output*.
+- Name nothing in the *node window* by hand: take the paths of the *meta compiler DSL*, of the *inputs* and of the *outputs* from the *node description*, resolved against the directory of the gc3n-file, and show the name of the *node* in the title.
+- Let the *build system* serve the *node* instead of a *compiler-compiler* that is run as a process: start the *build system* named in the *compiler network editor* for that one *node*, with the options `--socket`, `--meta-dsl`, `--input` and `--output` of *genc³api*, in the directory of the gc3n-file.
+- Transmit every *text increment* of an editor of the *node window* to that *node*, as an open request the first time and as an edit request afterwards, and show the *diagnostics* of the response at the editor whose document they concern.
+- Present the *outputs*: send a *store request* after an edit the *node* accepted without a *diagnostic* of severity error, and show the *output* files the *node* wrote.
+- Shut the *node* down by a *shutdown request* when another *node* is opened, when the *node window* closes and when the workbench terminates.
+- Remove the group of the *compiler-compiler*, the file selector and the enabling check box of an *output* page, and the standard output and standard error pages; withdraw the requirements that specify them.
+- Keep the *detached windows* of an editor and of the *outputs*.
+- Decided at the meeting: the *meta compiler DSL* editor stands on top of the left column and below it one *input group* per *input*, presented one at a time and navigated like the *output* pages; the file name fields of the *node window* are read-only and have no file selector, so that the save question of FR-014 arises only when another *node* is opened; the *diagnostics* are shown as text, one line per *diagnostic* with its severity, its range and its message text, in a read-only area below the editor whose document they concern; the *node window* keeps the *node* as it was opened until a *node* is opened again, whatever a later *build* states; the *node* listens on a *service socket* of the workbench in its temporary directory, not on the path of the *node description*; a *node* that cannot be started or reached is reported in the status line of the *node window*; a *store request* follows the open request as well where its response carries no *diagnostic* of severity error.
+- Decided at the meeting for an *input* that is an *output* of another *node*: it is editable like every *input*, saved and transmitted like every edit, so that the opened *node* works with it; as soon as it is edited, an icon with an exclamation mark appears at its *input group*, whose tooltip reads 'This edit is temporary and will be overwritten, because it is also output of node <name>.'; when the *node* is shut down, the content the file had when the *node* was started is written back, so that the *node* that produces it finds what it stored.
+- Add the *core* component `node_runner`, which serves the *node* on a thread of its own as `network_builder` serves the *build system*, and the *bridged type* `NodeEditor` in place of `RunnerGroup`, which owns the *input groups* of the *node window*, one per *input*, hands them to the *front end* by `inputAt(index)` and navigates them; generalise the conversation of `build_system` to several documents on one connection, add the *node session* beside the *build session*, and the *diagnostic* with its severity and its range and the *store request* to `api_message`.
+- Reduce `settings` to the two times, the *network file* and the *build system*, and `output` to the *outputs* of the opened *node*; rename `runner` to `executable`, which holds `is_executable` alone.
+- Version the package 0.8.0, and describe the *node window* in 'README.md'.
+- Changes what the *project folder* delivers incompatibly, the *node window* and the settings: a 'B' bump as long as the major part is 0.
+
 ## [0.7.0.0] - 2026-09-21
 
 **_Consistent_and_collision_free_file_extensions_**

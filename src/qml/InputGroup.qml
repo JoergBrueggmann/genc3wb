@@ -1,4 +1,5 @@
-// One input group: file name field, file selector, indicator, code editor, detach button, and the dialogs of that group.
+// One input group: file name field, file selector, indicator, the icon of an input of a producer, code editor,
+// the diagnostics, detach button, and the dialogs of that group.
 //
 // Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 // Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -33,6 +34,7 @@ GroupBox {
 
                 Layout.fillWidth: true
                 text: root.group.path
+                readOnly: !root.group.selectable
                 onEditingFinished: root.group.path = pathField.text
             }
 
@@ -40,7 +42,23 @@ GroupBox {
                 id: selectButton
 
                 text: "..."
+                visible: root.group.selectable
                 onClicked: fileDialog.open()
+            }
+
+            Image {
+                id: temporaryIcon
+
+                source: "qrc:/genc3wb/qml/icons/error.png"
+                fillMode: Image.PreserveAspectFit
+                sourceSize.height: 20
+                visible: root.group.temporaryEdit
+                ToolTip.visible: temporaryHover.hovered
+                ToolTip.text: qsTr("This edit is temporary and will be overwritten, because it is also output of node %1.").arg(root.group.producer)
+
+                HoverHandler {
+                    id: temporaryHover
+                }
             }
 
             ToolButton {
@@ -69,6 +87,18 @@ GroupBox {
             onTextEdited: root.group.text = editor.text
             onIdleExpired: root.group.idleExpired()
             onLongIdleExpired: root.group.longIdleExpired()
+        }
+
+        TextArea {
+            id: diagnosticsArea
+
+            Layout.fillWidth: true
+            Layout.maximumHeight: 120
+            readOnly: true
+            wrapMode: TextEdit.NoWrap
+            font.family: "Courier New"
+            text: root.group.diagnostics
+            visible: root.group.diagnostics.length > 0
         }
     }
 

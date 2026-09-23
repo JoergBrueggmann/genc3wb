@@ -8,44 +8,24 @@ use std::fs;
 use std::path::Path;
 
 // realises FR-001, FR-063
-/// Which of the three input files an *input group* edits.
+/// Which file an *input group* edits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputKind {
-    /// the file that configures syntax and generators
-    CompilerCompilerInput,
-    /// the file that is parsed according to that configuration
-    CompilerInput,
+    /// the *meta compiler DSL* of the opened *node*
+    MetaDsl,
+    /// one *input* of the opened *node*
+    Input,
     /// the *network file* of the *compiler network editor*
     Network,
 }
 
 impl InputKind {
-    /// Yields the index of the kind: 0 for the *compiler-compiler input file*, 1 for the
-    /// *compiler input file*, 2 for the *network file*.
-    pub fn index(self) -> usize {
-        match self {
-            InputKind::CompilerCompilerInput => 0,
-            InputKind::CompilerInput => 1,
-            InputKind::Network => 2,
-        }
-    }
-
-    /// Yields the kind of an index, `None` where the index names none.
-    pub fn of_index(index: usize) -> Option<InputKind> {
-        match index {
-            0 => Some(InputKind::CompilerCompilerInput),
-            1 => Some(InputKind::CompilerInput),
-            2 => Some(InputKind::Network),
-            _ => None,
-        }
-    }
-
     // realises FR-011
     /// Yields the caption of the *input group* and of its file selector.
     pub fn caption(self) -> &'static str {
         match self {
-            InputKind::CompilerCompilerInput => "Compiler-compiler input file",
-            InputKind::CompilerInput => "Compiler input file",
+            InputKind::MetaDsl => "Meta compiler DSL",
+            InputKind::Input => "Input",
             InputKind::Network => "Compiler network file",
         }
     }
@@ -54,8 +34,20 @@ impl InputKind {
     /// Yields the file filter of the file selector, as a file dialog names it.
     pub fn file_filter(self) -> &'static str {
         match self {
-            InputKind::CompilerCompilerInput | InputKind::CompilerInput => "All files (*)",
+            InputKind::MetaDsl => "Meta compiler DSL files (*.gc3)",
+            InputKind::Input => "All files (*)",
             InputKind::Network => "Compiler network files (*.gc3n)",
+        }
+    }
+
+    // realises FR-007, FR-116
+    /// Yields whether the user names the file of this kind, by the file name field and the file
+    /// selector: for the *network file* alone; the files of a *node* are named from the
+    /// *node description*.
+    pub fn is_selectable(self) -> bool {
+        match self {
+            InputKind::MetaDsl | InputKind::Input => false,
+            InputKind::Network => true,
         }
     }
 }
@@ -254,7 +246,8 @@ impl InputFile {
  * independence     : ✅
  * edge cases       : ✅
  * conforms to doc  : ✅
- * covers bridge    : InputGroup::set_path, InputGroup::set_text, InputGroup::answer_save, InputGroup::idle_expired */
+ * covers bridge    : InputGroup::set_path, InputGroup::name_document, InputGroup::set_text, InputGroup::answer_save,
+ *                    InputGroup::idle_expired */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -284,8 +277,8 @@ mod tests {
     #[test]
     fn new_file_is_unknown_and_untouched() {
         // FR-020
-        let file = InputFile::new(InputKind::CompilerInput);
-        assert_eq!(file.kind(), InputKind::CompilerInput);
+        let file = InputFile::new(InputKind::Input);
+        assert_eq!(file.kind(), InputKind::Input);
         assert_eq!(file.path(), "");
         assert_eq!(file.text(), "");
         assert_eq!(file.state(), ProcessingState::UnknownFileTextUntouched);
@@ -298,7 +291,7 @@ mod tests {
         let dir = CaseDir::new("existing");
         let path = dir.path("input.txt");
         fs::write(&path, "content\n").expect("the file can be written");
-        let mut file = InputFile::new(InputKind::CompilerCompilerInput);
+        let mut file = InputFile::new(InputKind::MetaDsl);
         assert_eq!(file.load(&path), Ok(true));
         assert_eq!(file.path(), path);
         assert_eq!(file.text(), "content\n");
@@ -309,7 +302,7 @@ mod tests {
     fn missing_file_leaves_the_text_unchanged() {
         // FR-015, FR-020
         let dir = CaseDir::new("missing");
-        let mut file = InputFile::new(InputKind::CompilerInput);
+        let mut file = InputFile::new(InputKind::Input);
         file.set_text("typed");
         assert_eq!(file.load(&dir.path("absent.txt")), Ok(false));
         assert_eq!(file.text(), "typed");
@@ -319,7 +312,7 @@ mod tests {
     #[test]
     fn empty_path_names_no_file() {
         // FR-015
-        let mut file = InputFile::new(InputKind::CompilerInput);
+        let mut file = InputFile::new(InputKind::Input);
         assert_eq!(file.load(""), Ok(false));
         assert_eq!(file.save(), Err(InputFileError::NoPath));
     }
@@ -330,7 +323,7 @@ mod tests {
         let dir = CaseDir::new("encoding");
         let path = dir.path("binary.txt");
         fs::write(&path, [0xff, 0xfe, 0x00]).expect("the file can be written");
-        let mut file = InputFile::new(InputKind::CompilerInput);
+        let mut file = InputFile::new(InputKind::Input);
         file.set_text("kept");
         assert_eq!(
             file.load(&path),
@@ -346,14 +339,14 @@ mod tests {
         let dir = CaseDir::new("edited");
         let path = dir.path("input.txt");
         fs::write(&path, "content").expect("the file can be written");
-        let mut file = InputFile::new(InputKind::CompilerInput);
+        let mut file = InputFile::new(InputKind::Input);
         file.load(&path).expect("the file can be loaded");
         file.set_text("content changed");
         assert_eq!(file.state(), ProcessingState::ValidFileTextChanged);
         assert!(file.has_unsaved_changes());
         file.set_text("content");
         assert_eq!(file.state(), ProcessingState::ValidFileTextUntouched);
-        let mut unknown = InputFile::new(InputKind::CompilerInput);
+        let mut unknown = InputFile::new(InputKind::Input);
         unknown.set_text("typed");
         assert_eq!(unknown.state(), ProcessingState::UnknownFileTextChanged);
     }
@@ -363,7 +356,7 @@ mod tests {
         // FR-016, IR-010
         let dir = CaseDir::new("saved");
         let path = dir.path("new.txt");
-        let mut file = InputFile::new(InputKind::CompilerInput);
+        let mut file = InputFile::new(InputKind::Input);
         file.load(&path).expect("an absent file is no error");
         file.set_text("written");
         assert_eq!(file.state(), ProcessingState::UnknownFileTextChanged);
@@ -379,7 +372,7 @@ mod tests {
     fn file_that_cannot_be_written_is_reported() {
         // IR-010
         let dir = CaseDir::new("unwritable");
-        let mut file = InputFile::new(InputKind::CompilerInput);
+        let mut file = InputFile::new(InputKind::Input);
         file.load(&dir.path("no-such-dir/x.txt"))
             .expect("an absent file is no error");
         file.set_text("x");
@@ -398,13 +391,18 @@ mod tests {
             assert_eq!(ProcessingState::of_index(state.index()), Some(state));
         }
         assert_eq!(ProcessingState::of_index(4), None);
-        for kind in [
-            InputKind::CompilerCompilerInput,
-            InputKind::CompilerInput,
-            InputKind::Network,
-        ] {
-            assert_eq!(InputKind::of_index(kind.index()), Some(kind));
-        }
-        assert_eq!(InputKind::of_index(3), None);
+    }
+
+    #[test]
+    fn the_network_file_alone_is_selectable() {
+        // FR-007, FR-116
+        assert_eq!(
+            [
+                InputKind::MetaDsl.is_selectable(),
+                InputKind::Input.is_selectable(),
+                InputKind::Network.is_selectable()
+            ],
+            [false, false, true]
+        );
     }
 }
