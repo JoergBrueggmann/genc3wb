@@ -3,7 +3,7 @@
 
 [package]
 name = "genc3wb"
-version = "0.9.0"
+version = "0.10.0"
 edition = "2024"
 description = "The workbench of the meta compiler-compiler genc³: edits a compiler network and the files of its nodes, lets the build system serve them, and presents their outputs."
 

@@ -8,7 +8,7 @@ use crate::bridge::network_editor::NetworkEditor;
 use crate::bridge::node_editor::NodeEditor;
 use crate::bridge::output_group::OutputGroup;
 use crate::core::input_file::InputKind;
-use crate::core::settings::Settings;
+use crate::core::settings::{Settings, times_of_processing};
 
 use qtbridge::{QObjectHolder, qobject};
 
@@ -67,25 +67,20 @@ impl Default for Workbench {
     }
 }
 
-// realises FR-001, FR-063
+// realises FR-001, FR-063, FR-095, FR-099, FR-130 to FR-135
 #[qobject(Singleton)]
 impl Workbench {
     qproperty!("output", Read = output, Constant);
     qproperty!("node", Read = node, Constant);
     qproperty!("networkInput", Read = network_input, Constant);
     qproperty!("network", Read = network, Constant);
-    qproperty!(
-        "idleTime",
-        Read = idle_time,
-        Write = set_idle_time,
-        Notify = times_changed
-    );
+    qproperty!("idleTime", Read = idle_time, Notify = times_changed);
     qproperty!(
         "longIdleTime",
         Read = long_idle_time,
-        Write = set_long_idle_time,
         Notify = times_changed
     );
+    qproperty!("automatic", Read = automatic, Notify = times_changed);
 
     fn output(&self) -> Rc<RefCell<OutputGroup>> {
         Rc::clone(&self.output)
@@ -113,34 +108,73 @@ impl Workbench {
         self.settings.borrow().long_idle_time()
     }
 
-    // setters
-    // realises FR-099
-    // Sets the *idle time* of every code editor, in seconds, and stores it.
-    fn set_idle_time(&mut self, idle_time: u32) {
-        if idle_time.max(1) == self.settings.borrow().idle_time() {
-            return;
-        }
-        self.settings.borrow_mut().set_idle_time(idle_time);
-        self.store();
-        self.times_changed();
-    }
-
-    // realises FR-099
-    // Sets the *long idle time* of every code editor, in seconds, and stores it.
-    fn set_long_idle_time(&mut self, long_idle_time: u32) {
-        if long_idle_time.max(1) == self.settings.borrow().long_idle_time() {
-            return;
-        }
-        self.settings
-            .borrow_mut()
-            .set_long_idle_time(long_idle_time);
-        self.store();
-        self.times_changed();
+    // realises FR-093, FR-095, FR-131
+    fn automatic(&self) -> bool {
+        self.settings.borrow().automatic()
     }
 
     // signals
     #[qsignal(qml_name = "timesChanged")]
     fn times_changed(&mut self);
+
+    #[qsignal(qml_name = "timesRejected")]
+    fn times_rejected(&mut self, message: String);
+
+    // slots
+    // realises FR-099, FR-100, FR-132, FR-133, FR-134, FR-135
+    /// Sets the two times of every code editor, in milliseconds, and the *automatic setting*,
+    /// and stores them; yields whether the times satisfy the constraints, and emits
+    /// `times_rejected` with the message naming the violated one where they do not, nothing
+    /// being set then.
+    ///
+    /// * With the *automatic setting* on, the times are left as they are, since the next
+    ///   *processing time* sets them (FR-132).
+    #[qslot(qml_name = "trySetTimes")]
+    fn try_set_times(&mut self, idle_time: i32, long_idle_time: i32, automatic: bool) -> bool {
+        let idle_time = u32::try_from(idle_time).unwrap_or(0);
+        let long_idle_time = u32::try_from(long_idle_time).unwrap_or(0);
+        if !automatic {
+            let result = self
+                .settings
+                .borrow_mut()
+                .set_times(idle_time, long_idle_time);
+            if let Err(error) = result {
+                self.times_rejected(error.to_string());
+                return false;
+            }
+        }
+        self.settings.borrow_mut().set_automatic(automatic);
+        self.store();
+        self.times_changed();
+        true
+    }
+
+    // realises FR-129, FR-130
+    /// Takes a measured *processing time* in milliseconds: with the *automatic setting* on, sets
+    /// the two times to those of `times_of_processing`, stores them and emits `times_changed`;
+    /// does nothing otherwise. Called by the *front end* on `processingMeasured` of the *node
+    /// editor* and of the network editor.
+    #[qslot(qml_name = "reportProcessingTime")]
+    fn report_processing_time(&mut self, processing_time: i32) {
+        if !self.automatic() {
+            return;
+        }
+        let (idle_time, long_idle_time) =
+            times_of_processing(u32::try_from(processing_time).unwrap_or(0));
+        let unchanged = {
+            let settings = self.settings.borrow();
+            settings.idle_time() == idle_time && settings.long_idle_time() == long_idle_time
+        };
+        if unchanged {
+            return;
+        }
+        let _ = self
+            .settings
+            .borrow_mut()
+            .set_times(idle_time, long_idle_time);
+        self.store();
+        self.times_changed();
+    }
 }
 
 impl Workbench {

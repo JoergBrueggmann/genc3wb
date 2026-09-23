@@ -111,5 +111,17 @@ ApplicationWindow {
             nodeWindow.raise();
             nodeWindow.requestActivate();
         }
+
+        function onProcessingMeasured(processingTime) {
+            Workbench.reportProcessingTime(processingTime);
+        }
+    }
+
+    Connections {
+        target: Workbench.node
+
+        function onProcessingMeasured(processingTime) {
+            Workbench.reportProcessingTime(processingTime);
+        }
     }
 }

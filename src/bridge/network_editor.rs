@@ -14,10 +14,11 @@ use crate::core::text_increment::TextIncrement;
 use qtbridge::{QObjectHolder, QmlMethodInvoker, invoke_method, qobject};
 
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::mpsc::{Receiver, Sender, channel};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// The time the main thread waits for the build thread to shut the *build system* down.
 const SHUTDOWN_WAIT: Duration = Duration::from_secs(3);
@@ -74,6 +75,8 @@ pub struct NetworkEditor {
     showing_error: bool,
     /// the number of *builds* handed to the build thread and not yet reported
     builds_pending: u32,
+    /// when each *build* not yet reported was handed over, in their order (FR-129)
+    builds_started: VecDeque<Instant>,
     /// the commands to the build thread, `None` before the first one and after `shut_down`
     commands: Option<Sender<Command>>,
     /// the reports of the build thread
@@ -189,6 +192,9 @@ impl NetworkEditor {
 
     #[qsignal(qml_name = "nodeOpened")]
     fn node_opened(&mut self, name: String);
+
+    #[qsignal(qml_name = "processingMeasured")]
+    fn processing_measured(&mut self, processing_time: i32);
 
     // slots
     // realises FR-092
@@ -358,6 +364,9 @@ impl NetworkEditor {
                     if self.builds_pending == 0 {
                         self.building_changed();
                     }
+                    if let Some(started) = self.builds_started.pop_front() {
+                        self.processing_measured(milliseconds_since(started));
+                    }
                     if let Some(network_input) = &self.network_input {
                         let marks = marks_of_diagnostics(&self.provided, &outcome.diagnostics);
                         invoke_method!(
@@ -445,8 +454,10 @@ impl NetworkEditor {
         self.count_build();
     }
 
-    /// Counts a *build* handed to the build thread, and emits `building_changed` for the first.
+    /// Counts a *build* handed to the build thread, records when, and emits `building_changed`
+    /// for the first.
     fn count_build(&mut self) {
+        self.builds_started.push_back(Instant::now());
         self.builds_pending += 1;
         if self.builds_pending == 1 {
             self.building_changed();
@@ -467,6 +478,12 @@ impl NetworkEditor {
             let _ = commands.send(command);
         }
     }
+}
+
+// realises FR-129
+/// Yields the milliseconds since `started`, as the bridge carries them.
+fn milliseconds_since(started: Instant) -> i32 {
+    i32::try_from(started.elapsed().as_millis()).unwrap_or(i32::MAX)
 }
 
 /// Runs the build thread: carries out every command with the [`NetworkBuilder`] it owns, reports

@@ -1,4 +1,5 @@
-// The modal settings dialog: the idle time and the long idle time of every code editor, in seconds.
+// The modal settings dialog: the idle time and the long idle time of every code editor, in seconds with one
+// decimal, and the automatic setting.
 //
 // Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 // Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -19,65 +20,119 @@ Dialog {
     title: qsTr("Settings")
     modal: true
     anchors.centerIn: Overlay.overlay
-    standardButtons: Dialog.Ok | Dialog.Cancel
+    // the dialog is left by its two buttons alone: OK stores where the constraints hold, Cancel
+    // discards (FR-100, FR-135)
+    closePolicy: Popup.NoAutoClose
 
     // the fields take the stored values whenever the dialog opens, so that a rejected
-    // change is not carried into the next one (FR-100)
+    // change is not carried into the next one (FR-100); the times are milliseconds at the
+    // workbench object and tenths of a second in the fields
     onAboutToShow: {
-        idleTimeBox.value = Workbench.idleTime;
-        longIdleTimeBox.value = Workbench.longIdleTime;
+        idleTimeBox.value = Workbench.idleTime / 100;
+        longIdleTimeBox.value = Workbench.longIdleTime / 100;
+        automaticBox.checked = Workbench.automatic;
+        errorLabel.text = "";
     }
 
-    onAccepted: {
-        Workbench.idleTime = idleTimeBox.value;
-        Workbench.longIdleTime = longIdleTimeBox.value;
+    footer: DialogButtonBox {
+        id: buttons
+
+        Button {
+            id: cancelButton
+
+            text: qsTr("Cancel")
+            onClicked: settingsDialog.reject()
+        }
+
+        Button {
+            id: okButton
+
+            text: qsTr("OK")
+            onClicked: {
+                if (Workbench.trySetTimes(idleTimeBox.value * 100, longIdleTimeBox.value * 100, automaticBox.checked)) {
+                    settingsDialog.accept();
+                }
+            }
+        }
     }
 
-    GridLayout {
-        id: layout
+    ColumnLayout {
+        GridLayout {
+            id: layout
 
-        columns: 3
+            columns: 3
+
+            Label {
+                id: idleTimeLabel
+
+                text: qsTr("Idle time")
+            }
+
+            SpinBox {
+                id: idleTimeBox
+
+                from: 2
+                to: 36000
+                stepSize: 2
+                editable: true
+                enabled: !automaticBox.checked
+                value: Workbench.idleTime / 100
+                textFromValue: (value, locale) => (value / 10).toFixed(1)
+                valueFromText: (text, locale) => Math.round(parseFloat(text) * 10)
+            }
+
+            Label {
+                id: idleTimeUnit
+
+                text: qsTr("seconds until the text is saved and transmitted")
+            }
+
+            Label {
+                id: longIdleTimeLabel
+
+                text: qsTr("Long idle time")
+            }
+
+            SpinBox {
+                id: longIdleTimeBox
+
+                from: 2
+                to: 36000
+                stepSize: 2
+                editable: true
+                enabled: !automaticBox.checked
+                value: Workbench.longIdleTime / 100
+                textFromValue: (value, locale) => (value / 10).toFixed(1)
+                valueFromText: (text, locale) => Math.round(parseFloat(text) * 10)
+            }
+
+            Label {
+                id: longIdleTimeUnit
+
+                text: qsTr("seconds until the error message of a failed build is shown")
+            }
+        }
+
+        CheckBox {
+            id: automaticBox
+
+            text: qsTr("Set the times automatically from the processing time")
+            checked: Workbench.automatic
+        }
 
         Label {
-            id: idleTimeLabel
+            id: errorLabel
 
-            text: qsTr("Idle time")
+            color: "#d02020"
+            text: ""
         }
+    }
 
-        SpinBox {
-            id: idleTimeBox
+    Connections {
+        target: Workbench
 
-            from: 1
-            to: 3600
-            editable: true
-            value: Workbench.idleTime
-        }
-
-        Label {
-            id: idleTimeUnit
-
-            text: qsTr("seconds until the text is saved and built")
-        }
-
-        Label {
-            id: longIdleTimeLabel
-
-            text: qsTr("Long idle time")
-        }
-
-        SpinBox {
-            id: longIdleTimeBox
-
-            from: 1
-            to: 3600
-            editable: true
-            value: Workbench.longIdleTime
-        }
-
-        Label {
-            id: longIdleTimeUnit
-
-            text: qsTr("seconds until the error message of a failed build is shown")
+        function onTimesRejected(message) {
+            errorLabel.text = message;
         }
     }
 }

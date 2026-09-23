@@ -197,13 +197,21 @@ genc³wb reads the file `genc3wb.yaml` of its working directory at its start and
 writes it whenever a value changes. Started by a double-click on `start`, the
 working directory is the root of the distribution, so the file lies there.
 
-The file is YAML and holds the idle time and the long idle time in seconds,
-the path of the network file and the path of the build system. The node window
-names nothing of its own: the meta compiler DSL, the inputs and the outputs of a
-node are taken from the network file when the node is opened. Where the file
-does not exist, the idle time is 2 seconds, the long idle time 16 seconds and
-the build system `./genc3/bin/genc3d`. The two times are set in the dialog of
-the settings menu.
+The file is YAML and holds the idle time and the long idle time in seconds
+with one decimal, whether the times are set automatically, the path of the
+network file and the path of the build system. The node window names nothing of
+its own: the meta compiler DSL, the inputs and the outputs of a node are taken
+from the network file when the node is opened. Where the file does not exist,
+the idle time is 2 seconds, the long idle time 16 seconds, the automatic setting
+on, and the build system `./genc3/bin/genc3d`.
+
+The two times are set in the dialog of the settings menu, in steps of 0.2
+seconds; the idle time is at least 0.2 seconds and the long idle time is
+greater than the idle time, and the dialog says so where a value violates it.
+With the automatic setting on, the workbench measures how long the node or the
+build system takes to answer a change — up to the storing of the outputs — and
+sets the idle time to twice that, rounded up to 0.2 seconds, and the long idle
+time to eight times the idle time, after every answered change.
 
 ### The node window
 

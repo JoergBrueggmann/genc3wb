@@ -12,6 +12,17 @@ and this project adheres to a four-part version number.
 
 At the moment, nothing unreleased here.
 
+## [0.10.0.0] - 2026-09-23
+
+**_Fine_setup_of_idle_times_**
+
+Derived work items: definition 0.7.0.0
+
+- Let the *idle time* and *long idle time* be changable by 0.2 second steps.
+- Add an auto switch where the processing time is measured and *idle time* will automatically set to 2 times the processing time, rounded up; otherwise manually setup.
+- Decided at the meeting: both times are held in seconds with one decimal in the *settings file* and in the dialog, which steps by 0.2 seconds, the code editors taking milliseconds as before; the *idle time* is at least 0.2 seconds and the *long idle time* greater than the *idle time*, and an error message appears in the dialog when the user tries to store values that violate a constraint, the dialog staying open; the *processing time* is the time from the transmission of a change to the *response* of the *store request* that follows it, or of the change where none follows, for the *network file* to the *network response*; the automatic setting sets the *idle time* to twice the *processing time*, rounded up to the next 0.2 seconds, and the *long idle time* to 8 times the *idle time*, after every measured change; the switch is a check box of the settings dialog, whose fields are disabled while it is checked and show the values in force, stored in the *settings file* with the values it last set; it is on where the *settings file* does not exist, the stored values holding until the first measurement.
+- Changes what the *project folder* delivers incompatibly, the *settings file* and the dialog: a 'B' bump as long as the major part is 0.
+
 ## [0.9.0.0] - 2026-09-23
 
 **_Diagnostics_with_read_positions_**

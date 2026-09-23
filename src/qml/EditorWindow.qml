@@ -48,8 +48,8 @@ Window {
             Layout.fillWidth: true
             Layout.fillHeight: true
             text: editorWindow.group.text
-            idleTime: Workbench.idleTime * 1000
-            longIdleTime: Workbench.longIdleTime * 1000
+            idleTime: Workbench.idleTime
+            longIdleTime: Workbench.longIdleTime
             onTextEdited: editorWindow.group.text = editor.text
             onIdleExpired: editorWindow.group.idleExpired()
             onLongIdleExpired: editorWindow.group.longIdleExpired()

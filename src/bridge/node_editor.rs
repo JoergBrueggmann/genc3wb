@@ -16,11 +16,11 @@ use crate::core::text_increment::TextIncrement;
 use qtbridge::{QObjectHolder, QmlMethodInvoker, invoke_method, qobject};
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::mpsc::{Receiver, Sender, channel};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// The time the main thread waits for the *node thread* to shut the *node* down.
 const SHUTDOWN_WAIT: Duration = Duration::from_secs(3);
@@ -88,6 +88,10 @@ pub struct NodeEditor {
     status: String,
     /// the number of *requests* handed to the *node thread* and not yet reported
     requests_pending: u32,
+    /// when each change not yet answered was handed over, in their order (FR-129)
+    changes_started: VecDeque<Instant>,
+    /// when the change each *store request* not yet answered follows was handed over (FR-129)
+    stores_started: VecDeque<Instant>,
     /// the commands to the *node thread*, `None` before the first one and after `shut_down`
     commands: Option<Sender<NodeCommand>>,
     /// the reports of the *node thread*
@@ -114,6 +118,8 @@ impl Default for NodeEditor {
             served: false,
             status: String::new(),
             requests_pending: 0,
+            changes_started: VecDeque::new(),
+            stores_started: VecDeque::new(),
             commands: None,
             reports: None,
             output: None,
@@ -191,6 +197,9 @@ impl NodeEditor {
     #[qsignal(qml_name = "statusChanged")]
     fn status_changed(&mut self);
 
+    #[qsignal(qml_name = "processingMeasured")]
+    fn processing_measured(&mut self, processing_time: i32);
+
     // slots
     // realises FR-001, FR-087
     /// Yields the *input group* of the *input* `index`; the one of the *meta compiler DSL* for
@@ -253,6 +262,8 @@ impl NodeEditor {
         self.originals = Originals::capture(&produced_paths(&directory, &inputs, &producers));
         self.provided.clear();
         self.diagnostics.clear();
+        self.changes_started.clear();
+        self.stores_started.clear();
         self.name = name;
         self.documents = std::iter::once(meta_dsl.clone())
             .chain(inputs.iter().cloned())
@@ -313,6 +324,7 @@ impl NodeEditor {
             increment,
             provided_after,
         });
+        self.changes_started.push_back(Instant::now());
         self.count_request();
     }
 
@@ -364,19 +376,30 @@ impl NodeEditor {
                 },
                 NodeReport::Transmitted { document, outcome } => {
                     self.uncount_request();
+                    let started = self.changes_started.pop_front();
                     match outcome {
                         Ok(diagnostics) => {
                             self.present_diagnostics(&document, &diagnostics);
-                            if !has_error(&diagnostics) {
+                            if has_error(&diagnostics) {
+                                self.measure(started);
+                            } else {
                                 self.send(NodeCommand::Store);
                                 self.count_request();
+                                if let Some(started) = started {
+                                    self.stores_started.push_back(started);
+                                }
                             }
                         }
-                        Err(message) => self.set_status(message),
+                        Err(message) => {
+                            self.measure(started);
+                            self.set_status(message);
+                        }
                     }
                 }
                 NodeReport::Stored(outcome) => {
                     self.uncount_request();
+                    let started = self.stores_started.pop_front();
+                    self.measure(started);
                     match outcome {
                         Ok(()) => {
                             if let Some(output) = &self.output {
@@ -501,6 +524,16 @@ impl NodeEditor {
         }
         self.status = status;
         self.status_changed();
+    }
+
+    // realises FR-129
+    /// Emits `processing_measured` with the milliseconds since `started`, where it is known.
+    fn measure(&mut self, started: Option<Instant>) {
+        if let Some(started) = started {
+            self.processing_measured(
+                i32::try_from(started.elapsed().as_millis()).unwrap_or(i32::MAX),
+            );
+        }
     }
 
     /// Counts a *request* handed to the *node thread*, and emits `status_changed` for the first.
