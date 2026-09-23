@@ -13,7 +13,7 @@ use std::path::PathBuf;
 /// A *network file* of two *nodes*, the *output* of the one the *input* of the other.
 const TWO_NODES: &str = "meta compiler-compiler network n.gc3n\n\
     node a\n  inputs\n    a.in\n  outputs\n    x.txt\n\
-    node b\n  inputs\n    x.txt\n  outputs\n    y.txt\n  transformation\n    proxy make\n";
+    node b\n  inputs\n    x.txt\n  outputs\n    y.txt\n  transformation proxy make\n";
 
 /// Yields the path of the build system: the environment variable `GENC3D`.
 fn build_system() -> String {
@@ -105,9 +105,9 @@ fn faulty_edit_fails_with_the_fault_and_its_correction_succeeds_again() {
 
 /// A *meta compiler DSL* whose *input* is copied to its *output*: a syntax matching the letters of
 /// 'hello world', and a generator emitting the matched text.
-const COPY_META_DSL: &str = "syntax\n  root = chars, EOS ;\n  chars = chars, ch | ch ;\n  \
-    ch = 'h' | 'e' | 'l' | 'o' | 'w' | 'r' | 'd' | ' ' ;\n\
-    generator copy input \"a.in\" output \"x.txt\"\n  root => flat(#1) ;\n";
+const COPY_META_DSL: &str = "syntax\n    root = chars, EOS\n    chars = ch, { ch }\n    \
+    ch = 'h' | 'e' | 'l' | 'o' | 'w' | 'r' | 'd' | ' '\n\
+    generator copy input \"a.in\" output \"x.txt\"\n    root => flat(#1)\n";
 
 // FR-104 to FR-109, FR-111, IR-026 to IR-028
 // needs the service executable genc3d of genc³ 0.19.0.0 or later, named by the environment

@@ -12,6 +12,15 @@ and this project adheres to a four-part version number.
 
 At the moment, nothing unreleased here.
 
+## [0.10.0.1] - 2026-09-23
+
+**_Optimise_the_seed_syntax_**
+
+Leading work item: genc3 0.22.0.0
+
+- Bring the *meta compiler DSL* and *network file* texts the tests embed to the notation of genc³ 0.22.0.0: no semicolon, indented blocks, `//` and `/* … */` comments, `_` and `[_]` separators, strings for keywords, so that the tests run against that distribution.
+- Changes nothing of what the *project folder* delivers, the test data alone: a 'D' bump.
+
 ## [0.10.0.0] - 2026-09-23
 
 **_Fine_setup_of_idle_times_**
