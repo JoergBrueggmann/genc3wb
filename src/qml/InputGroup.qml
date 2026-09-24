@@ -84,6 +84,7 @@ GroupBox {
             text: root.group.text
             idleTime: Workbench.idleTime
             longIdleTime: Workbench.longIdleTime
+            tabSize: Workbench.tabSize
             onTextEdited: root.group.text = editor.text
             onIdleExpired: root.group.idleExpired()
             onLongIdleExpired: root.group.longIdleExpired()

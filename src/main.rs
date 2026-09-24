@@ -3,6 +3,7 @@
 //! Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 //! Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
 
+use genc3wb::bridge::editing::Editing;
 use genc3wb::bridge::workbench::Workbench;
 
 use qtbridge::{QApp, include_bytes_qml};
@@ -32,6 +33,7 @@ fn main() {
     let exit_code = QApp::new()
         .application_name("genc3wb")
         .register::<Workbench>()
+        .register::<Editing>()
         .load_qml_from_file("qrc:/genc3wb/qml/Main.qml")
         .run();
     std::process::exit(exit_code);

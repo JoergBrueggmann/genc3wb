@@ -50,6 +50,7 @@ Window {
             text: editorWindow.group.text
             idleTime: Workbench.idleTime
             longIdleTime: Workbench.longIdleTime
+            tabSize: Workbench.tabSize
             onTextEdited: editorWindow.group.text = editor.text
             onIdleExpired: editorWindow.group.idleExpired()
             onLongIdleExpired: editorWindow.group.longIdleExpired()

@@ -1,4 +1,5 @@
-//! The *settings file*: the two times, the *automatic setting* and the paths of *product*, in YAML.
+//! The *settings file*: the two times, the *automatic setting*, the *tab size*, the positions of
+//! the splitters and the paths of *product*, in YAML.
 //!
 //! Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 //! Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -31,6 +32,25 @@ pub const MIN_IDLE_TIME: u32 = TIME_STEP;
 /// distribution carries beside the workbench.
 pub const DEFAULT_BUILD_SYSTEM_PATH: &str = "./genc3/bin/genc3d";
 
+// realises FR-140
+/// The *tab size* where the *settings file* does not hold one.
+pub const DEFAULT_TAB_SIZE: u32 = 4;
+/// The least *tab size*.
+pub const MIN_TAB_SIZE: u32 = 1;
+/// The greatest *tab size*.
+pub const MAX_TAB_SIZE: u32 = 16;
+
+// realises FR-149
+/// The width of the left part of the *node window*, in pixels, where the *settings file* does not
+/// hold one (FR-146).
+pub const DEFAULT_NODE_LEFT_WIDTH: u32 = 560;
+/// The height of the *input group* in the left part of the *node window*, in pixels, where the
+/// *settings file* does not hold one (FR-147).
+pub const DEFAULT_NODE_UPPER_HEIGHT: u32 = 340;
+/// The width of the *input group* of the *network file* in the *compiler network editor*, in
+/// pixels, where the *settings file* does not hold one (FR-148).
+pub const DEFAULT_NETWORK_LEFT_WIDTH: u32 = 480;
+
 // realises IR-011, IR-012
 /// Why the settings could not be restored or stored.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,7 +59,8 @@ pub enum SettingsError {
     Io(String),
     /// the *settings file* is no YAML mapping of the keys of [`Settings`]; carries the reason
     Malformed(String),
-    /// the two times violate FR-133 or FR-134; carries the message naming the constraint
+    /// the two times violate FR-133 or FR-134, or the *tab size* FR-140; carries the message
+    /// naming the constraint
     Constraint(String),
 }
 
@@ -57,14 +78,17 @@ impl fmt::Display for SettingsError {
 
 impl std::error::Error for SettingsError {}
 
-// realises FR-090, FR-091, FR-093, FR-094, FR-133, FR-134
-/// The *idle time*, the *long idle time*, the *automatic setting* and the paths *product*
-/// restores between sessions.
+// realises FR-090, FR-091, FR-093, FR-094, FR-133, FR-134, FR-140, FR-149
+/// The *idle time*, the *long idle time*, the *automatic setting*, the *tab size*, the positions
+/// of the splitters and the paths *product* restores between sessions.
 ///
 /// * The two times are held in milliseconds, as the code editors take them; the *settings file*
 ///   and the settings dialog carry them in seconds with one decimal.
 /// * The two times satisfy FR-133 and FR-134: the *idle time* is at least `MIN_IDLE_TIME`, and
 ///   the *long idle time* is greater than the *idle time*.
+/// * The *tab size* lies in `MIN_TAB_SIZE..=MAX_TAB_SIZE` (FR-140).
+/// * The position of a splitter is the size, in pixels, of the part before it: the left or the
+///   upper one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
     /// the *idle time* in milliseconds
@@ -73,6 +97,14 @@ pub struct Settings {
     long_idle_time: u32,
     /// whether the *automatic setting* is on
     automatic: bool,
+    /// the *tab size* of every code editor, in characters
+    tab_size: u32,
+    /// the width of the left part of the *node window* (FR-146)
+    node_left_width: u32,
+    /// the height of the *input group* in the left part of the *node window* (FR-147)
+    node_upper_height: u32,
+    /// the width of the *input group* of the *network file* (FR-148)
+    network_left_width: u32,
     /// the path of the *network file*
     network_path: String,
     /// the path of the *build system*
@@ -80,26 +112,33 @@ pub struct Settings {
 }
 
 impl Default for Settings {
-    // realises FR-094
+    // realises FR-094, FR-140, FR-149
     /// The settings where no *settings file* exists: the two default times, the *automatic
-    /// setting* on, the *build system* of the distribution, and no *network file*.
+    /// setting* on, the default *tab size* and positions of the splitters, the *build system* of
+    /// the distribution, and no *network file*.
     fn default() -> Self {
         Settings {
             idle_time: DEFAULT_IDLE_TIME,
             long_idle_time: DEFAULT_LONG_IDLE_TIME,
             automatic: DEFAULT_AUTOMATIC,
+            tab_size: DEFAULT_TAB_SIZE,
+            node_left_width: DEFAULT_NODE_LEFT_WIDTH,
+            node_upper_height: DEFAULT_NODE_UPPER_HEIGHT,
+            network_left_width: DEFAULT_NETWORK_LEFT_WIDTH,
             network_path: String::new(),
             build_system_path: DEFAULT_BUILD_SYSTEM_PATH.to_owned(),
         }
     }
 }
 
-// realises FR-093, C-007
+// realises FR-093, FR-140, FR-149, C-007
 /// The *settings file* as YAML holds it: one key per value, each key absent where its default
 /// holds.
 ///
 /// * No path of the *node window* is among the keys: every path of the *node window* is named
 ///   from the *node description* when a *node* is opened (FR-086, FR-087, FR-102).
+/// * The *tab size* and the positions of the splitters are read as any integer, so that a value
+///   out of range is corrected rather than failing the whole file.
 #[derive(Debug, Serialize, Deserialize)]
 struct Stored {
     /// the *idle time* in seconds with one decimal
@@ -110,6 +149,14 @@ struct Stored {
     long_idle_time: f64,
     #[serde(default = "default_automatic")]
     automatic: bool,
+    #[serde(default = "default_tab_size")]
+    tab_size: i64,
+    #[serde(default = "default_node_left_width")]
+    node_left_width: i64,
+    #[serde(default = "default_node_upper_height")]
+    node_upper_height: i64,
+    #[serde(default = "default_network_left_width")]
+    network_left_width: i64,
     #[serde(default)]
     network_path: String,
     #[serde(default = "default_build_system_path")]
@@ -129,6 +176,32 @@ fn default_long_idle_time() -> f64 {
 /// The default of the key `automatic`, for a *settings file* that lacks it.
 fn default_automatic() -> bool {
     DEFAULT_AUTOMATIC
+}
+
+/// The default of the key `tab_size`, for a *settings file* that lacks it.
+fn default_tab_size() -> i64 {
+    i64::from(DEFAULT_TAB_SIZE)
+}
+
+/// The default of the key `node_left_width`, for a *settings file* that lacks it.
+fn default_node_left_width() -> i64 {
+    i64::from(DEFAULT_NODE_LEFT_WIDTH)
+}
+
+/// The default of the key `node_upper_height`, for a *settings file* that lacks it.
+fn default_node_upper_height() -> i64 {
+    i64::from(DEFAULT_NODE_UPPER_HEIGHT)
+}
+
+/// The default of the key `network_left_width`, for a *settings file* that lacks it.
+fn default_network_left_width() -> i64 {
+    i64::from(DEFAULT_NETWORK_LEFT_WIDTH)
+}
+
+/// Yields `value` as a `u32` within `least..=greatest`, the nearest bound where it lies outside.
+fn clamped(value: i64, least: u32, greatest: u32) -> u32 {
+    let bounded = value.clamp(i64::from(least), i64::from(greatest));
+    u32::try_from(bounded).unwrap_or(least)
 }
 
 /// Yields a time in seconds with one decimal, as the *settings file* holds it.
@@ -159,6 +232,19 @@ pub fn constraint_violation(idle_time: u32, long_idle_time: u32) -> Option<Strin
     None
 }
 
+// realises FR-140, FR-141
+/// Yields the message naming the constraint that `tab_size` violates, `None` where it lies in
+/// `MIN_TAB_SIZE..=MAX_TAB_SIZE`.
+pub fn tab_size_violation(tab_size: u32) -> Option<String> {
+    if (MIN_TAB_SIZE..=MAX_TAB_SIZE).contains(&tab_size) {
+        None
+    } else {
+        Some(format!(
+            "The tab size is an integer from {MIN_TAB_SIZE} to {MAX_TAB_SIZE}."
+        ))
+    }
+}
+
 // realises FR-130
 /// Yields the *idle time* and the *long idle time* the *automatic setting* derives from a
 /// *processing time* in milliseconds: twice the *processing time*, rounded up to the next
@@ -184,7 +270,7 @@ impl Settings {
         PathBuf::from(SETTINGS_FILE_NAME)
     }
 
-    // realises FR-090, FR-094, FR-095, IR-011
+    // realises FR-090, FR-094, FR-095, FR-140, FR-149, IR-011
     /// Restores the settings stored at the last termination.
     ///
     /// * Where the *settings file* does not exist, the default settings are yielded (FR-094).
@@ -193,6 +279,8 @@ impl Settings {
     /// * The two times are read in seconds and held in milliseconds; where they violate FR-133
     ///   or FR-134, the *idle time* is raised to the least one and the *long idle time* to the
     ///   *idle time* plus one step.
+    /// * A *tab size* outside `MIN_TAB_SIZE..=MAX_TAB_SIZE` is brought to the nearest bound, and a
+    ///   negative position of a splitter to 0.
     ///
     /// # Errors
     /// Returns [`SettingsError::Io`] where the file exists but cannot be read, and
@@ -212,12 +300,16 @@ impl Settings {
             idle_time,
             long_idle_time,
             automatic: stored.automatic,
+            tab_size: clamped(stored.tab_size, MIN_TAB_SIZE, MAX_TAB_SIZE),
+            node_left_width: clamped(stored.node_left_width, 0, u32::MAX),
+            node_upper_height: clamped(stored.node_upper_height, 0, u32::MAX),
+            network_left_width: clamped(stored.network_left_width, 0, u32::MAX),
             network_path: stored.network_path,
             build_system_path: stored.build_system_path,
         })
     }
 
-    // realises FR-091, FR-099, IR-012
+    // realises FR-091, FR-099, FR-141, FR-149, IR-012
     /// Stores the settings, to be restored at the next start.
     ///
     /// * The directory of the file is created where it does not exist.
@@ -232,6 +324,10 @@ impl Settings {
             idle_time: seconds_of_milliseconds(self.idle_time),
             long_idle_time: seconds_of_milliseconds(self.long_idle_time),
             automatic: self.automatic,
+            tab_size: i64::from(self.tab_size),
+            node_left_width: i64::from(self.node_left_width),
+            node_upper_height: i64::from(self.node_upper_height),
+            network_left_width: i64::from(self.network_left_width),
             network_path: self.network_path.clone(),
             build_system_path: self.build_system_path.clone(),
         };
@@ -279,6 +375,63 @@ impl Settings {
         self.automatic = automatic;
     }
 
+    // realises FR-140, FR-142
+    /// Yields the *tab size*, in characters.
+    pub fn tab_size(&self) -> u32 {
+        self.tab_size
+    }
+
+    // realises FR-140, FR-141
+    /// Sets the *tab size*, in characters.
+    ///
+    /// # Errors
+    /// Returns [`SettingsError::Constraint`] with the message of [`tab_size_violation`] where
+    /// `tab_size` lies outside `MIN_TAB_SIZE..=MAX_TAB_SIZE`; the settings are left as they are
+    /// then.
+    pub fn set_tab_size(&mut self, tab_size: u32) -> Result<(), SettingsError> {
+        if let Some(message) = tab_size_violation(tab_size) {
+            return Err(SettingsError::Constraint(message));
+        }
+        self.tab_size = tab_size;
+        Ok(())
+    }
+
+    // realises FR-146, FR-149
+    /// Yields the width of the left part of the *node window*, in pixels.
+    pub fn node_left_width(&self) -> u32 {
+        self.node_left_width
+    }
+
+    // realises FR-146, FR-149
+    /// Sets the width of the left part of the *node window*, in pixels.
+    pub fn set_node_left_width(&mut self, width: u32) {
+        self.node_left_width = width;
+    }
+
+    // realises FR-147, FR-149
+    /// Yields the height of the *input group* in the left part of the *node window*, in pixels.
+    pub fn node_upper_height(&self) -> u32 {
+        self.node_upper_height
+    }
+
+    // realises FR-147, FR-149
+    /// Sets the height of the *input group* in the left part of the *node window*, in pixels.
+    pub fn set_node_upper_height(&mut self, height: u32) {
+        self.node_upper_height = height;
+    }
+
+    // realises FR-148, FR-149
+    /// Yields the width of the *input group* of the *network file*, in pixels.
+    pub fn network_left_width(&self) -> u32 {
+        self.network_left_width
+    }
+
+    // realises FR-148, FR-149
+    /// Sets the width of the *input group* of the *network file*, in pixels.
+    pub fn set_network_left_width(&mut self, width: u32) {
+        self.network_left_width = width;
+    }
+
     /// Yields the path of the *network file*, empty where none is stored.
     pub fn network_path(&self) -> &str {
         &self.network_path
@@ -307,7 +460,9 @@ impl Settings {
  * independence     : ✅
  * edge cases       : ✅
  * conforms to doc  : ✅
- * covers bridge    : Workbench::default, Workbench::try_set_times, Workbench::report_processing_time,
+ * covers bridge    : Workbench::default, Workbench::try_set_settings,
+ *                    Workbench::report_processing_time, Workbench::set_node_left_width,
+ *                    Workbench::set_node_upper_height, Workbench::set_network_left_width,
  *                    InputGroup::set_path, NetworkEditor::set_build_system_path */
 #[cfg(test)]
 mod tests {
@@ -525,6 +680,156 @@ mod tests {
         let mut settings = Settings::default();
         settings.set_automatic(false);
         assert!(!settings.automatic());
+    }
+
+    #[test]
+    fn default_settings_hold_the_default_tab_size_and_positions_of_the_splitters() {
+        // FR-140, FR-149
+        let settings = Settings::default();
+        assert_eq!(
+            (
+                settings.tab_size(),
+                settings.node_left_width(),
+                settings.node_upper_height(),
+                settings.network_left_width()
+            ),
+            (4, 560, 340, 480)
+        );
+    }
+
+    #[test]
+    fn tab_size_and_positions_of_the_splitters_survive_save_and_load() {
+        // FR-140, FR-141, FR-149
+        let file = case_file("layout");
+        let mut settings = Settings::default();
+        settings
+            .set_tab_size(8)
+            .expect("the tab size satisfies the constraint");
+        settings.set_node_left_width(700);
+        settings.set_node_upper_height(250);
+        settings.set_network_left_width(333);
+        let saved = settings.save(&file);
+        let content = fs::read_to_string(&file).unwrap_or_default();
+        let loaded = Settings::load(&file);
+        remove_case(&file);
+        assert_eq!(
+            (
+                saved,
+                content.contains("tab_size: 8\n"),
+                content.contains("node_left_width: 700\n"),
+                content.contains("node_upper_height: 250\n"),
+                content.contains("network_left_width: 333\n"),
+                loaded
+            ),
+            (Ok(()), true, true, true, true, Ok(settings))
+        );
+    }
+
+    #[test]
+    fn a_file_without_tab_size_and_splitters_yields_their_defaults() {
+        // FR-140, FR-149, IR-011: 0.10.0.0 wrote none of these keys
+        let file = case_file("before");
+        fs::create_dir_all(file.parent().expect("a parent")).expect("the directory can be created");
+        fs::write(
+            &file,
+            "idle_time: 1.4\nlong_idle_time: 9.0\nautomatic: false\n",
+        )
+        .expect("the file can be written");
+        let settings = Settings::load(&file).expect("the file is read");
+        remove_case(&file);
+        assert_eq!(
+            (
+                settings.tab_size(),
+                settings.node_left_width(),
+                settings.node_upper_height(),
+                settings.network_left_width(),
+                settings.idle_time()
+            ),
+            (
+                DEFAULT_TAB_SIZE,
+                DEFAULT_NODE_LEFT_WIDTH,
+                DEFAULT_NODE_UPPER_HEIGHT,
+                DEFAULT_NETWORK_LEFT_WIDTH,
+                1400
+            )
+        );
+    }
+
+    #[test]
+    fn values_of_a_file_out_of_range_are_brought_to_the_nearest_bound() {
+        // FR-140, FR-149
+        let file = case_file("range");
+        fs::create_dir_all(file.parent().expect("a parent")).expect("the directory can be created");
+        fs::write(
+            &file,
+            "tab_size: 40\nnode_left_width: -5\nnode_upper_height: 0\n",
+        )
+        .expect("the file can be written");
+        let too_great = Settings::load(&file).expect("the file is read");
+        fs::write(&file, "tab_size: -3\n").expect("the file can be written");
+        let too_small = Settings::load(&file).expect("the file is read");
+        remove_case(&file);
+        assert_eq!(
+            (
+                too_great.tab_size(),
+                too_great.node_left_width(),
+                too_great.node_upper_height(),
+                too_small.tab_size()
+            ),
+            (16, 0, 0, 1)
+        );
+    }
+
+    #[test]
+    fn a_tab_size_within_the_bounds_is_set() {
+        // FR-140, FR-141
+        let mut settings = Settings::default();
+        let least = (settings.set_tab_size(1), settings.tab_size());
+        let greatest = (settings.set_tab_size(16), settings.tab_size());
+        assert_eq!((least, greatest), ((Ok(()), 1), (Ok(()), 16)));
+    }
+
+    #[test]
+    fn a_tab_size_outside_the_bounds_is_refused_with_its_message() {
+        // FR-140, FR-141
+        let mut settings = Settings::default();
+        let message = "The tab size is an integer from 1 to 16.".to_owned();
+        let below = settings.set_tab_size(0);
+        let above = settings.set_tab_size(17);
+        assert_eq!(
+            (below, above, settings.tab_size()),
+            (
+                Err(SettingsError::Constraint(message.clone())),
+                Err(SettingsError::Constraint(message)),
+                DEFAULT_TAB_SIZE
+            )
+        );
+    }
+
+    #[test]
+    fn the_tab_size_violation_is_none_within_the_bounds_only() {
+        // FR-140, FR-141
+        assert_eq!(
+            [0, 1, 4, 16, 17].map(|tab_size| tab_size_violation(tab_size).is_none()),
+            [false, true, true, true, false]
+        );
+    }
+
+    #[test]
+    fn the_positions_of_the_splitters_are_held_apart() {
+        // FR-146, FR-147, FR-148, FR-149
+        let mut settings = Settings::default();
+        settings.set_node_left_width(1);
+        settings.set_node_upper_height(2);
+        settings.set_network_left_width(3);
+        assert_eq!(
+            (
+                settings.node_left_width(),
+                settings.node_upper_height(),
+                settings.network_left_width()
+            ),
+            (1, 2, 3)
+        );
     }
 
     #[test]

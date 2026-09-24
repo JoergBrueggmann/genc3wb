@@ -1,4 +1,4 @@
-//! The *bridged type* `Workbench`: the *workbench object* that owns the settings and the other *bridged types*.
+//! The *bridged type* `Workbench`: the *workbench object*, owner of the settings and the groups.
 //!
 //! Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 //! Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -8,14 +8,14 @@ use crate::bridge::network_editor::NetworkEditor;
 use crate::bridge::node_editor::NodeEditor;
 use crate::bridge::output_group::OutputGroup;
 use crate::core::input_file::InputKind;
-use crate::core::settings::{Settings, times_of_processing};
+use crate::core::settings::{Settings, tab_size_violation, times_of_processing};
 
 use qtbridge::{QObjectHolder, qobject};
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
-// realises FR-001, FR-063, FR-090, FR-095, FR-099
+// realises FR-001, FR-063, FR-090, FR-095, FR-099, FR-140, FR-141, FR-149
 /// The *workbench object*.
 pub struct Workbench {
     /// the settings, shared with the groups
@@ -67,7 +67,7 @@ impl Default for Workbench {
     }
 }
 
-// realises FR-001, FR-063, FR-095, FR-099, FR-130 to FR-135
+// realises FR-001, FR-063, FR-095, FR-099, FR-130 to FR-135, FR-140, FR-141, FR-146 to FR-149
 #[qobject(Singleton)]
 impl Workbench {
     qproperty!("output", Read = output, Constant);
@@ -81,6 +81,24 @@ impl Workbench {
         Notify = times_changed
     );
     qproperty!("automatic", Read = automatic, Notify = times_changed);
+    // the tab size in characters (FR-140, FR-142)
+    qproperty!("tabSize", Read = tab_size, Notify = tab_size_changed);
+    // the positions of the splitters in pixels: the size of the left or upper part (FR-149)
+    qproperty!(
+        "nodeLeftWidth",
+        Read = node_left_width,
+        Notify = splitters_changed
+    );
+    qproperty!(
+        "nodeUpperHeight",
+        Read = node_upper_height,
+        Notify = splitters_changed
+    );
+    qproperty!(
+        "networkLeftWidth",
+        Read = network_left_width,
+        Notify = splitters_changed
+    );
 
     fn output(&self) -> Rc<RefCell<OutputGroup>> {
         Rc::clone(&self.output)
@@ -113,40 +131,129 @@ impl Workbench {
         self.settings.borrow().automatic()
     }
 
+    // realises FR-140, FR-142
+    fn tab_size(&self) -> u32 {
+        self.settings.borrow().tab_size()
+    }
+
+    // realises FR-146, FR-149
+    fn node_left_width(&self) -> u32 {
+        self.settings.borrow().node_left_width()
+    }
+
+    // realises FR-147, FR-149
+    fn node_upper_height(&self) -> u32 {
+        self.settings.borrow().node_upper_height()
+    }
+
+    // realises FR-148, FR-149
+    fn network_left_width(&self) -> u32 {
+        self.settings.borrow().network_left_width()
+    }
+
     // signals
     #[qsignal(qml_name = "timesChanged")]
     fn times_changed(&mut self);
 
-    #[qsignal(qml_name = "timesRejected")]
-    fn times_rejected(&mut self, message: String);
+    #[qsignal(qml_name = "tabSizeChanged")]
+    fn tab_size_changed(&mut self);
+
+    #[qsignal(qml_name = "splittersChanged")]
+    fn splitters_changed(&mut self);
+
+    #[qsignal(qml_name = "settingsRejected")]
+    fn settings_rejected(&mut self, message: String);
 
     // slots
-    // realises FR-099, FR-100, FR-132, FR-133, FR-134, FR-135
-    /// Sets the two times of every code editor, in milliseconds, and the *automatic setting*,
-    /// and stores them; yields whether the times satisfy the constraints, and emits
-    /// `times_rejected` with the message naming the violated one where they do not, nothing
-    /// being set then.
+    // realises FR-099, FR-100, FR-132, FR-133, FR-134, FR-135, FR-140, FR-141
+    /// Sets the two times of every code editor, in milliseconds, the *automatic setting* and the
+    /// *tab size*, in characters, and stores them; yields whether the values satisfy the
+    /// constraints, and emits `settings_rejected` with the message naming the violated one where
+    /// they do not, nothing being set then.
     ///
+    /// * The *tab size* is checked first, then the two times.
     /// * With the *automatic setting* on, the times are left as they are, since the next
     ///   *processing time* sets them (FR-132).
-    #[qslot(qml_name = "trySetTimes")]
-    fn try_set_times(&mut self, idle_time: i32, long_idle_time: i32, automatic: bool) -> bool {
+    #[qslot(qml_name = "trySetSettings")]
+    fn try_set_settings(
+        &mut self,
+        idle_time: i32,
+        long_idle_time: i32,
+        automatic: bool,
+        tab_size: i32,
+    ) -> bool {
         let idle_time = u32::try_from(idle_time).unwrap_or(0);
         let long_idle_time = u32::try_from(long_idle_time).unwrap_or(0);
+        let tab_size = u32::try_from(tab_size).unwrap_or(0);
+        if let Some(message) = tab_size_violation(tab_size) {
+            self.settings_rejected(message);
+            return false;
+        }
         if !automatic {
             let result = self
                 .settings
                 .borrow_mut()
                 .set_times(idle_time, long_idle_time);
             if let Err(error) = result {
-                self.times_rejected(error.to_string());
+                self.settings_rejected(error.to_string());
                 return false;
             }
         }
-        self.settings.borrow_mut().set_automatic(automatic);
+        let changed_tab_size = self.tab_size() != tab_size;
+        {
+            let mut settings = self.settings.borrow_mut();
+            settings.set_automatic(automatic);
+            let _ = settings.set_tab_size(tab_size);
+        }
         self.store();
         self.times_changed();
+        if changed_tab_size {
+            self.tab_size_changed();
+        }
         true
+    }
+
+    // realises FR-146, FR-149
+    /// Sets the width of the left part of the *node window*, in pixels, and stores it; called
+    /// by the *front end* when the splitter is released. A negative width is taken as 0.
+    #[qslot(qml_name = "setNodeLeftWidth")]
+    fn set_node_left_width(&mut self, width: i32) {
+        let width = u32::try_from(width).unwrap_or(0);
+        if width == self.node_left_width() {
+            return;
+        }
+        self.settings.borrow_mut().set_node_left_width(width);
+        self.store();
+        self.splitters_changed();
+    }
+
+    // realises FR-147, FR-149
+    /// Sets the height of the *input group* in the left part of the *node window*, in pixels,
+    /// and stores it; called by the *front end* when the splitter is released. A negative height
+    /// is taken as 0.
+    #[qslot(qml_name = "setNodeUpperHeight")]
+    fn set_node_upper_height(&mut self, height: i32) {
+        let height = u32::try_from(height).unwrap_or(0);
+        if height == self.node_upper_height() {
+            return;
+        }
+        self.settings.borrow_mut().set_node_upper_height(height);
+        self.store();
+        self.splitters_changed();
+    }
+
+    // realises FR-148, FR-149
+    /// Sets the width of the *input group* of the *network file*, in pixels, and stores it;
+    /// called by the *front end* when the splitter is released. A negative width is taken as 0.
+    #[qslot(qml_name = "setNetworkLeftWidth")]
+    fn set_network_left_width(&mut self, width: i32) {
+        let width = u32::try_from(width).unwrap_or(0);
+        if width == self.network_left_width() {
+            return;
+        }
+        self.settings.borrow_mut().set_network_left_width(width);
+        self.store();
+        self.splitters_changed();
     }
 
     // realises FR-129, FR-130

@@ -1,4 +1,4 @@
-//! The *outputs* of the opened *node* and its *diagnostics*, arranged as pages with their navigation.
+//! The *outputs* of the opened *node* and its *diagnostics*, as pages with their navigation.
 //!
 //! Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 //! Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -15,12 +15,27 @@ pub struct OutputFile {
     pub content: String,
 }
 
-// realises FR-027, FR-032, FR-033, FR-034, FR-035, FR-036, FR-122, FR-125
+// realises FR-150, FR-151, FR-152
+/// Which page of the output group is presented, and to which *output page* the output group
+/// returns when the *diagnostics* are gone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Presentation {
+    /// the index of the presented page
+    pub page: usize,
+    /// the index of the *output page* presented before the *diagnostics page* was presented for
+    /// *diagnostics* that appeared, `None` where the output group did not switch
+    pub return_page: Option<usize>,
+}
+
+// realises FR-027, FR-032, FR-033, FR-034, FR-035, FR-036, FR-122, FR-125, FR-150, FR-151,
+// FR-152
 /// The pages of the output group: the *output pages* of the opened *node*, then the
 /// *diagnostics page*, and which of them is presented.
 ///
 /// * The *output pages* are the *outputs* in the order of the *node description*; there is none
 ///   before a *node* is opened, and the *diagnostics page* is the one page then.
+/// * The presented page follows the *diagnostics* as [`presentation_after`] yields it, and is
+///   changed by hand through [`OutputPages::next`] and [`OutputPages::previous`] at any time.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct OutputPages {
     /// the *outputs*, in the order of the *node description*
@@ -29,6 +44,8 @@ pub struct OutputPages {
     diagnostics: String,
     /// the index of the presented page
     current: usize,
+    /// the *output page* to return to when the *diagnostics* are gone (FR-151)
+    return_page: Option<usize>,
 }
 
 /// Yields the content of the file at `path`, empty where it cannot be read.
@@ -58,13 +75,32 @@ impl OutputPages {
                 .collect(),
             diagnostics: String::new(),
             current: 0,
+            return_page: None,
         }
     }
 
-    // realises FR-107, FR-108, FR-125
-    /// Replaces the text of the *diagnostics page*.
-    pub fn set_diagnostics(&mut self, text: &str) {
+    // realises FR-107, FR-108, FR-125, FR-150, FR-151, FR-152
+    /// Replaces the text of the *diagnostics page*, and presents the page that
+    /// [`presentation_after`] yields for the change; yields whether the presented page changed.
+    ///
+    /// * An empty text holds no *diagnostics*; any other text holds at least one.
+    pub fn set_diagnostics(&mut self, text: &str) -> bool {
+        let had_diagnostics = !self.diagnostics.is_empty();
+        let has_diagnostics = !text.is_empty();
         self.diagnostics = text.to_owned();
+        let presentation = presentation_after(
+            Presentation {
+                page: self.current,
+                return_page: self.return_page,
+            },
+            self.files.len(),
+            had_diagnostics,
+            has_diagnostics,
+        );
+        let changed = presentation.page != self.current;
+        self.current = presentation.page;
+        self.return_page = presentation.return_page;
+        changed
     }
 
     // realises FR-125
@@ -136,13 +172,52 @@ impl OutputPages {
     }
 }
 
+// realises FR-150, FR-151, FR-152
+/// Yields the presentation of the output group after its *diagnostics* changed from
+/// `had_diagnostics` to `has_diagnostics`.
+///
+/// * Where *diagnostics* appear, the *diagnostics page* is presented, and the *output page*
+///   presented before is kept to return to (FR-150); where the *diagnostics page* was presented
+///   already, there is none to return to.
+/// * Where the *diagnostics* are gone, the *output page* kept is presented again (FR-151); where
+///   none is kept, the presented page stays.
+/// * Where the *diagnostics* neither appear nor are gone, the presentation stays as it is, so
+///   that a page selected by hand stays presented (FR-152).
+///
+/// # Arguments
+/// * `presentation` - the presentation before the change
+/// * `diagnostics_page` - the index of the *diagnostics page*: the number of *output pages*
+/// * `had_diagnostics` - whether the *diagnostics page* held *diagnostics* before the change
+/// * `has_diagnostics` - whether it holds *diagnostics* after the change
+pub fn presentation_after(
+    presentation: Presentation,
+    diagnostics_page: usize,
+    had_diagnostics: bool,
+    has_diagnostics: bool,
+) -> Presentation {
+    match (had_diagnostics, has_diagnostics) {
+        (false, true) => Presentation {
+            page: diagnostics_page,
+            return_page: Some(presentation.page).filter(|page| *page < diagnostics_page),
+        },
+        (true, false) => Presentation {
+            page: presentation
+                .return_page
+                .filter(|page| *page < diagnostics_page)
+                .unwrap_or(presentation.page),
+            return_page: None,
+        },
+        (false, false) | (true, true) => presentation,
+    }
+}
+
 /*  * validated        : ✅
  * completeness     : ✅
  * independence     : ✅
  * edge cases       : ✅
  * conforms to doc  : ✅
- * covers bridge    : OutputGroup::next, OutputGroup::previous, OutputGroup::set_paths, OutputGroup::reload,
- *                    OutputGroup::set_diagnostics */
+ * covers bridge    : OutputGroup::next, OutputGroup::previous, OutputGroup::set_paths,
+ *                    OutputGroup::reload, OutputGroup::set_diagnostics */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -274,5 +349,87 @@ mod tests {
             pages.current_file().map(|file| file.content.as_str()),
             Some("a\u{fffd}b")
         );
+    }
+
+    fn presentation(page: usize, return_page: Option<usize>) -> Presentation {
+        Presentation { page, return_page }
+    }
+
+    #[test]
+    fn diagnostics_that_appear_present_the_diagnostics_page_and_keep_the_output_page() {
+        // FR-150
+        assert_eq!(
+            presentation_after(presentation(1, None), 3, false, true),
+            presentation(3, Some(1))
+        );
+    }
+
+    #[test]
+    fn diagnostics_that_appear_on_the_presented_diagnostics_page_keep_no_output_page() {
+        // FR-150
+        assert_eq!(
+            presentation_after(presentation(2, None), 2, false, true),
+            presentation(2, None)
+        );
+    }
+
+    #[test]
+    fn diagnostics_that_are_gone_present_the_output_page_kept() {
+        // FR-151
+        assert_eq!(
+            presentation_after(presentation(3, Some(1)), 3, true, false),
+            presentation(1, None)
+        );
+    }
+
+    #[test]
+    fn diagnostics_that_are_gone_without_a_page_kept_leave_the_page_presented() {
+        // FR-151, FR-152
+        assert_eq!(
+            presentation_after(presentation(2, None), 3, true, false),
+            presentation(2, None)
+        );
+    }
+
+    #[test]
+    fn a_kept_page_beyond_the_output_pages_is_not_returned_to() {
+        // FR-151: the output pages may have been replaced meanwhile
+        assert_eq!(
+            presentation_after(presentation(1, Some(5)), 1, true, false),
+            presentation(1, None)
+        );
+    }
+
+    #[test]
+    fn diagnostics_that_neither_appear_nor_go_leave_the_presentation() {
+        // FR-152
+        assert_eq!(
+            [
+                presentation_after(presentation(0, Some(1)), 3, true, true),
+                presentation_after(presentation(2, None), 3, false, false)
+            ],
+            [presentation(0, Some(1)), presentation(2, None)]
+        );
+    }
+
+    #[test]
+    fn the_pages_switch_to_the_diagnostics_and_back_to_the_page_selected_before() {
+        // FR-150, FR-151
+        let mut pages = OutputPages::of_paths(&paths(&["a", "b"]));
+        pages.next();
+        let appeared = (pages.set_diagnostics("a.gc3: fault"), pages.current());
+        let gone = (pages.set_diagnostics(""), pages.current());
+        assert_eq!((appeared, gone), ((true, 2), (true, 1)));
+    }
+
+    #[test]
+    fn a_page_selected_by_hand_stays_until_the_diagnostics_change() {
+        // FR-152
+        let mut pages = OutputPages::of_paths(&paths(&["a", "b"]));
+        pages.set_diagnostics("a.gc3: fault");
+        pages.previous();
+        let changed_text = (pages.set_diagnostics("a.gc3: other fault"), pages.current());
+        let gone = (pages.set_diagnostics(""), pages.current());
+        assert_eq!((changed_text, gone), ((false, 1), (true, 0)));
     }
 }

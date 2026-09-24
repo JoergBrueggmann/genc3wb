@@ -1,5 +1,5 @@
 // The mark of one diagnostic in a code editor: a wavy line below the characters of its range, and its
-// message text as a tooltip.
+// message text as a tooltip over the character cells of the range.
 //
 // Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 // Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -20,9 +20,13 @@ Item {
 
     // the colour of the severity: red for error, orange for warning, blue for information
     readonly property color colour: root.severity === 0 ? "#d02020" : root.severity === 1 ? "#e08000" : "#2060d0"
-    // the rectangles below which the line is drawn, one per line of text the range covers; the
+    // the distance by which the area presenting the tooltip exceeds the character cells on each side
+    readonly property int hoverMargin: 2
+    // the rectangles below which the line is drawn, one per line of text the range covers, each
+    // with the height of its line; the
     // rectangles of the characters at the start and at the end of the range are what the text
-    // area yields, converted into the segments the line consists of
+    // area yields, converted into the segments the line consists of; an empty range covers one
+    // character cell
     readonly property var segments: {
         const textLength = root.textArea.length;
         const rangeStart = Math.min(root.start, textLength);
@@ -33,17 +37,23 @@ Item {
         const left = root.textArea.leftPadding;
         const right = root.textArea.contentWidth + left;
         if (rangeEnd === rangeStart) {
-            return [{ "x": startRect.x, "y": startRect.y + lineHeight, "width": Math.max(lineHeight / 2, 6) }];
+            return [{ "x": startRect.x, "y": startRect.y + lineHeight, "height": lineHeight, "width": fontMetrics.averageCharacterWidth }];
         }
         if (Math.abs(endRect.y - startRect.y) < 1) {
-            return [{ "x": startRect.x, "y": startRect.y + lineHeight, "width": endRect.x - startRect.x }];
+            return [{ "x": startRect.x, "y": startRect.y + lineHeight, "height": lineHeight, "width": endRect.x - startRect.x }];
         }
-        const found = [{ "x": startRect.x, "y": startRect.y + lineHeight, "width": right - startRect.x }];
+        const found = [{ "x": startRect.x, "y": startRect.y + lineHeight, "height": lineHeight, "width": right - startRect.x }];
         for (let y = startRect.y + lineHeight; y < endRect.y - 1; y += lineHeight) {
-            found.push({ "x": left, "y": y + lineHeight, "width": right - left });
+            found.push({ "x": left, "y": y + lineHeight, "height": lineHeight, "width": right - left });
         }
-        found.push({ "x": left, "y": endRect.y + lineHeight, "width": endRect.x - left });
+        found.push({ "x": left, "y": endRect.y + lineHeight, "height": lineHeight, "width": endRect.x - left });
         return found;
+    }
+
+    FontMetrics {
+        id: fontMetrics
+
+        font: root.textArea.font
     }
 
     Repeater {
@@ -57,17 +67,21 @@ Item {
 
             readonly property var geometry: root.segments[segment.index]
 
-            x: segment.geometry.x
-            y: segment.geometry.y - 4
-            width: segment.geometry.width
-            height: 4
+            // the character cells of the segment at line height, and the margin around them
+            x: segment.geometry.x - root.hoverMargin
+            y: segment.geometry.y - segment.geometry.height - root.hoverMargin
+            width: segment.geometry.width + 2 * root.hoverMargin
+            height: segment.geometry.height + 2 * root.hoverMargin
             ToolTip.visible: hover.hovered
             ToolTip.text: root.message
 
             Canvas {
                 id: wave
 
-                anchors.fill: parent
+                x: root.hoverMargin
+                y: root.hoverMargin + segment.geometry.height - 4
+                width: segment.geometry.width
+                height: 4
                 onPaint: {
                     const context = wave.getContext("2d");
                     context.clearRect(0, 0, wave.width, wave.height);

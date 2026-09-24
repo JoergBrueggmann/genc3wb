@@ -16,7 +16,7 @@ pub struct OutputGroup {
 }
 
 // realises FR-027, FR-030, FR-032 to FR-036, FR-042, FR-044, FR-102, FR-107, FR-108, FR-110,
-// FR-111, FR-122, FR-125
+// FR-111, FR-122, FR-125, FR-150 to FR-152
 #[qobject(NoQmlElement)]
 impl OutputGroup {
     qproperty!("pageIndex", Read = page_index, Notify = page_changed);
@@ -117,15 +117,18 @@ impl OutputGroup {
         self.content_changed();
     }
 
-    // realises FR-107, FR-108, FR-125
-    /// Replaces the text of the *diagnostics page* and emits `content_changed`; scheduled by the
-    /// *node editor*.
+    // realises FR-107, FR-108, FR-125, FR-150, FR-151, FR-152
+    /// Replaces the text of the *diagnostics page* and emits `content_changed`, and
+    /// `page_changed` first where the *diagnostics* that appeared or are gone switched the
+    /// presented page; scheduled by the *node editor*.
     #[qslot(qml_name = "setDiagnostics")]
     fn set_diagnostics(&mut self, text: String) {
         if text == self.pages.diagnostics() {
             return;
         }
-        self.pages.set_diagnostics(&text);
+        if self.pages.set_diagnostics(&text) {
+            self.page_changed();
+        }
         self.content_changed();
     }
 }

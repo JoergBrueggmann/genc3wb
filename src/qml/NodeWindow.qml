@@ -1,5 +1,5 @@
-// The node window as a machine: the inputs, the machine logo, the outputs, the meta compiler DSL as its control,
-// the status line, and the detached windows.
+// The node window as a machine: the inputs above the meta compiler DSL as its control, beside them the machine
+// logo and the outputs, the two splitters between them, the status line, and the detached windows.
 //
 // Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 // Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -22,135 +22,184 @@ Window {
     title: Workbench.node.name.length > 0 ? "genc³wb - " + Workbench.node.name : "genc³wb"
     onClosing: Workbench.node.close()
 
-    GridLayout {
+    ColumnLayout {
         id: layout
 
         anchors.fill: parent
         anchors.margins: 6
-        columns: 3
 
-        GroupBox {
-            id: inputsGroup
+        // the splitter between the left part, the inputs above the meta compiler DSL, and the right
+        // part, the machine and the outputs (FR-146); its position is stored when it is released
+        // and restored at start-up (FR-149)
+        SplitView {
+            id: leftRightSplit
 
-            title: qsTr("Inputs")
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.preferredWidth: 1
+            orientation: Qt.Horizontal
+            onResizingChanged: {
+                if (!leftRightSplit.resizing) {
+                    Workbench.setNodeLeftWidth(Math.round(leftPart.width));
+                }
+            }
 
-            ColumnLayout {
-                anchors.fill: parent
+            // the splitter between the input group above and the group of the meta compiler DSL
+            // below (FR-147)
+            SplitView {
+                id: leftPart
 
-                RowLayout {
-                    Button {
-                        id: previousInputButton
-
-                        text: "<"
-                        enabled: Workbench.node.hasPreviousInput
-                        onClicked: Workbench.node.previousInput()
-                    }
-
-                    Label {
-                        id: inputLabel
-
-                        text: qsTr("input %1 of %2").arg(Workbench.node.inputPage + 1).arg(Workbench.node.inputCount)
-                    }
-
-                    Button {
-                        id: nextInputButton
-
-                        text: ">"
-                        enabled: Workbench.node.hasNextInput
-                        onClicked: Workbench.node.nextInput()
+                orientation: Qt.Vertical
+                SplitView.preferredWidth: Workbench.nodeLeftWidth
+                SplitView.minimumWidth: 240
+                onResizingChanged: {
+                    if (!leftPart.resizing) {
+                        Workbench.setNodeUpperHeight(Math.round(inputsGroup.height));
                     }
                 }
 
-                StackLayout {
-                    id: inputPages
+                GroupBox {
+                    id: inputsGroup
 
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    currentIndex: Workbench.node.inputPage
+                    title: qsTr("Inputs")
+                    SplitView.preferredHeight: Workbench.nodeUpperHeight
+                    SplitView.minimumHeight: 120
 
-                    Repeater {
-                        id: inputRepeater
+                    ColumnLayout {
+                        anchors.fill: parent
 
-                        model: Workbench.node.inputCount
-                        delegate: InputGroup {
-                            required property int index
+                        RowLayout {
+                            Button {
+                                id: previousInputButton
 
-                            group: Workbench.node.inputAt(index)
-                            onDetachRequested: editorWindowModel.append({ "input": index })
+                                text: "<"
+                                enabled: Workbench.node.hasPreviousInput
+                                onClicked: Workbench.node.previousInput()
+                            }
+
+                            Label {
+                                id: inputLabel
+
+                                text: qsTr("input %1 of %2").arg(Workbench.node.inputPage + 1).arg(Workbench.node.inputCount)
+                            }
+
+                            Button {
+                                id: nextInputButton
+
+                                text: ">"
+                                enabled: Workbench.node.hasNextInput
+                                onClicked: Workbench.node.nextInput()
+                            }
+                        }
+
+                        StackLayout {
+                            id: inputPages
+
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            currentIndex: Workbench.node.inputPage
+
+                            Repeater {
+                                id: inputRepeater
+
+                                model: Workbench.node.inputCount
+                                delegate: InputGroup {
+                                    required property int index
+
+                                    group: Workbench.node.inputAt(index)
+                                    onDetachRequested: editorWindowModel.append({ "input": index })
+                                }
+                            }
                         }
                     }
                 }
+
+                InputGroup {
+                    id: metaDslGroup
+
+                    group: Workbench.node.metaDsl
+                    SplitView.fillHeight: true
+                    SplitView.minimumHeight: 120
+                    onDetachRequested: editorWindowModel.append({ "input": -1 })
+                }
             }
-        }
-
-        ColumnLayout {
-            id: machineColumn
-
-            Layout.fillHeight: true
-            Layout.alignment: Qt.AlignVCenter
 
             RowLayout {
-                Layout.alignment: Qt.AlignHCenter
+                id: rightPart
 
-                Label {
-                    id: inputArrow
+                SplitView.fillWidth: true
+                SplitView.minimumWidth: 240
 
-                    text: "\u2192"
-                    font.pointSize: 28
+                // the machine beside the outputs: the arrow from the inputs to the logo and the one
+                // from the logo to the outputs level with the inputs, and the arrow from the meta
+                // compiler DSL up to the logo level with that group (FR-124)
+                ColumnLayout {
+                    id: machineColumn
+
+                    Layout.fillHeight: true
+                    spacing: 0
+
+                    Item {
+                        id: machineArea
+
+                        Layout.preferredHeight: inputsGroup.height
+                        implicitWidth: machineRow.implicitWidth
+
+                        RowLayout {
+                            id: machineRow
+
+                            anchors.centerIn: parent
+
+                            Label {
+                                id: inputArrow
+
+                                text: "\u2192"
+                                font.pointSize: 28
+                            }
+
+                            Image {
+                                id: machineLogo
+
+                                source: "qrc:/genc3wb/qml/icons/machine.png"
+                                sourceSize.width: 96
+                                sourceSize.height: 96
+                            }
+
+                            Label {
+                                id: outputArrow
+
+                                text: "\u2192"
+                                font.pointSize: 28
+                            }
+                        }
+                    }
+
+                    Label {
+                        id: controlArrow
+
+                        Layout.alignment: Qt.AlignLeft | Qt.AlignTop
+                        text: "\u2197"
+                        font.pointSize: 28
+                    }
+
+                    Item {
+                        Layout.fillHeight: true
+                    }
                 }
 
-                Image {
-                    id: machineLogo
+                OutputGroup {
+                    id: outputGroup
 
-                    source: "qrc:/genc3wb/qml/icons/machine.png"
-                    sourceSize.width: 96
-                    sourceSize.height: 96
-                }
-
-                Label {
-                    id: outputArrow
-
-                    text: "\u2192"
-                    font.pointSize: 28
+                    output: Workbench.output
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    onDetachRequested: outputWindowModel.append({ "number": outputWindowModel.count })
                 }
             }
-
-            Label {
-                id: controlArrow
-
-                Layout.alignment: Qt.AlignHCenter
-                text: "\u2191"
-                font.pointSize: 28
-            }
-        }
-
-        OutputGroup {
-            id: outputGroup
-
-            output: Workbench.output
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            Layout.preferredWidth: 1
-            onDetachRequested: outputWindowModel.append({ "number": outputWindowModel.count })
-        }
-
-        InputGroup {
-            id: metaDslGroup
-
-            group: Workbench.node.metaDsl
-            Layout.columnSpan: 3
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            onDetachRequested: editorWindowModel.append({ "input": -1 })
         }
 
         Label {
             id: statusLine
 
-            Layout.columnSpan: 3
             text: Workbench.node.status.length > 0
                   ? Workbench.node.status
                   : !Workbench.node.served

@@ -1,5 +1,5 @@
 // The modal settings dialog: the idle time and the long idle time of every code editor, in seconds with one
-// decimal, and the automatic setting.
+// decimal, the automatic setting, and the tab size of every code editor.
 //
 // Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 // Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -21,7 +21,7 @@ Dialog {
     modal: true
     anchors.centerIn: Overlay.overlay
     // the dialog is left by its two buttons alone: OK stores where the constraints hold, Cancel
-    // discards (FR-100, FR-135)
+    // discards (FR-100, FR-135, FR-141)
     closePolicy: Popup.NoAutoClose
 
     // the fields take the stored values whenever the dialog opens, so that a rejected
@@ -31,6 +31,7 @@ Dialog {
         idleTimeBox.value = Workbench.idleTime / 100;
         longIdleTimeBox.value = Workbench.longIdleTime / 100;
         automaticBox.checked = Workbench.automatic;
+        tabSizeBox.value = Workbench.tabSize;
         errorLabel.text = "";
     }
 
@@ -49,7 +50,8 @@ Dialog {
 
             text: qsTr("OK")
             onClicked: {
-                if (Workbench.trySetTimes(idleTimeBox.value * 100, longIdleTimeBox.value * 100, automaticBox.checked)) {
+                if (Workbench.trySetSettings(idleTimeBox.value * 100, longIdleTimeBox.value * 100, automaticBox.checked,
+                                             tabSizeBox.value)) {
                     settingsDialog.accept();
                 }
             }
@@ -111,6 +113,29 @@ Dialog {
 
                 text: qsTr("seconds until the error message of a failed build is shown")
             }
+
+            Label {
+                id: tabSizeLabel
+
+                text: qsTr("Tab size")
+            }
+
+            // the range of the box is wider than the one of the tab size, so that a value outside
+            // 1..16 reaches the constraint and its message (FR-141)
+            SpinBox {
+                id: tabSizeBox
+
+                from: 0
+                to: 999
+                editable: true
+                value: Workbench.tabSize
+            }
+
+            Label {
+                id: tabSizeUnit
+
+                text: qsTr("characters per tab, from 1 to 16")
+            }
         }
 
         CheckBox {
@@ -131,7 +156,7 @@ Dialog {
     Connections {
         target: Workbench
 
-        function onTimesRejected(message) {
+        function onSettingsRejected(message) {
             errorLabel.text = message;
         }
     }

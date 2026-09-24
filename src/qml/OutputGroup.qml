@@ -1,4 +1,5 @@
-// The output group: navigation, page label, detach button, the output pages and the diagnostics page.
+// The output group: navigation, page label, detach button, the output pages and the diagnostics page, which is
+// presented while diagnostics appear.
 //
 // Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 // Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -8,6 +9,10 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+// The types of the module genc3wb are registered by the bridge crate at run time, which writes no type
+// description for qmllint; the import and the unqualified access to the singleton are therefore not linted.
+// qmllint disable import unqualified
+import genc3wb
 
 GroupBox {
     id: root
@@ -65,6 +70,9 @@ GroupBox {
 
             Layout.fillWidth: true
             Layout.fillHeight: true
+            // the presented page is the one of the output group, which switches to the diagnostics
+            // page and back as diagnostics appear and are gone, and which the two buttons select by
+            // hand (FR-150 to FR-152)
             currentIndex: root.output.diagnosticsPage ? 1 : 0
 
             ColumnLayout {
@@ -82,6 +90,7 @@ GroupBox {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     readOnly: true
+                    tabSize: Workbench.tabSize
                     text: root.output.fileContent
                 }
             }
@@ -90,6 +99,7 @@ GroupBox {
                 id: diagnosticsEditor
 
                 readOnly: true
+                tabSize: Workbench.tabSize
                 text: root.output.diagnostics
             }
         }

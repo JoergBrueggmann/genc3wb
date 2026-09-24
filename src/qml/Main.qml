@@ -69,13 +69,20 @@ ApplicationWindow {
         anchors.fill: parent
         anchors.margins: 6
         orientation: Qt.Horizontal
+        // the splitter between the network file and its graph (FR-148); its position is stored
+        // when it is released and restored at start-up (FR-149)
+        onResizingChanged: {
+            if (!splitView.resizing) {
+                Workbench.setNetworkLeftWidth(Math.round(networkInputGroup.width));
+            }
+        }
 
         InputGroup {
             id: networkInputGroup
 
             group: Workbench.networkInput
             detachable: false
-            SplitView.preferredWidth: 480
+            SplitView.preferredWidth: Workbench.networkLeftWidth
             SplitView.minimumWidth: 240
         }
 

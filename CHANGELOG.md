@@ -12,6 +12,19 @@ and this project adheres to a four-part version number.
 
 At the moment, nothing unreleased here.
 
+## [0.11.0.0] - 2026-09-24
+
+**_Editor_improvements_**
+
+Leading work item: definition 0.8.0.0
+
+- Implement in the code editor the line selection and the multi-line selection in the line-number area, the highlight of the occurrences of the selected text, the larger tooltip area of a *diagnostic*, the *tab size*, the copy of the indentation on Enter, and a view that keeps the cursor visible; in the *node window* the splitters and the switch of the output group to the *diagnostics page*; the sizes of the splitters and the *tab size* in the settings, as the leading work item states them.
+- Add the component `core::editing` with its unit tests and the bridged singleton `Editing`, through which the code editor selects lines, finds the occurrences of the selection, copies the indentation and follows the cursor; add the *tab size* and the three splitter positions to the settings and the *settings file* under the keys `tab_size`, `node_left_width`, `node_upper_height` and `network_left_width`, a file without them loading with the defaults; add the page switching of the output group to `core::output`.
+- Rebuild the *node window* on two split views, the group of the *inputs* above the group of the *meta compiler DSL* on the left, the *machine logo* and the output group on the right; bind the existing split view of the main window to the stored position; bind the *tab size* on every code editor.
+- Replace the slot `trySetTimes` and the signal `timesRejected` of the `Workbench` by `trySetSettings` and `settingsRejected`, which set nothing unless the *tab size* and the times all hold.
+- Raise the version in 'Cargo.toml' to 0.11.0.
+- Adds to what the *project folder* delivers: a 'B' bump as long as the major part is 0.
+
 ## [0.10.0.1] - 2026-09-23
 
 **_Optimise_the_seed_syntax_**
