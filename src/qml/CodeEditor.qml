@@ -242,10 +242,12 @@ Frame {
                 x: textArea.x
                 y: textArea.y
                 textArea: textArea
-                start: root.markStarts[index]
-                end: root.markEnds[index]
-                severity: root.markSeverities[index]
-                message: root.markTexts[index]
+                // the four arrays change one after another; a mark about to be removed may read
+                // an array already shorter than its index, and takes a neutral value until then
+                start: root.markStarts[index] ?? 0
+                end: root.markEnds[index] ?? 0
+                severity: root.markSeverities[index] ?? 0
+                message: root.markTexts[index] ?? ""
             }
         }
     }

@@ -12,6 +12,15 @@ and this project adheres to a four-part version number.
 
 At the moment, nothing unreleased here.
 
+## [0.11.1.0] - 2026-09-25
+
+**_Diagnostic_marks_without_warnings_**
+
+- Correct the diagnostic marks of the code editor: where a *diagnostic* disappears, a mark about to be removed reads its entry from one of the four arrays of the marks that is already shorter, and QML warns `Unable to assign [undefined]` once per array, as a run of the distribution 0.11.0.0 showed on 2026-09-24; the fault stands since 0.9.0.0 and has no visible effect.
+- Let each of the four bindings of a mark take a neutral value, 0 or the empty text, where its array is already shorter than the index of the mark, until the mark is removed; the other repeaters of the code editor read the one array their model counts and are not affected. Checked offscreen with a test harness outside the repository: the released code editor yields the eight warnings of the run, the corrected one none.
+- Raise the version in 'Cargo.toml' to 0.11.1.
+- A correction of a fault: a patch bump to 0.11.1.0.
+
 ## [0.11.0.0] - 2026-09-24
 
 **_Editor_improvements_**
