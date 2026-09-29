@@ -38,7 +38,7 @@ bridging code against Qt.
   that the module `qtsvg` of Qt is not needed.
 
 - A build system that conforms to genc³api 0.9.0.0 and offers the description
-  mode, which is `genc3d` of genc³ 0.19.0.0 or later. It is named in the
+  mode, which is `genc3d` of genc³ 0.28.0.0 or later. It is named in the
   compiler network editor; without it a network file is edited, but no graph is
   shown. genc³wb reaches it through a Unix domain socket, so that in this
   version the graph is shown on Linux and macOS alone.

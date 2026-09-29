@@ -10,7 +10,18 @@ and this project adheres to a four-part version number.
 
 ## [Unreleased]
 
-At the moment, nothing unreleased here.
+## [0.12.0.0] - 2026-09-29
+
+**_Symbol_tree_as_a_value_**
+
+Leading work item: definition 0.28.0.0 (genc3)
+
+- Decode the *diagnostic* of genc³api 0.12.0.0, list it and mark it as the definition 0.8.1.0 states.
+- Write the texts of the *meta compiler DSL* of the tests in the notation of genc³ 0.28.0.0, without the *text clause*.
+- Raise the version in 'Cargo.toml' to 0.12.0; the README names genc³ 0.28.0.0 or later.
+- The 178 unit tests pass; the three tests of the build system pass against the *service executable* of the distribution folder of genc³ 0.28.0.0; 'make-dist.sh' builds the distribution folder with it.
+- A new capability against a changed interface: a minor bump to 0.12.0.0.
+
 
 ## [0.11.1.0] - 2026-09-25
 

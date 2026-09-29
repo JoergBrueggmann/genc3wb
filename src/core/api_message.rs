@@ -143,35 +143,63 @@ impl Severity {
     }
 }
 
+// realises FR-107, FR-153, IR-028
+/// A *position* of a *diagnostic*: its *offset*, the number of bits of the document preceding
+/// it, and its *read position* where it has one (\[AD5\] IR-117).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Position {
+    /// the *offset*, counted from 0 in bits
+    pub offset: u64,
+    /// the *read position*, where the *position* has one
+    pub read_position: Option<ReadPosition>,
+}
+
+impl Position {
+    // realises FR-153
+    /// Yields the *position* as text: `<line>:<column>` where it has a *read position*, and
+    /// `@<offset>` where it has none.
+    pub fn rendering(&self) -> String {
+        match self.read_position {
+            Some(position) => format!("{}:{}", position.line, position.column),
+            None => format!("@{}", self.offset),
+        }
+    }
+}
+
 // realises FR-107, FR-109, IR-028, IR-029
-/// A *diagnostic* of a *diagnostic* response: its severity, its *read position* range and its
-/// message text (\[AD5\] IR-023).
+/// A *diagnostic* of a *diagnostic* response: its severity, its range of two *positions* and
+/// its message text (\[AD5\] IR-023).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
     /// its severity
     pub severity: Severity,
     /// the first position of the range, inclusive
-    pub start: ReadPosition,
+    pub start: Position,
     /// the position after the last one of the range
-    pub end: ReadPosition,
+    pub end: Position,
     /// its message text
     pub text: String,
 }
 
 impl Diagnostic {
-    // realises FR-107, IR-029
-    /// Yields the *diagnostic* as text: the severity, a space, the range as
-    /// `<line>:<column>-<line>:<column>`, a colon, a space, and the message text.
+    // realises FR-107, FR-153, IR-029
+    /// Yields the *diagnostic* as text: the severity, a space, the range as its two *positions*
+    /// around a hyphen, each `<line>:<column>` or `@<offset>`, a colon, a space, and the
+    /// message text.
     pub fn rendering(&self) -> String {
         format!(
-            "{} {}:{}-{}:{}: {}",
+            "{} {}-{}: {}",
             self.severity.name(),
-            self.start.line,
-            self.start.column,
-            self.end.line,
-            self.end.column,
+            self.start.rendering(),
+            self.end.rendering(),
             self.text
         )
+    }
+
+    // realises FR-153
+    /// Yields the *read positions* of the range, where both of its *positions* have one.
+    pub fn read_positions(&self) -> Option<(ReadPosition, ReadPosition)> {
+        Some((self.start.read_position?, self.end.read_position?))
     }
 }
 
@@ -337,20 +365,27 @@ pub fn utf16_offset_of_position(text: &str, position: ReadPosition) -> usize {
     offset
 }
 
-// realises FR-126
+// realises FR-126, FR-153
 /// Yields the marks of `diagnostics` in `text`, in their order.
+///
+/// * A *diagnostic* one of whose *positions* has no *read position* has no mark: it lies in no
+///   line of the text.
 pub fn marks_of_diagnostics(text: &str, diagnostics: &[Diagnostic]) -> Marks {
     let offset = |position: ReadPosition| {
         i32::try_from(utf16_offset_of_position(text, position)).unwrap_or(i32::MAX)
     };
+    let marked: Vec<(&Diagnostic, ReadPosition, ReadPosition)> = diagnostics
+        .iter()
+        .filter_map(|d| d.read_positions().map(|(start, end)| (d, start, end)))
+        .collect();
     Marks {
-        starts: diagnostics.iter().map(|d| offset(d.start)).collect(),
-        ends: diagnostics.iter().map(|d| offset(d.end)).collect(),
-        severities: diagnostics
+        starts: marked.iter().map(|(_, start, _)| offset(*start)).collect(),
+        ends: marked.iter().map(|(_, _, end)| offset(*end)).collect(),
+        severities: marked
             .iter()
-            .map(|d| d.severity.index() as i32)
+            .map(|(d, _, _)| d.severity.index() as i32)
             .collect(),
-        texts: diagnostics.iter().map(|d| d.text.clone()).collect(),
+        texts: marked.iter().map(|(d, _, _)| d.text.clone()).collect(),
     }
 }
 
@@ -638,13 +673,42 @@ fn value_of_delta(delta: &EditDelta) -> Value {
     ])
 }
 
+/// Yields a *position* as the array `[offset, [line, column] / null]` of the message schema.
+fn value_of_diagnostic_position(position: &Position) -> Value {
+    Value::Array(vec![
+        unsigned(position.offset),
+        match &position.read_position {
+            Some(read_position) => value_of_position(read_position),
+            None => Value::Null,
+        },
+    ])
+}
+
+/// Yields the *position* of the array `[offset, [line, column] / null]`, `None` where the value
+/// is none.
+fn diagnostic_position_of_value(value: &Value) -> Option<Position> {
+    let Value::Array(elements) = value else {
+        return None;
+    };
+    let [offset, read_position] = elements.as_slice() else {
+        return None;
+    };
+    Some(Position {
+        offset: unsigned_of(offset)?,
+        read_position: match read_position {
+            Value::Null => None,
+            value => Some(position_of_value(value)?),
+        },
+    })
+}
+
 /// Yields a *diagnostic* as the array `[severity, [start, end], text]` of the message schema.
 fn value_of_diagnostic(diagnostic: &Diagnostic) -> Value {
     Value::Array(vec![
         unsigned(diagnostic.severity.number()),
         Value::Array(vec![
-            value_of_position(&diagnostic.start),
-            value_of_position(&diagnostic.end),
+            value_of_diagnostic_position(&diagnostic.start),
+            value_of_diagnostic_position(&diagnostic.end),
         ]),
         Value::Text(diagnostic.text.clone()),
     ])
@@ -667,8 +731,8 @@ fn diagnostic_of_value(value: &Value) -> Option<Diagnostic> {
     };
     Some(Diagnostic {
         severity: Severity::of_number(unsigned_of(severity)?)?,
-        start: position_of_value(start)?,
-        end: position_of_value(end)?,
+        start: diagnostic_position_of_value(start)?,
+        end: diagnostic_position_of_value(end)?,
         text: text_of(text)?,
     })
 }
@@ -729,8 +793,14 @@ mod tests {
     fn diagnostic() -> Diagnostic {
         Diagnostic {
             severity: Severity::Warning,
-            start: ReadPosition { line: 2, column: 3 },
-            end: ReadPosition { line: 2, column: 7 },
+            start: Position {
+                offset: 0,
+                read_position: Some(ReadPosition { line: 2, column: 3 }),
+            },
+            end: Position {
+                offset: 0,
+                read_position: Some(ReadPosition { line: 2, column: 7 }),
+            },
             text: "doubtful".to_owned(),
         }
     }
@@ -785,13 +855,68 @@ mod tests {
         assert_eq!(diagnostic().rendering(), "warning 2:3-2:7: doubtful");
     }
 
+    /// A *diagnostic* behind a *bit symbol*: its *positions* have no *read position*.
+    fn diagnostic_in_bits() -> Diagnostic {
+        Diagnostic {
+            severity: Severity::Error,
+            start: Position {
+                offset: 40,
+                read_position: None,
+            },
+            end: Position {
+                offset: 56,
+                read_position: None,
+            },
+            text: "no match".to_owned(),
+        }
+    }
+
+    #[test]
+    fn diagnostic_without_a_read_position_renders_its_offsets() {
+        // FR-107, FR-153, IR-029
+        assert_eq!(diagnostic_in_bits().rendering(), "error @40-@56: no match");
+    }
+
+    #[test]
+    fn diagnostic_without_a_read_position_has_no_mark() {
+        // FR-126, FR-153
+        assert_eq!(
+            marks_of_diagnostics("ab\ncdefgh", &[diagnostic_in_bits(), diagnostic()]),
+            Marks {
+                starts: vec![5],
+                ends: vec![9],
+                severities: vec![1],
+                texts: vec!["doubtful".to_owned()],
+            }
+        );
+    }
+
+    #[test]
+    fn diagnostic_response_with_and_without_read_positions_decodes_as_encoded() {
+        // FR-153, IR-028: [offset, [line, column]] and [offset, null]
+        let response = Response::Diagnostics {
+            version: 4,
+            diagnostics: vec![diagnostic(), diagnostic_in_bits()],
+        };
+        assert_eq!(
+            decode_response(&encode_response(9, &response)),
+            Ok((9, response))
+        );
+    }
+
     #[test]
     fn diagnostics_of_documents_render_one_per_line_with_their_document() {
         // FR-107, FR-108, FR-125, IR-029
         let error = Diagnostic {
             severity: Severity::Error,
-            start: ReadPosition { line: 1, column: 1 },
-            end: ReadPosition { line: 1, column: 1 },
+            start: Position {
+                offset: 0,
+                read_position: Some(ReadPosition { line: 1, column: 1 }),
+            },
+            end: Position {
+                offset: 0,
+                read_position: Some(ReadPosition { line: 1, column: 1 }),
+            },
             text: "fault".to_owned(),
         };
         let documents = vec![
@@ -847,8 +972,14 @@ mod tests {
         // FR-126, FR-127
         let error = Diagnostic {
             severity: Severity::Error,
-            start: ReadPosition { line: 1, column: 2 },
-            end: ReadPosition { line: 1, column: 2 },
+            start: Position {
+                offset: 0,
+                read_position: Some(ReadPosition { line: 1, column: 2 }),
+            },
+            end: Position {
+                offset: 0,
+                read_position: Some(ReadPosition { line: 1, column: 2 }),
+            },
             text: "fault".to_owned(),
         };
         assert_eq!(

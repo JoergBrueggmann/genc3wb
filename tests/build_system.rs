@@ -84,7 +84,9 @@ fn faulty_edit_fails_with_the_fault_and_its_correction_succeeds_again() {
     let second = builder.build(TWO_NODES, &increment_between(TWO_NODES, &faulty), &faulty);
     let third = builder.build(&faulty, &increment_between(&faulty, TWO_NODES), TWO_NODES);
     let marked = second.diagnostics.iter().any(|diagnostic| {
-        diagnostic.start.line == 7 && diagnostic.end.column > diagnostic.start.column
+        diagnostic
+            .read_positions()
+            .is_some_and(|(start, end)| start.line == 7 && end.column > start.column)
     });
     drop(builder);
     let _ = fs::remove_dir_all(&directory);
@@ -107,7 +109,7 @@ fn faulty_edit_fails_with_the_fault_and_its_correction_succeeds_again() {
 /// 'hello world', and a generator emitting the matched text.
 const COPY_META_DSL: &str = "syntax\n    root = chars, EOS\n    chars = ch, { ch }\n    \
     ch = 'h' | 'e' | 'l' | 'o' | 'w' | 'r' | 'd' | ' '\n\
-    generator copy input \"a.in\" output \"x.txt\"\n    root => flat(#1)\n";
+    generator copy input \"a.in\" output \"x.txt\"\n    root -> flat(#1)\n";
 
 // FR-104 to FR-109, FR-111, IR-026 to IR-028
 // needs the service executable genc3d of genc³ 0.19.0.0 or later, named by the environment

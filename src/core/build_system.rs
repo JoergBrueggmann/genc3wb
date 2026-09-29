@@ -610,7 +610,7 @@ fn connected(_child: &mut Child, _socket_path: &Path) -> Result<ServiceStream, B
 mod tests {
     use super::*;
 
-    use crate::core::api_message::{NodeKind, ReadPosition, Severity, encode_response};
+    use crate::core::api_message::{NodeKind, Position, ReadPosition, Severity, encode_response};
 
     use std::io::Cursor;
 
@@ -696,8 +696,14 @@ mod tests {
     fn fault() -> Diagnostic {
         Diagnostic {
             severity: Severity::Error,
-            start: ReadPosition { line: 1, column: 2 },
-            end: ReadPosition { line: 1, column: 3 },
+            start: Position {
+                offset: 0,
+                read_position: Some(ReadPosition { line: 1, column: 2 }),
+            },
+            end: Position {
+                offset: 0,
+                read_position: Some(ReadPosition { line: 1, column: 3 }),
+            },
             text: "fault".to_owned(),
         }
     }
