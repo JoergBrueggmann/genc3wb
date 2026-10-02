@@ -16,6 +16,9 @@ fn main() {
     include_bytes_qml!("qml/InputGroup.qml", "genc3wb");
     include_bytes_qml!("qml/CodeEditor.qml", "genc3wb");
     include_bytes_qml!("qml/DiagnosticMark.qml", "genc3wb");
+    include_bytes_qml!("qml/WavyLine.qml", "genc3wb");
+    include_bytes_qml!("qml/ModeSwitch.qml", "genc3wb");
+    include_bytes_qml!("qml/OctetView.qml", "genc3wb");
     include_bytes_qml!("qml/ProcessingStateIndicator.qml", "genc3wb");
     include_bytes_qml!("qml/OutputGroup.qml", "genc3wb");
     include_bytes_qml!("qml/OutputWindow.qml", "genc3wb");

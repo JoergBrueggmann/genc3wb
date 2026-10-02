@@ -75,28 +75,13 @@ Item {
             ToolTip.visible: hover.hovered
             ToolTip.text: root.message
 
-            Canvas {
+            WavyLine {
                 id: wave
 
                 x: root.hoverMargin
-                y: root.hoverMargin + segment.geometry.height - 4
+                y: root.hoverMargin + segment.geometry.height - wave.height
                 width: segment.geometry.width
-                height: 4
-                onPaint: {
-                    const context = wave.getContext("2d");
-                    context.clearRect(0, 0, wave.width, wave.height);
-                    context.strokeStyle = root.colour;
-                    context.lineWidth = 1;
-                    context.beginPath();
-                    context.moveTo(0, wave.height - 1);
-                    let up = true;
-                    for (let x = 2; x <= wave.width; x += 2) {
-                        context.lineTo(x, up ? 1 : wave.height - 1);
-                        up = !up;
-                    }
-                    context.stroke();
-                }
-                onWidthChanged: wave.requestPaint()
+                colour: root.colour
             }
 
             HoverHandler {

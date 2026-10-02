@@ -10,6 +10,36 @@ and this project adheres to a four-part version number.
 
 ## [Unreleased]
 
+## [0.14.0.0] - 2026-10-02
+
+**_Editor_columns_in_hex_and_bin_**
+
+Leading work item: definition 0.10.0.0
+
+- Choose the number of octets per row of hex and bin from the width of the code editor, as the definition 0.10.0.0 states: 16, 32 or 64 in hex and 4, 8, 16 or 32 in bin, the most that fit beside the row labels and the vertical scroll bar; chosen anew when a splitter, a window or a *detached window* changes the width, the octet at the top of the view staying at the top.
+- Label a row of 32 or 64 octets by the full number of its first octet (`020`) and head its columns by the distance from the start of the row (`00 … 1F`); rows of up to 16 octets keep their labels and headers, `x0/8 … x7/F` for 8 octets per row.
+- Raise the version in 'Cargo.toml' to 0.14.0; the README describes the octets per row.
+- The 231 unit tests pass; the four tests of the build system pass against the *service executable* of the distribution folder of genc³ 0.28.2.0; 'make-dist.sh' builds the distribution folder with it.
+- A new capability: a minor bump to 0.14.0.0.
+
+
+## [0.13.0.0] - 2026-10-02
+
+**_Editor_modes_txt_hex_and_bin_**
+
+Leading work item: definition 0.9.0.0
+
+- Implement the *editor modes* txt, hex and bin as the definition 0.9.0.0 states: the *mode switch* of three positions at the code editor of every *input* and of every *output page*, in the *node window* and in a *detached window*; hex and bin present the octets in rows with their row labels and a column header, read-only.
+- Hold an *input* and an *output* as the octets of their file: an *input* that is no valid UTF-8 is loaded, where it was refused as 'not UTF-8' before; txt shows each octet that is no character as one replacement character U+FFFD, and an edit in txt replaces the octets by the UTF-8 encoding of the text.
+- Keep the octets of a document as they are until the user modifies its text: a file holding a carriage return, a line separator, a paragraph separator or a no-break space is no longer taken as edited once it is loaded, and is no longer rewritten after the *idle time* with other line breaks, as 0.12.0.0 did.
+- Transmit an *input* that is no valid UTF-8 to the *node* as a *binary document*, by an open request carrying its octets; a *text increment* that follows an edit of such an *input* in txt opens the document again as a text.
+- Mark a *diagnostic* in hex and bin by its *offset*, with its tooltip: below every octet that holds a bit of its range in hex, below the bits of its range in bin, the *diagnostic* without a *read position* included.
+- Add the component `crate::core::octet_view` and the QML components 'ModeSwitch.qml', 'OctetView.qml' and 'WavyLine.qml'; the *octet view* builds the rows in view alone.
+- Raise the version in 'Cargo.toml' to 0.13.0; the README describes the *editor modes* and names genc³api 0.12.0.0, which carries the *binary document*.
+- The 220 unit tests pass, two of them against the bound of 1 second for 1 megabyte; the four tests of the build system pass against the *service executable* of the distribution folder of genc³ 0.28.2.0, one of them serving a *binary document*; 'make-dist.sh' builds the distribution folder with it.
+- A new capability: a minor bump to 0.13.0.0.
+
+
 ## [0.12.0.0] - 2026-09-29
 
 **_Symbol_tree_as_a_value_**

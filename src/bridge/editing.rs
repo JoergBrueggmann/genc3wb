@@ -4,10 +4,11 @@
 //! Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
 
 use crate::core::editing;
+use crate::core::octet_view::{self, EditorMode};
 
 use qtbridge::qobject;
 
-// realises FR-136 to FR-138, FR-144, FR-145
+// realises FR-136 to FR-138, FR-144, FR-145, FR-156, FR-160, FR-161, FR-173 to FR-176
 /// The singleton through which a code editor reaches the *editing* functions of the *core*.
 ///
 /// * Every offset is an offset of the text in UTF-16 code units, as a QML `TextArea` counts
@@ -15,7 +16,7 @@ use qtbridge::qobject;
 #[derive(Default)]
 pub struct Editing {}
 
-// realises FR-136 to FR-138, FR-144, FR-145
+// realises FR-136 to FR-138, FR-144, FR-145, FR-156, FR-160, FR-161, FR-173 to FR-176
 #[qobject(Singleton)]
 impl Editing {
     // slots
@@ -70,6 +71,65 @@ impl Editing {
     ) -> f64 {
         editing::view_offset_showing(offset, view, content, start, end)
     }
+
+    // realises FR-156
+    /// Yields the index of the position a *mode switch* selects, as
+    /// [`octet_view::mode_selected`] does: `chosen` where it is the index of an *editor mode*,
+    /// and otherwise that of txt where the document `is_text` and that of hex where it is not.
+    #[qslot(qml_name = "modeSelected")]
+    fn mode_selected(&self, chosen: i32, is_text: bool) -> i32 {
+        int_of(octet_view::mode_selected(mode_of(chosen), is_text).index())
+    }
+
+    // realises FR-173
+    /// Yields the number of octets per row of the *editor mode* of index `mode` for a document
+    /// of `octet_count` octets in a view `columns` character columns wide, as
+    /// [`octet_view::octets_per_row_fitting`] does; 0 for an index that names no mode.
+    #[qslot(qml_name = "octetsPerRow")]
+    fn octets_per_row(&self, mode: i32, octet_count: i32, columns: i32) -> i32 {
+        mode_of(mode).map_or(0, |mode| {
+            int_of(octet_view::octets_per_row_fitting(
+                mode,
+                count_of(octet_count),
+                count_of(columns),
+            ))
+        })
+    }
+
+    // realises FR-174
+    /// Yields the row of `after` octets per row that holds the first octet of the row `row` of
+    /// `before` octets per row, as [`octet_view::row_keeping`] does.
+    #[qslot(qml_name = "rowKeeping")]
+    fn row_keeping(&self, row: i32, before: i32, after: i32) -> i32 {
+        int_of(octet_view::row_keeping(
+            count_of(row),
+            count_of(before),
+            count_of(after),
+        ))
+    }
+
+    // realises FR-160, FR-175
+    /// Yields the row label of the row `row` of `per_row` octets per row in a document of
+    /// `octet_count` octets, as [`octet_view::row_label`] does.
+    #[qslot(qml_name = "rowLabel")]
+    fn row_label(&self, per_row: i32, row: i32, octet_count: i32) -> String {
+        octet_view::row_label(count_of(row), count_of(per_row), count_of(octet_count))
+    }
+
+    // realises FR-161, FR-176
+    /// Yields the column header of rows of `per_row` octets of the *editor mode* of index
+    /// `mode`, as [`octet_view::column_header`] does; empty for an index that names no mode.
+    #[qslot(qml_name = "columnHeader")]
+    fn column_header(&self, mode: i32, per_row: i32) -> String {
+        mode_of(mode).map_or_else(String::new, |mode| {
+            octet_view::column_header(mode, count_of(per_row))
+        })
+    }
+}
+
+/// Yields the *editor mode* of the index `mode`, `None` where the index names none.
+fn mode_of(mode: i32) -> Option<EditorMode> {
+    usize::try_from(mode).ok().and_then(EditorMode::of_index)
 }
 
 /// Yields `value` as a count; 0 where it is negative.

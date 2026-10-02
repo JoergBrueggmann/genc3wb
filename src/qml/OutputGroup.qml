@@ -1,5 +1,5 @@
-// The output group: navigation, page label, detach button, the output pages and the diagnostics page, which is
-// presented while diagnostics appear.
+// The output group: navigation, page label, detach button, the output pages with their mode switch and the
+// diagnostics page, which is presented while diagnostics appear.
 //
 // Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 // Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -76,12 +76,20 @@ GroupBox {
             currentIndex: root.output.diagnosticsPage ? 1 : 0
 
             ColumnLayout {
-                TextField {
-                    id: filePathField
+                RowLayout {
+                    TextField {
+                        id: filePathField
 
-                    Layout.fillWidth: true
-                    readOnly: true
-                    text: root.output.filePath
+                        Layout.fillWidth: true
+                        readOnly: true
+                        text: root.output.filePath
+                    }
+
+                    ModeSwitch {
+                        id: modeSwitch
+
+                        documentIsText: root.output.isText
+                    }
                 }
 
                 CodeEditor {
@@ -92,6 +100,8 @@ GroupBox {
                     readOnly: true
                     tabSize: Workbench.tabSize
                     text: root.output.fileContent
+                    mode: modeSwitch.mode
+                    octets: root.output
                 }
             }
 
@@ -102,6 +112,14 @@ GroupBox {
                 tabSize: Workbench.tabSize
                 text: root.output.diagnostics
             }
+        }
+    }
+
+    Connections {
+        target: root.output
+
+        function onDocumentChanged() {
+            modeSwitch.chosen = -1;
         }
     }
 }

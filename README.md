@@ -10,6 +10,17 @@ edited: every change is transmitted to it, its diagnostics are shown at the
 editor they concern, and its outputs are stored and presented after every
 change it accepts without an error.
 
+An input and an output are held as their octets, whatever they are. The code
+editor of each has a switch of three positions: `txt` shows the octets read as
+UTF-8, with the replacement character U+FFFD for every octet that is no
+character, `hex` shows them as hexadecimal digits, and `bin` as binary digits,
+as many octets per row as the width of the editor holds: 16, 32 or 64 in `hex`,
+4, 8, 16 or 32 in `bin`. The switch starts at `txt` for a text and at
+`hex` for other octets. In this version `hex` and `bin` are read-only, and an
+edit in `txt` replaces the octets by the UTF-8 encoding of the text. An input
+that is no valid UTF-8 is served as a binary document, and a diagnostic is
+marked in `hex` and `bin` by its bit offset.
+
 NOTE: Portions of this project's code and documentation were developed with AI
 assistance (Claude), under the author's direction, review, and authorisation.
 
@@ -37,7 +48,7 @@ bridging code against Qt.
   `/usr/local/bin` and `/usr/bin`. The graph is rendered as a PNG image, so
   that the module `qtsvg` of Qt is not needed.
 
-- A build system that conforms to genc³api 0.9.0.0 and offers the description
+- A build system that conforms to genc³api 0.12.0.0 and offers the description
   mode, which is `genc3d` of genc³ 0.28.0.0 or later. It is named in the
   compiler network editor; without it a network file is edited, but no graph is
   shown. genc³wb reaches it through a Unix domain socket, so that in this
@@ -151,7 +162,7 @@ with
 mkdir -p reports && cargo test 2>&1 | tee reports/test.txt
 ```
 
-Three tests run the build system and `dot` and are therefore left out of that
+Four tests run the build system and `dot` and are therefore left out of that
 run. They are run with the path of `genc3d` in the environment variable
 `GENC3D`:
 

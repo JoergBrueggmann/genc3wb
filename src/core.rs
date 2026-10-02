@@ -11,6 +11,7 @@ pub mod input_file;
 pub mod network_builder;
 pub mod network_graph;
 pub mod node_runner;
+pub mod octet_view;
 pub mod output;
 pub mod settings;
 pub mod text_increment;

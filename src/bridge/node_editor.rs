@@ -5,12 +5,13 @@
 
 use crate::bridge::input_group::InputGroup;
 use crate::core::api_message::{
-    Diagnostic, has_error, marks_of_diagnostics, rendering_of_documents,
+    Diagnostic, bit_marks_of_diagnostics, has_error, marks_of_diagnostics, rendering_of_documents,
 };
 use crate::core::input_file::InputKind;
 use crate::core::network_builder::NetworkBuilder;
 use crate::core::network_graph::path_of_identifier;
 use crate::core::node_runner::{NodeRunner, NodeStart, Originals};
+use crate::core::octet_view::text_of_octets;
 use crate::core::text_increment::TextIncrement;
 
 use qtbridge::{QObjectHolder, QmlMethodInvoker, invoke_method, qobject};
@@ -36,6 +37,8 @@ enum NodeCommand {
         increment: TextIncrement,
         provided_after: String,
     },
+    /// transmit the octets of a document, as a *binary document* (FR-167)
+    Open { document: String, octets: Vec<u8> },
     /// transmit a *store request* (FR-109)
     Store,
     /// shut the served *node* down (FR-105); the thread ends where `end` holds
@@ -77,6 +80,9 @@ pub struct NodeEditor {
     input_page: usize,
     /// the *provided text* of each document, by its *document identifier*, as a receiver holds it
     provided: BTreeMap<String, String>,
+    /// the octets of each document provided as a *binary document*, read as UTF-8 (FR-157), by
+    /// its *document identifier*
+    provided_octets: BTreeMap<String, String>,
     /// the *diagnostics* of each document, by its *document identifier*, as the *node* last
     /// answered them
     diagnostics: BTreeMap<String, Vec<Diagnostic>>,
@@ -113,6 +119,7 @@ impl Default for NodeEditor {
             documents: Vec::new(),
             input_page: 0,
             provided: BTreeMap::new(),
+            provided_octets: BTreeMap::new(),
             diagnostics: BTreeMap::new(),
             originals: Originals::default(),
             served: false,
@@ -261,6 +268,7 @@ impl NodeEditor {
         self.restore_originals();
         self.originals = Originals::capture(&produced_paths(&directory, &inputs, &producers));
         self.provided.clear();
+        self.provided_octets.clear();
         self.diagnostics.clear();
         self.changes_started.clear();
         self.stores_started.clear();
@@ -315,6 +323,7 @@ impl NodeEditor {
             range: usize::try_from(range).unwrap_or(0),
             text,
         };
+        self.provided_octets.remove(&document);
         let provided = self.provided.entry(document.clone()).or_default();
         let provided_after = increment.overwriting(provided);
         let provided_before = std::mem::replace(provided, provided_after.clone());
@@ -324,6 +333,31 @@ impl NodeEditor {
             increment,
             provided_after,
         });
+        self.changes_started.push_back(Instant::now());
+        self.count_request();
+    }
+
+    // realises FR-167, FR-168
+    /// Reads the octets the *input group* of `document` provided, takes their reading under
+    /// UTF-8 as the *provided text* of `document`, by which its *diagnostics* are marked in txt,
+    /// and hands the octets to the *node thread*; scheduled by an *input group* of the
+    /// *node window*.
+    ///
+    /// * The *input group* then holds an empty *provided text*, so that the next
+    ///   *text increment* of the document carries its whole text; the *node editor* overwrites
+    ///   the empty text with it.
+    #[qslot(qml_name = "applyOctets")]
+    fn apply_octets(&mut self, document: String) {
+        let Some(octets) = self
+            .input_of(&document)
+            .map(|group| group.borrow().octets_provided())
+        else {
+            return;
+        };
+        self.provided_octets
+            .insert(document.clone(), text_of_octets(&octets));
+        self.provided.remove(&document);
+        self.send(NodeCommand::Open { document, octets });
         self.changes_started.push_back(Instant::now());
         self.count_request();
     }
@@ -455,12 +489,26 @@ impl NodeEditor {
     fn present_diagnostics(&mut self, document: &str, diagnostics: &[Diagnostic]) {
         self.diagnostics
             .insert(document.to_owned(), diagnostics.to_vec());
-        let text = self.provided.get(document).cloned().unwrap_or_default();
+        let text = self
+            .provided_octets
+            .get(document)
+            .or_else(|| self.provided.get(document))
+            .cloned()
+            .unwrap_or_default();
         if let Some(group) = self.group_of(document) {
             let marks = marks_of_diagnostics(&text, diagnostics);
             invoke_method!(
                 group,
                 "setDiagnostics",
+                marks.starts,
+                marks.ends,
+                marks.severities,
+                marks.texts
+            );
+            let marks = bit_marks_of_diagnostics(diagnostics);
+            invoke_method!(
+                group,
+                "setOctetMarks",
                 marks.starts,
                 marks.ends,
                 marks.severities,
@@ -508,6 +556,18 @@ impl NodeEditor {
             0 => Some(&self.meta_dsl.1),
             _ => self.inputs.get(index - 1).map(|(_, invoker)| invoker),
         }
+    }
+
+    /// Yields the *input group* of the *input* whose document is `identifier`, `None` where the
+    /// opened *node* has no such *input*.
+    fn input_of(&self, identifier: &str) -> Option<&Rc<RefCell<InputGroup>>> {
+        let index = self
+            .documents
+            .iter()
+            .position(|document| document == identifier)?;
+        self.inputs
+            .get(index.checked_sub(1)?)
+            .map(|(group, _)| group)
     }
 
     /// Records whether the *node* is served and the status, and emits `status_changed`.
@@ -606,6 +666,13 @@ fn node_thread(
                         &increment,
                         &provided_after,
                     ),
+                    document,
+                },
+                false,
+            ),
+            NodeCommand::Open { document, octets } => (
+                NodeReport::Transmitted {
+                    outcome: runner.open_octets(&document, &octets),
                     document,
                 },
                 false,

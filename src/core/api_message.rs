@@ -24,6 +24,7 @@ const KEY_TERMINAL: u64 = 10;
 const KEY_DIAGNOSTICS: u64 = 11;
 const KEY_ERROR: u64 = 13;
 const KEY_NODES: u64 = 14;
+const KEY_OCTETS: u64 = 15;
 
 /// The kinds of the *messages* *product* encodes and decodes.
 const KIND_OPEN: u64 = 1;
@@ -209,6 +210,9 @@ impl Diagnostic {
 pub enum Request {
     /// an open request carrying the full text of the document
     Open { document: String, text: String },
+    /// an open request carrying the octets of the document, which is a *binary document*
+    /// (\[AD3\] IR-112)
+    OpenOctets { document: String, octets: Vec<u8> },
     /// an edit request carrying the *document version* it applies to and its *edit deltas*
     Edit {
         document: String,
@@ -326,10 +330,14 @@ pub fn rendering_of_documents(documents: &[(String, Vec<Diagnostic>)]) -> String
         .join("\n")
 }
 
-// realises FR-126
+// realises FR-126, FR-169, FR-170
 /// The marks of the *diagnostics* of one document, as the *front end* draws them: per
-/// *diagnostic*, the start and the end of its range as offsets of the text in UTF-16 code units,
-/// which a QML string counts, the index of its severity, and its message text.
+/// *diagnostic*, the start and the end of its range, the index of its severity, and its message
+/// text.
+///
+/// * The marks of txt carry the start and the end as offsets of the text in UTF-16 code units,
+///   which a QML string counts ([`marks_of_diagnostics`]); the marks of hex and bin carry them
+///   as *offsets*, in bits ([`bit_marks_of_diagnostics`]).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Marks {
     pub starts: Vec<i32>,
@@ -389,6 +397,24 @@ pub fn marks_of_diagnostics(text: &str, diagnostics: &[Diagnostic]) -> Marks {
     }
 }
 
+// realises FR-169, FR-170
+/// Yields the marks of `diagnostics` in hex and bin, in their order: every *diagnostic*, with
+/// the *offsets* of its range in bits, whether it has a *read position* or not.
+///
+/// * An *offset* beyond the greatest integer QML takes is carried as that integer.
+pub fn bit_marks_of_diagnostics(diagnostics: &[Diagnostic]) -> Marks {
+    let offset = |position: &Position| i32::try_from(position.offset).unwrap_or(i32::MAX);
+    Marks {
+        starts: diagnostics.iter().map(|d| offset(&d.start)).collect(),
+        ends: diagnostics.iter().map(|d| offset(&d.end)).collect(),
+        severities: diagnostics
+            .iter()
+            .map(|d| d.severity.index() as i32)
+            .collect(),
+        texts: diagnostics.iter().map(|d| d.text.clone()).collect(),
+    }
+}
+
 // realises FR-109
 /// Yields whether a *diagnostic* of severity error is among `diagnostics`.
 pub fn has_error(diagnostics: &[Diagnostic]) -> bool {
@@ -408,6 +434,11 @@ pub fn encode_request(identifier: u64, request: &Request) -> Vec<u8> {
             pairs.push((KEY_KIND, unsigned(KIND_OPEN)));
             pairs.push((KEY_DOCUMENT, Value::Text(document.clone())));
             pairs.push((KEY_TEXT, Value::Text(text.clone())));
+        }
+        Request::OpenOctets { document, octets } => {
+            pairs.push((KEY_KIND, unsigned(KIND_OPEN)));
+            pairs.push((KEY_DOCUMENT, Value::Text(document.clone())));
+            pairs.push((KEY_OCTETS, Value::Bytes(octets.clone())));
         }
         Request::Edit {
             document,
@@ -1048,6 +1079,39 @@ mod tests {
         assert_eq!(
             encode_request(7, &Request::QueryNetwork),
             vec![0xa2, 0x00, 0x0b, 0x01, 0x07]
+        );
+    }
+
+    #[test]
+    fn every_diagnostic_has_a_mark_in_bits_with_or_without_a_read_position() {
+        // FR-169, FR-170
+        assert_eq!(
+            bit_marks_of_diagnostics(&[diagnostic_in_bits(), diagnostic()]),
+            Marks {
+                starts: vec![40, diagnostic().start.offset as i32],
+                ends: vec![56, diagnostic().end.offset as i32],
+                severities: vec![0, 1],
+                texts: vec!["no match".to_owned(), "doubtful".to_owned()],
+            }
+        );
+    }
+
+    #[test]
+    fn open_request_of_a_binary_document_carries_its_octets_as_a_byte_string() {
+        // FR-167, [AD3] IR-112
+        let bytes = encode_request(
+            1,
+            &Request::OpenOctets {
+                document: "n".to_owned(),
+                octets: vec![0xff, 0x00],
+            },
+        );
+        // { 0: 1, 1: 1, 2: "n", 15: h'ff00' }
+        assert_eq!(
+            bytes,
+            vec![
+                0xa4, 0x00, 0x01, 0x01, 0x01, 0x02, 0x61, b'n', 0x0f, 0x42, 0xff, 0x00
+            ]
         );
     }
 

@@ -147,6 +147,25 @@ impl NodeRunner {
         outcome.map_err(|error| error.to_string())
     }
 
+    // realises FR-167, FR-107, FR-112
+    /// Transmits the octets of a document to the served *node*, as
+    /// [`NodeSession::open_octets`].
+    ///
+    /// # Errors
+    /// Returns the text of FR-112, as [`NodeRunner::transmit`] does.
+    pub fn open_octets(
+        &mut self,
+        document: &str,
+        octets: &[u8],
+    ) -> Result<Vec<Diagnostic>, String> {
+        let Some(session) = self.session.as_mut() else {
+            return Err(NOT_SERVED.to_owned());
+        };
+        let outcome = session.open_octets(document, octets);
+        self.give_up_on(&outcome);
+        outcome.map_err(|error| error.to_string())
+    }
+
     // realises FR-109, FR-111, FR-112
     /// Transmits a *store request* to the served *node*, as [`NodeSession::store`].
     ///
@@ -192,7 +211,8 @@ impl Drop for NodeRunner {
  * independence     : ✅
  * edge cases       : ✅
  * conforms to doc  : ✅
- * covers bridge    : NodeEditor::open_node, NodeEditor::apply_increment, NodeEditor::report_arrived,
+ * covers bridge    : NodeEditor::open_node, NodeEditor::apply_increment, NodeEditor::apply_octets,
+ *                    NodeEditor::report_arrived,
  *                    NodeEditor::close, NodeEditor::shut_down */
 #[cfg(test)]
 mod tests {
@@ -221,10 +241,15 @@ mod tests {
         // FR-112
         let mut runner = NodeRunner::new(case_dir("unserved"));
         let transmitted = runner.transmit("a.gc3", "", &increment(), "a");
+        let opened = runner.open_octets("a.bin", &[0xff]);
         let stored = runner.store();
         assert_eq!(
-            (transmitted, stored),
-            (Err(NOT_SERVED.to_owned()), Err(NOT_SERVED.to_owned()))
+            (transmitted, opened, stored),
+            (
+                Err(NOT_SERVED.to_owned()),
+                Err(NOT_SERVED.to_owned()),
+                Err(NOT_SERVED.to_owned())
+            )
         );
     }
 

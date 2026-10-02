@@ -3,16 +3,36 @@
 //! Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 //! Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
 
+use crate::core::octet_view::text_of_octets;
+
 use std::fs;
 
-// realises FR-030, FR-102, FR-110, FR-111
+// realises FR-030, FR-102, FR-110, FR-111, FR-163
 /// One *output* as its *output page* presents it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutputFile {
     /// the path of the *output*, resolved against the directory of the *network file*
     pub path: String,
-    /// the content of the file, empty where it could not be read
+    /// the octets of the file, none where it could not be read
+    pub octets: Vec<u8>,
+    /// the octets read as UTF-8 (FR-157), as txt presents them
     pub content: String,
+}
+
+impl OutputFile {
+    // realises FR-110, FR-111, FR-163, IR-009
+    /// Reads the *output* at `path`.
+    ///
+    /// * The *node* may not have stored the file yet, so that an absent file is no error: it has
+    ///   no octets.
+    pub fn of_path(path: &str) -> OutputFile {
+        let octets = fs::read(path).unwrap_or_default();
+        OutputFile {
+            path: path.to_owned(),
+            content: text_of_octets(&octets),
+            octets,
+        }
+    }
 }
 
 // realises FR-150, FR-151, FR-152
@@ -48,16 +68,6 @@ pub struct OutputPages {
     return_page: Option<usize>,
 }
 
-/// Yields the content of the file at `path`, empty where it cannot be read.
-///
-/// * The *node* may not have stored the file yet, so that an absent file is no error.
-/// * A byte sequence that is not UTF-8 is replaced by the replacement character.
-fn content_of(path: &str) -> String {
-    fs::read(path)
-        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
-        .unwrap_or_default()
-}
-
 impl OutputPages {
     // realises FR-102, FR-110, FR-122, IR-009
     /// Creates the pages of the *outputs* at `paths`, in that order, each read; the first is
@@ -66,13 +76,7 @@ impl OutputPages {
     /// * The content of a file that cannot be read is empty.
     pub fn of_paths(paths: &[String]) -> OutputPages {
         OutputPages {
-            files: paths
-                .iter()
-                .map(|path| OutputFile {
-                    path: path.clone(),
-                    content: content_of(path),
-                })
-                .collect(),
+            files: paths.iter().map(|path| OutputFile::of_path(path)).collect(),
             diagnostics: String::new(),
             current: 0,
             return_page: None,
@@ -119,7 +123,7 @@ impl OutputPages {
     /// Reads the file of every *output* again.
     pub fn reload(&mut self) {
         for file in &mut self.files {
-            file.content = content_of(&file.path);
+            *file = OutputFile::of_path(&file.path);
         }
     }
 
@@ -338,16 +342,18 @@ mod tests {
     }
 
     #[test]
-    fn a_file_that_is_not_utf8_is_read_with_replacement_characters() {
-        // IR-009
+    fn a_file_that_is_not_utf8_is_held_as_its_octets_and_read_with_replacement_characters() {
+        // FR-157, FR-163, IR-009
         let dir = case_dir("encoding");
         let path = dir.join("bin.txt");
         fs::write(&path, [b'a', 0xff, b'b']).expect("the file can be written");
         let pages = OutputPages::of_paths(&[path.to_string_lossy().into_owned()]);
         let _ = fs::remove_dir_all(&dir);
         assert_eq!(
-            pages.current_file().map(|file| file.content.as_str()),
-            Some("a\u{fffd}b")
+            pages
+                .current_file()
+                .map(|file| (file.octets.as_slice(), file.content.as_str())),
+            Some((&[b'a', 0xff, b'b'][..], "a\u{fffd}b"))
         );
     }
 

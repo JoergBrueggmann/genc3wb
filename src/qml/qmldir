@@ -4,6 +4,9 @@ NetworkGraphGroup 1.0 NetworkGraphGroup.qml
 InputGroup 1.0 InputGroup.qml
 CodeEditor 1.0 CodeEditor.qml
 DiagnosticMark 1.0 DiagnosticMark.qml
+WavyLine 1.0 WavyLine.qml
+ModeSwitch 1.0 ModeSwitch.qml
+OctetView 1.0 OctetView.qml
 ProcessingStateIndicator 1.0 ProcessingStateIndicator.qml
 OutputGroup 1.0 OutputGroup.qml
 OutputWindow 1.0 OutputWindow.qml

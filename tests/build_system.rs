@@ -164,3 +164,67 @@ fn node_is_served_and_answers_a_change_with_diagnostics_and_a_store() {
         )
     );
 }
+
+/// A *meta compiler DSL* whose *input* is octets beginning with the octet `0xFF`, and whose
+/// *binary output* is the complement of every octet after it.
+const COMPLEMENT_META_DSL: &str = "syntax\n    root = 0xFF, octets, EOS\n    \
+    octets = octets, octet | octet\n    octet = bits 8\n\
+    generator complement input \"a.in\" output \"x.txt\" binary\n    root -> #2\n    \
+    octets -> #1 ++ [#2] | -> [#1]\n    octet :: U8\n    octet -> fromInteger(255 - #1)\n";
+
+// FR-107, FR-109, FR-111, FR-167, FR-169, FR-170, IR-027, IR-028
+// needs the service executable genc3d of genc³ 0.28.0.0 or later, named by the environment
+// variable GENC3D
+#[test]
+#[ignore]
+fn octets_are_served_as_a_binary_document_with_a_store_and_with_diagnostics_in_bits() {
+    use genc3wb::core::api_message::bit_marks_of_diagnostics;
+    use genc3wb::core::node_runner::{NodeRunner, NodeStart};
+
+    let directory = case_directory("octets", TWO_NODES);
+    fs::write(directory.join("a.gc3"), COMPLEMENT_META_DSL)
+        .expect("the meta compiler DSL can be written");
+    fs::write(directory.join("a.in"), [0xff, 0x01]).expect("the input can be written");
+    let mut runner = NodeRunner::new(directory.join("scratch"));
+    let started = runner.start(&NodeStart {
+        executable: build_system(),
+        directory: directory.clone(),
+        meta_dsl: "a.gc3".to_owned(),
+        inputs: vec!["a.in".to_owned()],
+        outputs: vec!["x.txt".to_owned()],
+    });
+    let opened = runner.open_octets("a.in", &[0xff, 0x00, 0x80, 0xfe]);
+    let stored = runner.store();
+    let output = fs::read(directory.join("x.txt")).ok();
+    let faulty = runner.open_octets("a.in", &[0xff]);
+    let marks = faulty
+        .as_ref()
+        .map(|diagnostics| bit_marks_of_diagnostics(diagnostics));
+    let unmarked_in_txt = faulty.as_ref().map(|diagnostics| {
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.read_positions().is_none())
+    });
+    drop(runner);
+    let _ = fs::remove_dir_all(&directory);
+    assert_eq!(
+        (
+            started,
+            opened,
+            stored,
+            output,
+            faulty.as_ref().map(|diagnostics| has_error(diagnostics)),
+            unmarked_in_txt,
+            marks.map(|marks| marks.starts)
+        ),
+        (
+            Ok(()),
+            Ok(vec![]),
+            Ok(()),
+            Some(vec![0xff, 0x7f, 0x01]),
+            Ok(true),
+            Ok(true),
+            Ok(vec![8])
+        )
+    );
+}

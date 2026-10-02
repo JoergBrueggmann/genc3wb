@@ -35,6 +35,13 @@ Window {
                 text: editorWindow.group.path
             }
 
+            ModeSwitch {
+                id: modeSwitch
+
+                visible: editorWindow.group.octetModes
+                documentIsText: editorWindow.group.isText
+            }
+
             ProcessingStateIndicator {
                 id: indicator
 
@@ -58,6 +65,17 @@ Window {
             markEnds: editorWindow.group.diagnosticEnds
             markSeverities: editorWindow.group.diagnosticSeverities
             markTexts: editorWindow.group.diagnosticTexts
+            mode: editorWindow.group.octetModes ? modeSwitch.mode : 0
+            octets: editorWindow.group
+            octetsMarked: true
+        }
+    }
+
+    Connections {
+        target: editorWindow.group
+
+        function onDocumentChanged() {
+            modeSwitch.chosen = -1;
         }
     }
 }

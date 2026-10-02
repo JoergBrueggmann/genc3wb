@@ -1,5 +1,6 @@
 // A code editor with line numbers, the highlight of the current line and of the occurrences of the selection,
-// the marks of the diagnostics, the editing keys, and the two idle timers.
+// the marks of the diagnostics, the editing keys, the two idle timers, and the presentation of the octets of
+// its document in hex and bin.
 //
 // Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 // Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -22,6 +23,13 @@ Frame {
     property int longIdleTime: 16000
     // the tab size: the number of characters a tab character is displayed as wide
     property int tabSize: 4
+    // the index of the editor mode: 0 for txt, 1 for hex, 2 for bin
+    property int mode: 0
+    // the input group or the output group whose octets hex and bin present; null where the code
+    // editor has no mode switch
+    property var octets: null
+    // whether the octets carry marks of diagnostics
+    property bool octetsMarked: false
     // the marks of the diagnostics: per diagnostic its start and its end as offsets of the text,
     // the index of its severity, and its message text
     property var markStarts: []
@@ -106,6 +114,7 @@ Frame {
 
         anchors.fill: parent
         clip: true
+        visible: root.mode === 0
         contentWidth: Math.max(width, lineNumbers.width + textArea.contentWidth + 12)
         contentHeight: Math.max(height, textArea.contentHeight + 8)
 
@@ -250,6 +259,17 @@ Frame {
                 message: root.markTexts[index] ?? ""
             }
         }
+    }
+
+    OctetView {
+        id: octetView
+
+        anchors.fill: parent
+        visible: root.mode !== 0
+        provider: root.octets
+        mode: root.mode === 2 ? 2 : 1
+        marked: root.octetsMarked
+        digitFont: textArea.font
     }
 
     Timer {

@@ -5,6 +5,7 @@
 
 use crate::core::api_message::Marks;
 use crate::core::input_file::{InputFile, InputKind, ProcessingState};
+use crate::core::octet_view::{EditorMode, row_count, row_segments, row_text};
 use crate::core::settings::Settings;
 use crate::core::text_increment::IncrementTracker;
 
@@ -33,6 +34,13 @@ pub struct InputGroup {
     edited_since_named: bool,
     /// the marks of the *diagnostics* of the document; none where there is none
     marks: Marks,
+    /// the marks of the *diagnostics* of the document in hex and bin, their ranges in bits
+    octet_marks: Marks,
+    /// the octets last provided to the *node* as a *binary document*; `None` where the document
+    /// was provided as a text, or not at all
+    provided_octets: Option<Vec<u8>>,
+    /// the number of changes of the octets since the group was created
+    revision: i32,
     /// the settings, to store the path; wired by the *workbench object* for the *network file*
     settings: Option<Rc<RefCell<Settings>>>,
     /// the invoker of the receiver of the *text increments*: the network editor for the
@@ -52,6 +60,9 @@ impl Default for InputGroup {
             producer: String::new(),
             edited_since_named: false,
             marks: Marks::default(),
+            octet_marks: Marks::default(),
+            provided_octets: None,
+            revision: 0,
             settings: None,
             receiver: None,
         }
@@ -59,12 +70,27 @@ impl Default for InputGroup {
 }
 
 // realises FR-007, FR-011 to FR-017, FR-056, FR-059, FR-069, FR-083, FR-086, FR-087, FR-106,
-// FR-107, FR-108, FR-113, FR-114, FR-116, FR-126, FR-127, FR-128
+// FR-107, FR-108, FR-113, FR-114, FR-116, FR-126, FR-127, FR-128, FR-154, FR-156 to FR-159,
+// FR-163 to FR-173, FR-175
 #[qobject(NoQmlElement)]
 impl InputGroup {
     qproperty!("caption", Read = caption, Constant);
     qproperty!("fileFilter", Read = file_filter, Constant);
     qproperty!("selectable", Read = selectable, Constant);
+    qproperty!("octetModes", Read = octet_modes, Constant);
+    qproperty!("isText", Read = is_text, Notify = text_changed);
+    qproperty!("revision", Read = revision, Notify = text_changed);
+    qproperty!("octetCount", Read = octet_count, Notify = text_changed);
+    qproperty!(
+        "octetMarkSeverities",
+        Read = octet_mark_severities,
+        Notify = octet_marks_changed
+    );
+    qproperty!(
+        "octetMarkTexts",
+        Read = octet_mark_texts,
+        Notify = octet_marks_changed
+    );
     qproperty!("path", Read = path, Write = set_path, Notify = path_changed);
     qproperty!("text", Read = text, Write = set_text, Notify = text_changed);
     qproperty!("state", Read = state, Notify = state_changed);
@@ -107,6 +133,38 @@ impl InputGroup {
     // realises FR-007, FR-116
     fn selectable(&self) -> bool {
         self.file.kind().is_selectable()
+    }
+
+    // realises FR-154
+    fn octet_modes(&self) -> bool {
+        match self.file.kind() {
+            InputKind::Input => true,
+            InputKind::MetaDsl | InputKind::Network => false,
+        }
+    }
+
+    // realises FR-156
+    fn is_text(&self) -> bool {
+        self.file.is_text()
+    }
+
+    fn revision(&self) -> i32 {
+        self.revision
+    }
+
+    // realises FR-173, FR-175
+    fn octet_count(&self) -> i32 {
+        int_of(self.file.octets().len())
+    }
+
+    // realises FR-169, FR-170
+    fn octet_mark_severities(&self) -> Vec<i32> {
+        self.octet_marks.severities.clone()
+    }
+
+    // realises FR-172
+    fn octet_mark_texts(&self) -> Vec<String> {
+        self.octet_marks.texts.clone()
     }
 
     fn path(&self) -> String {
@@ -160,17 +218,17 @@ impl InputGroup {
         self.name_path(path);
     }
 
-    // realises FR-019, FR-021, FR-055, FR-113
-    // Replaces the text where it differs, records that the document was edited, and announces
-    // the *processing state*.
+    // realises FR-019, FR-021, FR-055, FR-113, FR-165, FR-166
+    // Replaces the octets by the encoding of the text where the user modified it, records that
+    // the document was edited, and announces the *processing state*; a text as the text area
+    // holds the text of the document is no edit.
     fn set_text(&mut self, text: String) {
-        if text == self.file.text() {
+        if !self.file.set_text(&text) {
             return;
         }
-        self.file.set_text(&text);
         let temporary_before = self.temporary_edit();
         self.edited_since_named = true;
-        self.text_changed();
+        self.announce_text();
         self.announce_state(temporary_before != self.temporary_edit());
     }
 
@@ -189,6 +247,9 @@ impl InputGroup {
 
     #[qsignal(qml_name = "diagnosticsChanged")]
     fn diagnostics_changed(&mut self);
+
+    #[qsignal(qml_name = "octetMarksChanged")]
+    fn octet_marks_changed(&mut self);
 
     #[qsignal(qml_name = "askToSave")]
     fn ask_to_save(&mut self, path: String);
@@ -209,14 +270,21 @@ impl InputGroup {
         }
     }
 
-    // realises FR-016, FR-056, FR-057, FR-059, FR-069, FR-106, IR-015, IR-016
+    // realises FR-016, FR-056, FR-057, FR-059, FR-069, FR-106, FR-167, FR-168, IR-015, IR-016
     /// Provides the pending *text increment*, writes its rendering to standard output followed by
     /// a line separator, emits `increment_provided`, schedules `applyIncrement` of the receiver
     /// with the *document identifier* where one is wired, and saves the input file where it
     /// holds unsaved changes and a path is named.
+    ///
+    /// * Where the octets are no valid UTF-8, no *text increment* is provided: the octets are
+    ///   provided where they differ from those provided before, the *provided text* becomes
+    ///   empty, and `applyOctets` of the receiver is scheduled with the *document identifier*.
     #[qslot(qml_name = "idleExpired")]
     fn idle_expired(&mut self) {
-        if let Some(increment) = self.tracker.provide(self.file.text()) {
+        if !self.file.is_text() {
+            self.provide_octets();
+        } else if let Some(increment) = self.tracker.provide(self.file.text()) {
+            self.provided_octets = None;
             let rendering = increment.rendering();
             let mut stdout = std::io::stdout().lock();
             let _ = writeln!(stdout, "{rendering}");
@@ -251,17 +319,100 @@ impl InputGroup {
 
     // realises FR-086, FR-087, FR-113, FR-114
     /// Names the document of a *node*: records `identifier` and `producer`, forgets the
-    /// *provided text* and the *diagnostics*, so that the next *text increment* carries the
-    /// whole text, and names `path` as the file name field does, loading the file even where the
-    /// path is the one before, since the file may have changed; scheduled by the *node editor*.
+    /// *provided text*, the octets provided and the *diagnostics*, so that the next
+    /// *text increment* carries the whole text, and names `path` as the file name field does,
+    /// loading the file even where the path is the one before, since the file may have changed;
+    /// scheduled by the *node editor*.
     #[qslot(qml_name = "nameDocument")]
     fn name_document(&mut self, identifier: String, path: String, producer: String) {
         self.identifier = identifier;
         self.producer = producer;
         self.tracker = IncrementTracker::default();
+        self.provided_octets = None;
         self.document_changed();
         self.set_diagnostics(vec![], vec![], vec![], vec![]);
+        self.set_octet_marks(vec![], vec![], vec![], vec![]);
         self.name_path(path);
+    }
+
+    // realises FR-158, FR-159
+    /// Yields the number of rows of `per_row` octets the octets take, as [`row_count`] does;
+    /// 0 for a negative `per_row`.
+    #[qslot(qml_name = "rowCount")]
+    fn row_count(&self, per_row: i32) -> i32 {
+        int_of(row_count(self.file.octets().len(), count_of(per_row)))
+    }
+
+    // realises FR-158, FR-159
+    /// Yields the text of the row `row` of `per_row` octets in the *editor mode* of index
+    /// `mode`, as [`row_text`] does; empty for a negative row and for an index that names no
+    /// mode.
+    #[qslot(qml_name = "rowText")]
+    fn row_text(&self, mode: i32, per_row: i32, row: i32) -> String {
+        match (mode_of(mode), usize::try_from(row)) {
+            (Some(mode), Ok(row)) => row_text(self.file.octets(), row, mode, count_of(per_row)),
+            (None, _) | (_, Err(_)) => String::new(),
+        }
+    }
+
+    // realises FR-169, FR-170, FR-171
+    /// Yields the segments of the row `row` of `per_row` octets below which the *diagnostics*
+    /// are marked in the *editor mode* of index `mode`, as [`row_segments`] does, as a flat
+    /// list: per segment its first character column, its number of character columns and the
+    /// index of its mark.
+    #[qslot(qml_name = "rowMarks")]
+    fn row_marks(&self, mode: i32, per_row: i32, row: i32) -> Vec<i32> {
+        let (Some(mode), Ok(row)) = (mode_of(mode), usize::try_from(row)) else {
+            return Vec::new();
+        };
+        let bits = |offsets: &[i32]| -> Vec<u64> {
+            offsets
+                .iter()
+                .map(|offset| u64::try_from(*offset).unwrap_or(0))
+                .collect()
+        };
+        row_segments(
+            &bits(&self.octet_marks.starts),
+            &bits(&self.octet_marks.ends),
+            self.file.octets().len(),
+            row,
+            mode,
+            count_of(per_row),
+        )
+        .into_iter()
+        .flat_map(|segment| {
+            [
+                int_of(segment.first_column),
+                int_of(segment.columns),
+                int_of(segment.mark),
+            ]
+        })
+        .collect()
+    }
+
+    // realises FR-169 to FR-172
+    /// Replaces the marks of the *diagnostics* in hex and bin: per *diagnostic* the *offset* of
+    /// the start and of the end of its range in bits, the index of its severity and its message
+    /// text; scheduled by the *node editor*.
+    #[qslot(qml_name = "setOctetMarks")]
+    fn set_octet_marks(
+        &mut self,
+        starts: Vec<i32>,
+        ends: Vec<i32>,
+        severities: Vec<i32>,
+        texts: Vec<String>,
+    ) {
+        let marks = Marks {
+            starts,
+            ends,
+            severities,
+            texts,
+        };
+        if marks == self.octet_marks {
+            return;
+        }
+        self.octet_marks = marks;
+        self.octet_marks_changed();
     }
 
     // realises FR-107, FR-108, FR-126, FR-127, FR-128
@@ -308,6 +459,34 @@ impl InputGroup {
         self.receiver = receiver;
     }
 
+    // realises FR-167
+    /// Yields the octets last provided to the *node* as a *binary document*, none where the
+    /// document was provided as a text or not at all; read by the *node editor*.
+    pub fn octets_provided(&self) -> Vec<u8> {
+        self.provided_octets.clone().unwrap_or_default()
+    }
+
+    // realises FR-167, FR-168
+    /// Provides the octets where they differ from those provided before: the *provided text*
+    /// becomes empty, and `applyOctets` of the receiver is scheduled with the
+    /// *document identifier* where one is wired.
+    fn provide_octets(&mut self) {
+        if self.provided_octets.as_deref() == Some(self.file.octets()) {
+            return;
+        }
+        self.provided_octets = Some(self.file.octets().to_vec());
+        self.tracker = IncrementTracker::default();
+        if let Some(receiver) = &self.receiver {
+            invoke_method!(receiver, "applyOctets", self.identifier.clone());
+        }
+    }
+
+    /// Counts the change of the octets and emits `text_changed`.
+    fn announce_text(&mut self) {
+        self.revision = self.revision.wrapping_add(1);
+        self.text_changed();
+    }
+
     // realises FR-090
     /// Loads the file at the path the settings hold for the *network file*, announces the state,
     /// and announces the path to the network editor where one is wired.
@@ -352,13 +531,13 @@ impl InputGroup {
             settings.set_network_path(path);
             let _ = settings.save(&Settings::default_path());
         }
-        let text_before = self.file.text().to_owned();
+        let octets_before = self.file.octets().to_vec();
         let _ = self.file.load(path);
         let temporary_before = self.temporary_edit();
         self.edited_since_named = false;
         self.path_changed();
-        if self.file.text() != text_before {
-            self.text_changed();
+        if self.file.octets() != octets_before {
+            self.announce_text();
         }
         self.announce_state(temporary_before != self.temporary_edit());
         self.announce_path();
@@ -374,4 +553,19 @@ impl InputGroup {
         self.announced_state = state;
         self.state_changed();
     }
+}
+
+/// Yields the *editor mode* of the index `mode`, `None` where the index names none.
+fn mode_of(mode: i32) -> Option<EditorMode> {
+    usize::try_from(mode).ok().and_then(EditorMode::of_index)
+}
+
+/// Yields `value` as a count; 0 where it is negative.
+fn count_of(value: i32) -> usize {
+    usize::try_from(value).unwrap_or(0)
+}
+
+/// Yields `value` as the integer QML takes; the greatest one where it is larger.
+fn int_of(value: usize) -> i32 {
+    i32::try_from(value).unwrap_or(i32::MAX)
 }

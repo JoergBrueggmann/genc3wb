@@ -1,5 +1,6 @@
-// One input group: file name field, file selector, indicator, the icon of an input of a producer, code editor
-// with the marks of the diagnostics, detach button, and the dialogs of that group.
+// One input group: file name field, file selector, indicator, the icon of an input of a producer, the mode
+// switch of an input, code editor with the marks of the diagnostics, detach button, and the dialogs of that
+// group.
 //
 // Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 // Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -61,6 +62,13 @@ GroupBox {
                 }
             }
 
+            ModeSwitch {
+                id: modeSwitch
+
+                visible: root.group.octetModes
+                documentIsText: root.group.isText
+            }
+
             ToolButton {
                 id: detachButton
 
@@ -92,6 +100,9 @@ GroupBox {
             markEnds: root.group.diagnosticEnds
             markSeverities: root.group.diagnosticSeverities
             markTexts: root.group.diagnosticTexts
+            mode: root.group.octetModes ? modeSwitch.mode : 0
+            octets: root.group
+            octetsMarked: true
         }
     }
 
@@ -118,6 +129,10 @@ GroupBox {
 
         function onAskToSave(path) {
             saveDialog.open();
+        }
+
+        function onDocumentChanged() {
+            modeSwitch.chosen = -1;
         }
     }
 }

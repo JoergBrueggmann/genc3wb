@@ -1,7 +1,11 @@
-//! One input file: its path, its text, its *file text*, loading, saving and the *processing state*.
+//! One input file: its path, its octets, its text, its *file octets*, loading, saving and the
+//! *processing state*.
 //!
 //! Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 //! Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
+
+use crate::core::editing::text_area_form;
+use crate::core::octet_view::{is_utf8, text_of_octets};
 
 use std::fmt;
 use std::fs;
@@ -100,7 +104,7 @@ pub enum InputFileError {
     NoPath,
     /// the file could not be read or written; carries the path and the reason of the operating system
     Io { path: String, reason: String },
-    /// the file exists but is not UTF-8
+    /// the file exists but is not UTF-8, and is the *meta compiler DSL* or the *network file*
     Encoding { path: String },
 }
 
@@ -116,18 +120,22 @@ impl fmt::Display for InputFileError {
 
 impl std::error::Error for InputFileError {}
 
-// realises FR-007, FR-013, FR-015, FR-016, FR-017
+// realises FR-007, FR-013, FR-015, FR-016, FR-017, FR-163
 /// One input file as an *input group* edits it.
+///
+/// * The file is held as its octets; the text is the octets read as UTF-8, as txt presents them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InputFile {
     /// which input file this is
     kind: InputKind,
     /// the path named in the file name field, empty where none is named
     path: String,
-    /// the text the code editor holds
+    /// the octets of the document
+    octets: Vec<u8>,
+    /// the octets read as UTF-8 (FR-157)
     text: String,
-    /// the *file text*, `None` where it is not established that the file exists
-    file_text: Option<String>,
+    /// the *file octets*, `None` where it is not established that the file exists
+    file_octets: Option<Vec<u8>>,
     /// whether the text was edited since the file became unknown
     edited_since_unknown: bool,
 }
@@ -138,8 +146,9 @@ impl InputFile {
         InputFile {
             kind,
             path: String::new(),
+            octets: Vec::new(),
             text: String::new(),
-            file_text: None,
+            file_octets: None,
             edited_since_unknown: false,
         }
     }
@@ -154,64 +163,94 @@ impl InputFile {
         &self.path
     }
 
-    /// Yields the text the code editor holds.
+    // realises FR-157
+    /// Yields the text the code editor holds in txt: the octets read as UTF-8.
     pub fn text(&self) -> &str {
         &self.text
     }
 
-    // realises FR-013, FR-015, IR-009
-    /// Names `path` and loads its content into the text where the file exists.
+    // realises FR-163
+    /// Yields the octets of the document.
+    pub fn octets(&self) -> &[u8] {
+        &self.octets
+    }
+
+    // realises FR-156, FR-167
+    /// Yields whether the octets of the document are valid UTF-8.
+    pub fn is_text(&self) -> bool {
+        is_utf8(&self.octets)
+    }
+
+    // realises FR-013, FR-015, FR-163, FR-164, IR-009
+    /// Names `path` and loads the octets of its file where the file exists.
     ///
-    /// * Where the file exists and is read, the text and the *file text* become its content, and
-    ///   `true` is yielded.
-    /// * Where the file does not exist, the text is left unchanged, the *file text* becomes absent,
-    ///   and `false` is yielded.
+    /// * Where the file exists and is read, the octets and the *file octets* become its content,
+    ///   and `true` is yielded.
+    /// * Where the file does not exist, the octets are left unchanged, the *file octets* become
+    ///   absent, and `false` is yielded.
+    /// * The file of an *input* is loaded whatever its octets are; the *meta compiler DSL* and
+    ///   the *network file* are texts.
     ///
     /// # Errors
     /// Returns [`InputFileError::Io`] where the file exists but cannot be read, and
-    /// [`InputFileError::Encoding`] where its content is not UTF-8; the text is left unchanged.
+    /// [`InputFileError::Encoding`] where the file of the *meta compiler DSL* or of the
+    /// *network file* is not UTF-8; the octets are left unchanged.
     pub fn load(&mut self, path: &str) -> Result<bool, InputFileError> {
         self.path = path.to_owned();
-        self.file_text = None;
+        self.file_octets = None;
         self.edited_since_unknown = false;
         if path.is_empty() || !Path::new(path).is_file() {
             return Ok(false);
         }
-        let bytes = fs::read(path).map_err(|error| InputFileError::Io {
+        let octets = fs::read(path).map_err(|error| InputFileError::Io {
             path: path.to_owned(),
             reason: error.to_string(),
         })?;
-        let content = String::from_utf8(bytes).map_err(|_| InputFileError::Encoding {
-            path: path.to_owned(),
-        })?;
-        self.text = content.clone();
-        self.file_text = Some(content);
+        let binary_allowed = match self.kind {
+            InputKind::Input => true,
+            InputKind::MetaDsl | InputKind::Network => false,
+        };
+        if !binary_allowed && !is_utf8(&octets) {
+            return Err(InputFileError::Encoding {
+                path: path.to_owned(),
+            });
+        }
+        self.text = text_of_octets(&octets);
+        self.file_octets = Some(octets.clone());
+        self.octets = octets;
         Ok(true)
     }
 
     // realises FR-014
-    /// Yields whether the text differs from the *file text*, or was edited while the file is unknown.
+    /// Yields whether the octets differ from the *file octets*, or were edited while the file is
+    /// unknown.
     pub fn has_unsaved_changes(&self) -> bool {
-        match &self.file_text {
-            Some(file_text) => self.text != *file_text,
+        match &self.file_octets {
+            Some(file_octets) => self.octets != *file_octets,
             None => self.edited_since_unknown,
         }
     }
 
-    // realises FR-019, FR-021
-    /// Replaces the text, as the user or *product* edited it.
-    pub fn set_text(&mut self, text: &str) {
-        if self.text == text {
-            return;
+    // realises FR-019, FR-021, FR-165, FR-166
+    /// Replaces the octets by the UTF-8 encoding of `text`, as the user edited it in txt; yields
+    /// whether the octets were replaced.
+    ///
+    /// * A text that equals the text of the document, or the form in which the text area of a
+    ///   code editor holds it ([`text_area_form`]), is no edit: the octets stay as they are.
+    pub fn set_text(&mut self, text: &str) -> bool {
+        if self.text == text || text_area_form(&self.text) == text {
+            return false;
         }
         self.text = text.to_owned();
-        if self.file_text.is_none() {
+        self.octets = text.as_bytes().to_vec();
+        if self.file_octets.is_none() {
             self.edited_since_unknown = true;
         }
+        true
     }
 
     // realises FR-016, IR-010
-    /// Writes the text to the named file; the *file text* becomes the text.
+    /// Writes the octets to the named file; the *file octets* become the octets.
     ///
     /// # Errors
     /// Returns [`InputFileError::NoPath`] where no path is named, and [`InputFileError::Io`]
@@ -220,19 +259,19 @@ impl InputFile {
         if self.path.is_empty() {
             return Err(InputFileError::NoPath);
         }
-        fs::write(&self.path, self.text.as_bytes()).map_err(|error| InputFileError::Io {
+        fs::write(&self.path, &self.octets).map_err(|error| InputFileError::Io {
             path: self.path.clone(),
             reason: error.to_string(),
         })?;
-        self.file_text = Some(self.text.clone());
+        self.file_octets = Some(self.octets.clone());
         self.edited_since_unknown = false;
         Ok(())
     }
 
     // realises FR-017, FR-018, FR-019, FR-020, FR-021
-    /// Yields the *processing state*, from the *file text* and the text.
+    /// Yields the *processing state*, from the *file octets* and the octets.
     pub fn state(&self) -> ProcessingState {
-        match (&self.file_text, self.has_unsaved_changes()) {
+        match (&self.file_octets, self.has_unsaved_changes()) {
             (Some(_), false) => ProcessingState::ValidFileTextUntouched,
             (Some(_), true) => ProcessingState::ValidFileTextChanged,
             (None, false) => ProcessingState::UnknownFileTextUntouched,
@@ -247,7 +286,7 @@ impl InputFile {
  * edge cases       : ✅
  * conforms to doc  : ✅
  * covers bridge    : InputGroup::set_path, InputGroup::name_document, InputGroup::set_text, InputGroup::answer_save,
- *                    InputGroup::idle_expired */
+ *                    InputGroup::idle_expired, InputGroup::is_text */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -318,19 +357,118 @@ mod tests {
     }
 
     #[test]
-    fn file_that_is_not_utf8_is_reported() {
-        // IR-009
+    fn meta_dsl_and_network_file_that_are_not_utf8_are_reported() {
+        // FR-164, IR-009
         let dir = CaseDir::new("encoding");
         let path = dir.path("binary.txt");
         fs::write(&path, [0xff, 0xfe, 0x00]).expect("the file can be written");
-        let mut file = InputFile::new(InputKind::Input);
-        file.set_text("kept");
-        assert_eq!(
-            file.load(&path),
-            Err(InputFileError::Encoding { path: path.clone() })
+        let outcomes: Vec<_> = [InputKind::MetaDsl, InputKind::Network]
+            .into_iter()
+            .map(|kind| {
+                let mut file = InputFile::new(kind);
+                file.set_text("kept");
+                let loaded = file.load(&path);
+                (loaded, file.text().to_owned(), file.state())
+            })
+            .collect();
+        let expected = (
+            Err(InputFileError::Encoding { path: path.clone() }),
+            "kept".to_owned(),
+            ProcessingState::UnknownFileTextUntouched,
         );
-        assert_eq!(file.text(), "kept");
-        assert_eq!(file.state(), ProcessingState::UnknownFileTextUntouched);
+        assert_eq!(outcomes, vec![expected.clone(), expected]);
+    }
+
+    #[test]
+    fn input_that_is_not_utf8_is_loaded_as_its_octets() {
+        // FR-013, FR-157, FR-163
+        let dir = CaseDir::new("binary");
+        let path = dir.path("binary.bin");
+        fs::write(&path, [b'a', 0xff, 0xfe, 0x00]).expect("the file can be written");
+        let mut file = InputFile::new(InputKind::Input);
+        let loaded = file.load(&path);
+        assert_eq!(
+            (
+                loaded,
+                file.octets(),
+                file.text(),
+                file.is_text(),
+                file.state()
+            ),
+            (
+                Ok(true),
+                &[b'a', 0xff, 0xfe, 0x00][..],
+                "a\u{FFFD}\u{FFFD}\u{0}",
+                false,
+                ProcessingState::ValidFileTextUntouched
+            )
+        );
+    }
+
+    #[test]
+    fn octets_of_a_text_are_valid_utf8() {
+        // FR-156
+        let mut file = InputFile::new(InputKind::Input);
+        file.set_text("ä");
+        assert_eq!((file.is_text(), file.octets()), (true, "ä".as_bytes()));
+    }
+
+    #[test]
+    fn edit_in_txt_replaces_the_octets_by_the_encoding_of_the_text() {
+        // FR-165
+        let dir = CaseDir::new("replaced");
+        let path = dir.path("binary.bin");
+        fs::write(&path, [b'a', 0xff]).expect("the file can be written");
+        let mut file = InputFile::new(InputKind::Input);
+        file.load(&path).expect("the file can be loaded");
+        let replaced = file.set_text("a\u{FFFD}b");
+        assert_eq!(
+            (replaced, file.octets(), file.is_text(), file.state()),
+            (
+                true,
+                "a\u{FFFD}b".as_bytes(),
+                true,
+                ProcessingState::ValidFileTextChanged
+            )
+        );
+    }
+
+    #[test]
+    fn text_as_the_text_area_holds_it_is_no_edit() {
+        // FR-166
+        let dir = CaseDir::new("unmodified");
+        let path = dir.path("crlf.txt");
+        fs::write(&path, "a\r\nb\u{00A0}c").expect("the file can be written");
+        let mut file = InputFile::new(InputKind::Input);
+        file.load(&path).expect("the file can be loaded");
+        let replaced = (file.set_text("a\nb c"), file.set_text("a\r\nb\u{00A0}c"));
+        assert_eq!(
+            (replaced, file.octets(), file.state()),
+            (
+                (false, false),
+                "a\r\nb\u{00A0}c".as_bytes(),
+                ProcessingState::ValidFileTextUntouched
+            )
+        );
+    }
+
+    #[test]
+    fn saving_writes_the_octets_as_they_are() {
+        // FR-016, FR-166, IR-010
+        let dir = CaseDir::new("octets-saved");
+        let source = dir.path("source.bin");
+        let target = dir.path("target.bin");
+        fs::write(&source, [0x00, 0xff, 0x0d, 0x0a]).expect("the file can be written");
+        let mut file = InputFile::new(InputKind::Input);
+        file.load(&source).expect("the file can be loaded");
+        let held = text_area_form(file.text());
+        file.set_text(&held);
+        file.load(&target).expect("an absent file is no error");
+        let saved = file.save();
+        assert_eq!(
+            (saved, fs::read(&target).ok()),
+            (Ok(()), Some(vec![0x00, 0xff, 0x0d, 0x0a]))
+        );
     }
 
     #[test]
@@ -352,7 +490,7 @@ mod tests {
     }
 
     #[test]
-    fn saved_text_becomes_the_file_text() {
+    fn saved_text_becomes_the_file_octets() {
         // FR-016, IR-010
         let dir = CaseDir::new("saved");
         let path = dir.path("new.txt");

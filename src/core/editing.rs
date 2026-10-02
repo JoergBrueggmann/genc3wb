@@ -139,16 +139,66 @@ pub fn view_offset_showing(offset: f64, view: f64, content: f64, start: f64, end
     result.min(content - view).max(0.0)
 }
 
+// realises FR-166
+/// Yields `text` as the text area of a code editor holds it: a carriage return with the line
+/// feed after it, a carriage return alone, a line separator U+2028, a paragraph separator
+/// U+2029 and the noncharacters U+FDD0 and U+FDD1 as one line feed each, and a no-break space
+/// U+00A0 as a space.
+///
+/// * A text the code editor reports that equals this form of the text it was given was not
+///   modified by the user.
+pub fn text_area_form(text: &str) -> String {
+    let mut form = String::with_capacity(text.len());
+    let mut characters = text.chars().peekable();
+    while let Some(character) = characters.next() {
+        match character {
+            '\r' => {
+                if characters.peek() == Some(&'\n') {
+                    characters.next();
+                }
+                form.push('\n');
+            }
+            '\u{2028}' | '\u{2029}' | '\u{FDD0}' | '\u{FDD1}' => form.push('\n'),
+            '\u{00A0}' => form.push(' '),
+            other => form.push(other),
+        }
+    }
+    form
+}
+
 /*  * validated        : ✅
  * completeness     : ✅
  * independence     : ✅
  * edge cases       : ✅
  * conforms to doc  : ✅
  * covers bridge    : Editing::line_span, Editing::lines_span, Editing::occurrences,
- *                    Editing::indentation_of_line, Editing::view_offset_showing */
+ *                    Editing::indentation_of_line, Editing::view_offset_showing,
+ *                    InputGroup::set_text */
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_text_area_holds_every_line_break_as_one_line_feed() {
+        // FR-166
+        assert_eq!(
+            text_area_form("a\r\nb\rc\nd\u{2028}e\u{2029}f\u{FDD0}g\u{FDD1}h\r"),
+            "a\nb\nc\nd\ne\nf\ng\nh\n"
+        );
+    }
+
+    #[test]
+    fn a_text_area_holds_a_no_break_space_as_a_space() {
+        // FR-166
+        assert_eq!(text_area_form("a\u{00A0}b"), "a b");
+    }
+
+    #[test]
+    fn a_text_area_holds_every_other_character_as_it_is() {
+        // FR-166
+        let text = "a\tb\u{0}c\u{FFFD}d ä€\n";
+        assert_eq!(text_area_form(text), text);
+    }
 
     #[test]
     fn line_span_holds_the_line_break() {
