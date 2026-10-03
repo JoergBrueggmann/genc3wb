@@ -7,6 +7,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Layouts
 // The types of the module genc3wb are registered by the bridge crate at run time, which writes no type
 // description for qmllint; the import and the unqualified access to the singleton are therefore not linted.
 // qmllint disable import unqualified
@@ -38,6 +39,26 @@ ApplicationWindow {
                 text: qsTr("&Settings...")
                 onTriggered: settingsDialog.open()
             }
+
+            Action {
+                id: insertKeyAction
+
+                text: qsTr("Insert &key...")
+                onTriggered: insertKeyDialog.open()
+            }
+        }
+
+        Menu {
+            id: editMenu
+
+            title: qsTr("&Edit")
+
+            Action {
+                id: insertModeAction
+
+                text: Workbench.insertMode ? qsTr("Switch to &overwrite mode") : qsTr("Switch to &insert mode")
+                onTriggered: Workbench.insertMode = !Workbench.insertMode
+            }
         }
 
         Menu {
@@ -54,13 +75,24 @@ ApplicationWindow {
         }
     }
 
-    footer: Label {
-        id: statusBar
+    footer: RowLayout {
+        id: footerRow
 
-        padding: 4
-        text: !Workbench.network.available
-              ? qsTr("The build system is not available on this platform.")
-              : Workbench.network.building ? qsTr("The build system is building.") : ""
+        Label {
+            id: statusBar
+
+            Layout.fillWidth: true
+            padding: 4
+            text: !Workbench.network.available
+                  ? qsTr("The build system is not available on this platform.")
+                  : Workbench.network.building ? qsTr("The build system is building.") : ""
+        }
+
+        TypingModeLabel {
+            id: typingModeLabel
+
+            padding: 4
+        }
     }
 
     SplitView {
@@ -101,6 +133,10 @@ ApplicationWindow {
 
     SettingsDialog {
         id: settingsDialog
+    }
+
+    InsertKeyDialog {
+        id: insertKeyDialog
     }
 
     NodeWindow {

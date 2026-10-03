@@ -5,7 +5,7 @@
 
 use crate::core::api_message::{
     Diagnostic, MessageError, NodeDescription, Request, Response, decode_response,
-    delta_of_increment, encode_request, frames_of_message, read_message,
+    delta_of_increment, encode_request, frames_of_message, octet_delta_between, read_message,
 };
 use crate::core::executable;
 use crate::core::text_increment::TextIncrement;
@@ -215,6 +215,55 @@ impl<S: Read + Write> Conversation<S> {
         let diagnostics = self.opened(document, &open)?;
         self.binary_documents.insert(document.to_owned());
         Ok(diagnostics)
+    }
+
+    // realises FR-210, FR-107, FR-112
+    /// Transmits the change of the *binary document* `document` from `octets_before` to
+    /// `octets_after`.
+    ///
+    /// * Where the document is opened as a *binary document*, the change is an edit request
+    ///   with the *octet delta* between the two (\[AD3\] IR-114); otherwise it is an open
+    ///   request carrying `octets_after`, as [`Conversation::open_octets`].
+    /// * A version mismatch response is answered by an open request carrying `octets_after`.
+    /// * After an error response, the document counts as not opened, so that the next change
+    ///   opens it again.
+    /// * Yields the *diagnostics* of the *terminal response*, none for an acknowledged response.
+    ///
+    /// # Errors
+    /// Returns what [`Conversation::transmit`] returns.
+    pub fn edit_octets(
+        &mut self,
+        document: &str,
+        octets_before: &[u8],
+        octets_after: &[u8],
+    ) -> Result<Vec<Diagnostic>, BuildError> {
+        let version = match self.documents.get(document).copied() {
+            Some(version) if self.binary_documents.contains(document) => version,
+            Some(_) | None => return self.open_octets(document, octets_after),
+        };
+        let edit = Request::EditOctets {
+            document: document.to_owned(),
+            version,
+            deltas: vec![octet_delta_between(octets_before, octets_after)],
+        };
+        match self.exchange(&edit)? {
+            Response::Diagnostics {
+                version,
+                diagnostics,
+            } => {
+                self.documents.insert(document.to_owned(), version);
+                Ok(diagnostics)
+            }
+            Response::VersionMismatch { .. } => self.open_octets(document, octets_after),
+            Response::Error(text) => {
+                self.documents.remove(document);
+                self.binary_documents.remove(document);
+                Err(BuildError::Refused(text))
+            }
+            Response::Acknowledged | Response::Network { .. } | Response::Other(_) => {
+                Err(unexpected("the edit request"))
+            }
+        }
     }
 
     // realises FR-070, FR-073, FR-074
@@ -553,6 +602,21 @@ impl NodeSession {
         self.conversation.open_octets(document, octets)
     }
 
+    // realises FR-210, IR-027, IR-028
+    /// Transmits the change of a *binary document*, as [`Conversation::edit_octets`].
+    ///
+    /// # Errors
+    /// Returns what [`Conversation::edit_octets`] returns.
+    pub fn edit_octets(
+        &mut self,
+        document: &str,
+        octets_before: &[u8],
+        octets_after: &[u8],
+    ) -> Result<Vec<Diagnostic>, BuildError> {
+        self.conversation
+            .edit_octets(document, octets_before, octets_after)
+    }
+
     // realises FR-109, FR-111
     /// Transmits a *store request*, as [`Conversation::store`].
     ///
@@ -663,7 +727,9 @@ fn connected(_child: &mut Child, _socket_path: &Path) -> Result<ServiceStream, B
 mod tests {
     use super::*;
 
-    use crate::core::api_message::{NodeKind, Position, ReadPosition, Severity, encode_response};
+    use crate::core::api_message::{
+        NodeKind, OctetDelta, Position, ReadPosition, Severity, encode_response,
+    };
 
     use std::io::Cursor;
 
@@ -988,6 +1054,123 @@ mod tests {
                 Some(4),
                 true
             )
+        );
+    }
+
+    #[test]
+    fn change_of_a_binary_document_is_an_edit_request_with_its_octet_delta() {
+        // FR-210
+        let stream = Scripted::answering(&[(1, diagnostics(0)), (2, diagnostics(1))]);
+        let mut conversation = Conversation::new(stream);
+        let _ = conversation.open_octets("in.bin", &[1, 2, 3]);
+        let result = conversation.edit_octets("in.bin", &[1, 2, 3], &[1, 9, 3]);
+        assert_eq!(
+            (
+                result,
+                conversation.stream.requests().get(1).cloned(),
+                conversation.documents.get("in.bin").copied()
+            ),
+            (
+                Ok(vec![]),
+                Some(encode_request(
+                    2,
+                    &Request::EditOctets {
+                        document: "in.bin".to_owned(),
+                        version: 0,
+                        deltas: vec![OctetDelta {
+                            start: 1,
+                            end: 2,
+                            replacement: vec![9],
+                        }],
+                    }
+                )),
+                Some(1)
+            )
+        );
+    }
+
+    #[test]
+    fn change_of_octets_of_a_document_not_opened_as_binary_opens_it_with_its_octets() {
+        // FR-210: not opened at all, and opened as a text document
+        let stream = Scripted::answering(&[
+            (1, diagnostics(0)),
+            (2, diagnostics(0)),
+            (3, diagnostics(1)),
+        ]);
+        let mut conversation = Conversation::new(stream);
+        let _ = conversation.edit_octets("a.bin", &[1], &[2]);
+        let _ = conversation.transmit("b.txt", "", &increment(0, 0, "x"), "x");
+        let _ = conversation.edit_octets("b.txt", b"x", &[0xff]);
+        let requests = conversation.stream.requests();
+        assert_eq!(
+            (requests.first().cloned(), requests.get(2).cloned()),
+            (
+                Some(encode_request(
+                    1,
+                    &Request::OpenOctets {
+                        document: "a.bin".to_owned(),
+                        octets: vec![2],
+                    }
+                )),
+                Some(encode_request(
+                    3,
+                    &Request::OpenOctets {
+                        document: "b.txt".to_owned(),
+                        octets: vec![0xff],
+                    }
+                ))
+            )
+        );
+    }
+
+    #[test]
+    fn version_mismatch_of_an_octet_edit_is_answered_by_an_open_request_with_the_octets() {
+        // FR-210
+        let stream = Scripted::answering(&[
+            (1, diagnostics(0)),
+            (2, Response::VersionMismatch { version: 7 }),
+            (3, diagnostics(8)),
+        ]);
+        let mut conversation = Conversation::new(stream);
+        let _ = conversation.open_octets("in.bin", &[1]);
+        let result = conversation.edit_octets("in.bin", &[1], &[2]);
+        assert_eq!(
+            (
+                result,
+                conversation.stream.requests().get(2).cloned(),
+                conversation.documents.get("in.bin").copied()
+            ),
+            (
+                Ok(vec![]),
+                Some(encode_request(
+                    3,
+                    &Request::OpenOctets {
+                        document: "in.bin".to_owned(),
+                        octets: vec![2],
+                    }
+                )),
+                Some(8)
+            )
+        );
+    }
+
+    #[test]
+    fn error_response_to_an_octet_edit_makes_the_next_change_open_again() {
+        // FR-210, FR-112
+        let stream = Scripted::answering(&[
+            (1, diagnostics(0)),
+            (2, Response::Error("refused".to_owned())),
+        ]);
+        let mut conversation = Conversation::new(stream);
+        let _ = conversation.open_octets("in.bin", &[1]);
+        let result = conversation.edit_octets("in.bin", &[1], &[2]);
+        assert_eq!(
+            (
+                result,
+                conversation.documents.contains_key("in.bin"),
+                conversation.binary_documents.contains("in.bin")
+            ),
+            (Err(BuildError::Refused("refused".to_owned())), false, false)
         );
     }
 

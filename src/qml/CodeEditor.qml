@@ -1,6 +1,6 @@
 // A code editor with line numbers, the highlight of the current line and of the occurrences of the selection,
-// the marks of the diagnostics, the editing keys, the two idle timers, and the presentation of the octets of
-// its document in hex and bin.
+// the marks of the diagnostics, the editing keys, the insert mode and the overwrite mode of typing, the two
+// idle timers, and the presentation and the editing of the octets of its document in hex and bin.
 //
 // Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 // Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -77,8 +77,16 @@ Frame {
                                                        textArea.x + cursor.x + cursor.width + root.characterWidth);
     }
 
+    // Yields whether the key is the insert key, which toggles the typing mode.
+    function toggledBy(event: KeyEvent): bool {
+        return Workbench.toggledByKey(event.key, event.modifiers);
+    }
+
     // Inserts a line break and the indentation of the line of the cursor in place of the selection.
     function breakLine(event: KeyEvent) {
+        if (root.toggledBy(event)) {
+            return;
+        }
         if (textArea.readOnly || (event.modifiers & ~Qt.KeypadModifier) !== Qt.NoModifier) {
             event.accepted = false;
             return;
@@ -212,6 +220,37 @@ Frame {
             selectByMouse: true
             tabStopDistance: root.tabSize * root.characterWidth
             background: null
+            // in the overwrite mode a character typed replaces the one at the cursor
+            overwriteMode: !textArea.readOnly && !Workbench.insertMode
+            cursorDelegate: Rectangle {
+                id: textCursor
+
+                // whether the cursor is in the shown half of its blinking
+                property bool shown: true
+
+                // the cursor of a text in the insert mode, a highlighted character in the overwrite mode
+                width: textArea.overwriteMode ? root.characterWidth : 1
+                color: textArea.overwriteMode ? root.palette.highlight : root.palette.text
+                opacity: textArea.overwriteMode ? 0.6 : 1
+                visible: textArea.cursorVisible && (textCursor.shown || textArea.overwriteMode)
+
+                Timer {
+                    id: textCursorTimer
+
+                    interval: 500
+                    repeat: true
+                    running: textArea.cursorVisible
+                    onTriggered: textCursor.shown = !textCursor.shown
+                }
+
+                Connections {
+                    target: textArea
+
+                    function onCursorPositionChanged() {
+                        textCursor.shown = true;
+                    }
+                }
+            }
             onTextChanged: {
                 idleTimer.restart();
                 longIdleTimer.restart();
@@ -223,6 +262,9 @@ Frame {
                 }
             }
             Keys.onTabPressed: event => {
+                if (root.toggledBy(event)) {
+                    return;
+                }
                 if (textArea.readOnly || event.modifiers !== Qt.NoModifier) {
                     event.accepted = false;
                     return;
@@ -233,6 +275,9 @@ Frame {
             Keys.onReturnPressed: event => root.breakLine(event)
             Keys.onEnterPressed: event => root.breakLine(event)
             Keys.onPressed: event => {
+                if (root.toggledBy(event)) {
+                    return;
+                }
                 if (event.key === Qt.Key_PageDown || event.key === Qt.Key_PageUp) {
                     root.movePage(event, event.key === Qt.Key_PageDown);
                 } else {
@@ -270,6 +315,12 @@ Frame {
         mode: root.mode === 2 ? 2 : 1
         marked: root.octetsMarked
         digitFont: textArea.font
+        editable: !textArea.readOnly
+        // an edit of a digit restarts the two timers as an edit of the text does
+        onEdited: {
+            idleTimer.restart();
+            longIdleTimer.restart();
+        }
     }
 
     Timer {

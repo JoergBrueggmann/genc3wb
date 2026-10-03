@@ -10,6 +10,24 @@ and this project adheres to a four-part version number.
 
 ## [Unreleased]
 
+## [0.15.0.0] - 2026-10-03
+
+**_Editing_in_hex_and_bin_**
+
+Leading work item: definition 0.11.0.0
+
+- Edit an *input* in hex and bin *digit* by *digit*, as the definition 0.11.0.0 states: the nibble in hex and the bit in bin; Backspace removes the *digit* before the cursor and Delete the one at it, the *digits* behind moving toward the start; a *digit* typed at the end fills a *placeholder* or begins a new octet. The *placeholders* of the last octet are shown as `_`, are worth 0 in the octets, and become `0` when the *long idle time* expires. The *output pages* stay read-only.
+- Add the insert mode and the overwrite mode of typing, one for the whole of *product*, in txt as well: toggled by the *insert key* and by the item of the menu 'Edit', and shown as `Insert` or `Overwrite` at the bottom of the main window, of the *node window* and of every *detached window* of an *input group*. The cursor is that of a text in the insert mode and a highlighted *digit* or character in the overwrite mode, and a highlighted *placeholder* before a *placeholder*.
+- Add the dialog 'Insert key...' of the settings menu, which records a key stroke with its modifier keys; the *insert key* is stored in the *settings file* by its name under `insert_key`, and is Enter (fn + Return) on MacOS and Insert elsewhere by default. The Enter key of the keypad therefore toggles the *typing mode* on MacOS and no longer breaks the line; the Return key does.
+- Move the cursor of hex and bin by the arrow keys, Home, End, Page Up and Page Down and by a click; select *digits* with the Shift key and by dragging, select all, copy, cut and paste them as text, and undo and redo the edits, up to 1000.
+- Transmit a change of a *binary document* to the *node* by an edit request carrying the *octet delta*, where the whole octets were transmitted before.
+- Bind the text of a code editor in txt alone, so that an edit of a *digit* of a large document lays out no text.
+- Add the components `crate::core::octet_edit` and `crate::core::key_stroke` and the QML components 'TypingModeLabel.qml' and 'InsertKeyDialog.qml'.
+- Raise the version in 'Cargo.toml' to 0.15.0; the README describes the editing, the *typing mode* and the *insert key*.
+- The 301 unit tests pass, one of them against the bound of 200 milliseconds for an edit of 1 megabyte; the four tests of the build system pass against the *service executable* of the distribution folder of genc³ 0.28.2.0, one of them editing a *binary document* by *octet deltas*; 'make-dist.sh' builds the distribution folder with it.
+- A new capability: a minor bump to 0.15.0.0.
+
+
 ## [0.14.0.0] - 2026-10-02
 
 **_Editor_columns_in_hex_and_bin_**

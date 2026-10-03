@@ -8,6 +8,7 @@ use crate::bridge::network_editor::NetworkEditor;
 use crate::bridge::node_editor::NodeEditor;
 use crate::bridge::output_group::OutputGroup;
 use crate::core::input_file::InputKind;
+use crate::core::key_stroke::KeyStroke;
 use crate::core::settings::{Settings, tab_size_violation, times_of_processing};
 
 use qtbridge::{QObjectHolder, qobject};
@@ -15,7 +16,7 @@ use qtbridge::{QObjectHolder, qobject};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-// realises FR-001, FR-063, FR-090, FR-095, FR-099, FR-140, FR-141, FR-149
+// realises FR-001, FR-063, FR-090, FR-095, FR-099, FR-140, FR-141, FR-149, FR-192
 /// The *workbench object*.
 pub struct Workbench {
     /// the settings, shared with the groups
@@ -28,6 +29,8 @@ pub struct Workbench {
     network_input: Rc<RefCell<InputGroup>>,
     /// the group for the *network graph*
     network: Rc<RefCell<NetworkEditor>>,
+    /// the *typing mode*: whether typing inserts, and overwrites otherwise (FR-192)
+    insert_mode: bool,
 }
 
 impl Default for Workbench {
@@ -63,11 +66,13 @@ impl Default for Workbench {
             node,
             network_input,
             network,
+            insert_mode: true,
         }
     }
 }
 
-// realises FR-001, FR-063, FR-095, FR-099, FR-130 to FR-135, FR-140, FR-141, FR-146 to FR-149
+// realises FR-001, FR-063, FR-095, FR-099, FR-130 to FR-135, FR-140, FR-141, FR-146 to FR-149,
+// FR-192 to FR-194, FR-198 to FR-200
 #[qobject(Singleton)]
 impl Workbench {
     qproperty!("output", Read = output, Constant);
@@ -81,6 +86,19 @@ impl Workbench {
         Notify = times_changed
     );
     qproperty!("automatic", Read = automatic, Notify = times_changed);
+    // the typing mode: whether typing inserts, and overwrites otherwise (FR-192)
+    qproperty!(
+        "insertMode",
+        Read = insert_mode,
+        Write = set_insert_mode,
+        Notify = insert_mode_changed
+    );
+    // the name of the insert key (FR-198, FR-199)
+    qproperty!(
+        "insertKeyName",
+        Read = insert_key_name,
+        Notify = insert_key_changed
+    );
     // the tab size in characters (FR-140, FR-142)
     qproperty!("tabSize", Read = tab_size, Notify = tab_size_changed);
     // the positions of the splitters in pixels: the size of the left or upper part (FR-149)
@@ -114,6 +132,26 @@ impl Workbench {
 
     fn network(&self) -> Rc<RefCell<NetworkEditor>> {
         Rc::clone(&self.network)
+    }
+
+    // realises FR-192
+    fn insert_mode(&self) -> bool {
+        self.insert_mode
+    }
+
+    // realises FR-198, FR-199
+    fn insert_key_name(&self) -> String {
+        self.settings.borrow().insert_key().name()
+    }
+
+    // realises FR-192, FR-194
+    // Sets the typing mode and emits `insert_mode_changed` where it changed.
+    fn set_insert_mode(&mut self, insert_mode: bool) {
+        if insert_mode == self.insert_mode {
+            return;
+        }
+        self.insert_mode = insert_mode;
+        self.insert_mode_changed();
     }
 
     // realises FR-093, FR-095
@@ -163,6 +201,58 @@ impl Workbench {
 
     #[qsignal(qml_name = "settingsRejected")]
     fn settings_rejected(&mut self, message: String);
+
+    #[qsignal(qml_name = "insertModeChanged")]
+    fn insert_mode_changed(&mut self);
+
+    #[qsignal(qml_name = "insertKeyChanged")]
+    fn insert_key_changed(&mut self);
+
+    // realises FR-193
+    /// Toggles the *typing mode* where the key event of `key` with `modifiers` is the insert
+    /// key, and yields whether it is.
+    #[qslot(qml_name = "toggledByKey")]
+    fn toggled_by_key(&mut self, key: i32, modifiers: i32) -> bool {
+        let toggled = self
+            .settings
+            .borrow()
+            .insert_key()
+            .matches(bits_of(key), bits_of(modifiers));
+        if toggled {
+            self.set_insert_mode(!self.insert_mode);
+        }
+        toggled
+    }
+
+    // realises FR-199
+    /// Yields the name of the key stroke of `key` with `modifiers`, as `KeyStroke::name` does;
+    /// empty where `key` is a modifier itself, which is no key stroke.
+    #[qslot(qml_name = "keyName")]
+    fn key_name(&self, key: i32, modifiers: i32) -> String {
+        if KeyStroke::is_modifier_key(bits_of(key)) {
+            return String::new();
+        }
+        KeyStroke::new(bits_of(key), bits_of(modifiers)).name()
+    }
+
+    // realises FR-199, FR-200
+    /// Takes the key stroke of `key` with `modifiers` as the insert key, stores the settings,
+    /// and emits `insert_key_changed`; a modifier itself is passed over.
+    #[qslot(qml_name = "setInsertKey")]
+    fn set_insert_key(&mut self, key: i32, modifiers: i32) {
+        if KeyStroke::is_modifier_key(bits_of(key)) {
+            return;
+        }
+        self.take_insert_key(KeyStroke::new(bits_of(key), bits_of(modifiers)));
+    }
+
+    // realises FR-198, FR-199
+    /// Takes the default insert key as the insert key, stores the settings, and emits
+    /// `insert_key_changed`.
+    #[qslot(qml_name = "resetInsertKey")]
+    fn reset_insert_key(&mut self) {
+        self.take_insert_key(KeyStroke::default_insert_key());
+    }
 
     // slots
     // realises FR-099, FR-100, FR-132, FR-133, FR-134, FR-135, FR-140, FR-141
@@ -291,8 +381,25 @@ impl Workbench {
         let _ = self.settings.borrow().save(&Settings::default_path());
     }
 
+    // realises FR-199, FR-200
+    /// Sets the insert key where it is another, stores the settings, and emits
+    /// `insert_key_changed`.
+    fn take_insert_key(&mut self, insert_key: KeyStroke) {
+        if insert_key == self.settings.borrow().insert_key() {
+            return;
+        }
+        self.settings.borrow_mut().set_insert_key(insert_key);
+        self.store();
+        self.insert_key_changed();
+    }
+
     /// Yields the settings the groups share.
     pub fn settings(&self) -> Rc<RefCell<Settings>> {
         Rc::clone(&self.settings)
     }
+}
+
+/// Yields `value`, a key code or the modifiers of a key event as QML carries them, as its bits.
+fn bits_of(value: i32) -> u32 {
+    u32::from_ne_bytes(value.to_ne_bytes())
 }

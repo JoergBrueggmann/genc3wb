@@ -172,12 +172,12 @@ const COMPLEMENT_META_DSL: &str = "syntax\n    root = 0xFF, octets, EOS\n    \
     generator complement input \"a.in\" output \"x.txt\" binary\n    root -> #2\n    \
     octets -> #1 ++ [#2] | -> [#1]\n    octet :: U8\n    octet -> fromInteger(255 - #1)\n";
 
-// FR-107, FR-109, FR-111, FR-167, FR-169, FR-170, IR-027, IR-028
+// FR-107, FR-109, FR-111, FR-167, FR-169, FR-170, FR-210, IR-027, IR-028
 // needs the service executable genc3d of genc³ 0.28.0.0 or later, named by the environment
 // variable GENC3D
 #[test]
 #[ignore]
-fn octets_are_served_as_a_binary_document_with_a_store_and_with_diagnostics_in_bits() {
+fn octets_are_served_as_a_binary_document_with_octet_deltas_stores_and_diagnostics_in_bits() {
     use genc3wb::core::api_message::bit_marks_of_diagnostics;
     use genc3wb::core::node_runner::{NodeRunner, NodeStart};
 
@@ -196,7 +196,10 @@ fn octets_are_served_as_a_binary_document_with_a_store_and_with_diagnostics_in_b
     let opened = runner.open_octets("a.in", &[0xff, 0x00, 0x80, 0xfe]);
     let stored = runner.store();
     let output = fs::read(directory.join("x.txt")).ok();
-    let faulty = runner.open_octets("a.in", &[0xff]);
+    let edited = runner.edit_octets("a.in", &[0xff, 0x00, 0x80, 0xfe], &[0xff, 0x00, 0x0f, 0xfe]);
+    let restored = runner.store();
+    let output_after_edit = fs::read(directory.join("x.txt")).ok();
+    let faulty = runner.edit_octets("a.in", &[0xff, 0x00, 0x0f, 0xfe], &[0xff]);
     let marks = faulty
         .as_ref()
         .map(|diagnostics| bit_marks_of_diagnostics(diagnostics));
@@ -213,6 +216,7 @@ fn octets_are_served_as_a_binary_document_with_a_store_and_with_diagnostics_in_b
             opened,
             stored,
             output,
+            (edited, restored, output_after_edit),
             faulty.as_ref().map(|diagnostics| has_error(diagnostics)),
             unmarked_in_txt,
             marks.map(|marks| marks.starts)
@@ -222,6 +226,7 @@ fn octets_are_served_as_a_binary_document_with_a_store_and_with_diagnostics_in_b
             Ok(vec![]),
             Ok(()),
             Some(vec![0xff, 0x7f, 0x01]),
+            (Ok(vec![]), Ok(()), Some(vec![0xff, 0xf0, 0x01])),
             Ok(true),
             Ok(true),
             Ok(vec![8])

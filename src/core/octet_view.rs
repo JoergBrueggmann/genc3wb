@@ -65,9 +65,20 @@ impl EditorMode {
         }
     }
 
+    // realises FR-178
+    /// Yields the number of bits of a digit of the mode: 4 in hex, the nibble, and 1 in bin, the
+    /// bit; 0 for txt, which has no digits.
+    pub fn digit_bits(self) -> usize {
+        match self {
+            EditorMode::Txt => 0,
+            EditorMode::Hex => 4,
+            EditorMode::Bin => 1,
+        }
+    }
+
     /// Yields the number of character columns one octet takes in a row of the mode, the space
     /// that separates it from the next one included; 0 for txt.
-    fn octet_pitch(self) -> usize {
+    pub(crate) fn octet_pitch(self) -> usize {
         match self {
             EditorMode::Txt => 0,
             EditorMode::Hex => 3,
@@ -240,17 +251,44 @@ pub fn column_header(mode: EditorMode, octets_per_row: usize) -> String {
 ///
 /// * A row beyond the last one, and every row of txt, is empty.
 pub fn row_text(octets: &[u8], row: usize, mode: EditorMode, octets_per_row: usize) -> String {
-    if mode == EditorMode::Txt {
+    row_text_of_bits(octets, 8 * octets.len(), row, mode, octets_per_row)
+}
+
+// realises FR-158, FR-159, FR-179
+/// Yields the text of a row as [`row_text`] does, for octets of which the first `bits` bits are
+/// digits of the document: a digit that begins at or behind the bit `bits` is a placeholder
+/// and is written as `_`.
+pub fn row_text_of_bits(
+    octets: &[u8],
+    bits: usize,
+    row: usize,
+    mode: EditorMode,
+    octets_per_row: usize,
+) -> String {
+    let unit = mode.digit_bits();
+    if unit == 0 {
         return String::new();
     }
     let start = row.saturating_mul(octets_per_row).min(octets.len());
     let end = start.saturating_add(octets_per_row).min(octets.len());
-    octets[start..end]
-        .iter()
-        .map(|octet| match mode {
-            EditorMode::Txt => String::new(),
-            EditorMode::Hex => format!("{octet:02X}"),
-            EditorMode::Bin => format!("{octet:08b}"),
+    (start..end)
+        .map(|index| {
+            let digits = match mode {
+                EditorMode::Txt => String::new(),
+                EditorMode::Hex => format!("{:02X}", octets[index]),
+                EditorMode::Bin => format!("{:08b}", octets[index]),
+            };
+            digits
+                .chars()
+                .enumerate()
+                .map(|(digit, character)| {
+                    if 8 * index + digit * unit >= bits {
+                        '_'
+                    } else {
+                        character
+                    }
+                })
+                .collect::<String>()
         })
         .collect::<Vec<String>>()
         .join(" ")
@@ -617,6 +655,39 @@ mod tests {
                 "00001010 00001101 01000100 01100101".to_owned(),
                 "10000000".to_owned()
             )
+        );
+    }
+
+    #[test]
+    fn a_digit_behind_the_bits_of_the_document_is_written_as_a_placeholder() {
+        // FR-179: 12 bits and 13 bits in two octets
+        let octets = [0x12, 0xa0];
+        assert_eq!(
+            (
+                row_text_of_bits(&octets, 12, 0, EditorMode::Hex, 16),
+                row_text_of_bits(&octets, 13, 0, EditorMode::Hex, 16),
+                row_text_of_bits(&octets, 13, 0, EditorMode::Bin, 4),
+                row_text_of_bits(&octets, 16, 0, EditorMode::Hex, 16)
+            ),
+            (
+                "12 A_".to_owned(),
+                "12 A0".to_owned(),
+                "00010010 10100___".to_owned(),
+                "12 A0".to_owned()
+            )
+        );
+    }
+
+    #[test]
+    fn a_digit_has_four_bits_in_hex_and_one_in_bin() {
+        // FR-178
+        assert_eq!(
+            (
+                EditorMode::Txt.digit_bits(),
+                EditorMode::Hex.digit_bits(),
+                EditorMode::Bin.digit_bits()
+            ),
+            (0, 4, 1)
         );
     }
 

@@ -4,6 +4,8 @@
 //! Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 //! Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
 
+use crate::core::key_stroke::KeyStroke;
+
 use serde::{Deserialize, Serialize};
 
 use std::fmt;
@@ -109,6 +111,8 @@ pub struct Settings {
     network_path: String,
     /// the path of the *build system*
     build_system_path: String,
+    /// the insert key, which toggles the *typing mode* (FR-193)
+    insert_key: KeyStroke,
 }
 
 impl Default for Settings {
@@ -127,6 +131,7 @@ impl Default for Settings {
             network_left_width: DEFAULT_NETWORK_LEFT_WIDTH,
             network_path: String::new(),
             build_system_path: DEFAULT_BUILD_SYSTEM_PATH.to_owned(),
+            insert_key: KeyStroke::default_insert_key(),
         }
     }
 }
@@ -161,6 +166,9 @@ struct Stored {
     network_path: String,
     #[serde(default = "default_build_system_path")]
     build_system_path: String,
+    /// the name of the insert key, as `KeyStroke::name` yields it
+    #[serde(default = "default_insert_key")]
+    insert_key: String,
 }
 
 /// The default of the key `idle_time`, for a *settings file* that lacks it.
@@ -258,6 +266,11 @@ pub fn times_of_processing(processing_time: u32) -> (u32, u32) {
     (idle_time, idle_time.saturating_mul(8))
 }
 
+/// The default of the key `insert_key`, for a *settings file* that lacks it.
+fn default_insert_key() -> String {
+    KeyStroke::default_insert_key().name()
+}
+
 /// The default of the key `build_system_path`, for a *settings file* that lacks it.
 fn default_build_system_path() -> String {
     DEFAULT_BUILD_SYSTEM_PATH.to_owned()
@@ -306,6 +319,8 @@ impl Settings {
             network_left_width: clamped(stored.network_left_width, 0, u32::MAX),
             network_path: stored.network_path,
             build_system_path: stored.build_system_path,
+            insert_key: KeyStroke::of_name(&stored.insert_key)
+                .unwrap_or_else(KeyStroke::default_insert_key),
         })
     }
 
@@ -330,6 +345,7 @@ impl Settings {
             network_left_width: i64::from(self.network_left_width),
             network_path: self.network_path.clone(),
             build_system_path: self.build_system_path.clone(),
+            insert_key: self.insert_key.name(),
         };
         let content = serde_norway::to_string(&stored)
             .map_err(|error| SettingsError::Malformed(error.to_string()))?;
@@ -453,6 +469,18 @@ impl Settings {
     pub fn set_build_system_path(&mut self, path: &str) {
         self.build_system_path = path.to_owned();
     }
+
+    // realises FR-198, FR-200
+    /// Yields the insert key.
+    pub fn insert_key(&self) -> KeyStroke {
+        self.insert_key
+    }
+
+    // realises FR-199, FR-200
+    /// Sets the insert key.
+    pub fn set_insert_key(&mut self, insert_key: KeyStroke) {
+        self.insert_key = insert_key;
+    }
 }
 
 /*  * validated        : ✅
@@ -535,6 +563,51 @@ mod tests {
                 loaded
             ),
             (Ok(()), true, true, true, Ok(settings))
+        );
+    }
+
+    #[test]
+    fn the_insert_key_is_stored_by_its_name_and_restored() {
+        // FR-199, FR-200
+        let dir = std::env::temp_dir().join(format!(
+            "genc3wb-settings-insert-key-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        let path = dir.join(SETTINGS_FILE_NAME);
+        let mut settings = Settings::default();
+        settings.set_insert_key(KeyStroke::new(u32::from('I'), 0x0400_0000));
+        let saved = settings.save(&path);
+        let content = fs::read_to_string(&path).unwrap_or_default();
+        let restored = Settings::load(&path).map(|settings| settings.insert_key().name());
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(
+            (saved, content.contains("insert_key: Ctrl+I"), restored),
+            (Ok(()), true, Ok("Ctrl+I".to_owned()))
+        );
+    }
+
+    #[test]
+    fn an_insert_key_that_is_no_name_or_absent_takes_the_default() {
+        // FR-198, FR-200
+        let dir = std::env::temp_dir().join(format!(
+            "genc3wb-settings-insert-key-default-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("the directory can be created");
+        let path = dir.join(SETTINGS_FILE_NAME);
+        fs::write(&path, "insert_key: Hyper+Nothing\n").expect("the file can be written");
+        let unknown = Settings::load(&path).map(|settings| settings.insert_key());
+        fs::write(&path, "tab_size: 4\n").expect("the file can be written");
+        let absent = Settings::load(&path).map(|settings| settings.insert_key());
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(
+            (unknown, absent),
+            (
+                Ok(KeyStroke::default_insert_key()),
+                Ok(KeyStroke::default_insert_key())
+            )
         );
     }
 

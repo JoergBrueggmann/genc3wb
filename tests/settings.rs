@@ -21,9 +21,9 @@ use std::fs;
 
 #[test]
 fn the_paths_of_the_compiler_network_editor_are_restored_and_no_path_of_the_node_window() {
-    // FR-090, FR-091, FR-093, FR-094, FR-140, FR-149, IR-011, IR-012: the settings file holds the
-    // two times, the automatic setting, the tab size, the positions of the three splitters, the
-    // network file and the build system, and nothing else
+    // FR-090, FR-091, FR-093, FR-094, FR-140, FR-149, FR-200, IR-011, IR-012: the settings file
+    // holds the two times, the automatic setting, the tab size, the positions of the three
+    // splitters, the network file, the build system and the insert key, and nothing else
     let dir = std::env::temp_dir().join(format!("genc3wb-settings-session-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     let file = dir.join(SETTINGS_FILE_NAME);
@@ -58,7 +58,7 @@ fn the_paths_of_the_compiler_network_editor_are_restored_and_no_path_of_the_node
             restored.network_left_width()
         ),
         (
-            9,
+            10,
             "/tmp/n.gc3n",
             DEFAULT_BUILD_SYSTEM_PATH,
             4200,

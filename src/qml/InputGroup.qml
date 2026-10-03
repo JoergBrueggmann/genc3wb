@@ -89,11 +89,16 @@ GroupBox {
 
             Layout.fillWidth: true
             Layout.fillHeight: true
-            text: root.group.text
+            // the text is bound in txt alone, so that an edit in hex or bin does not lay it out anew
+            text: editor.mode === 0 ? root.group.text : ""
             idleTime: Workbench.idleTime
             longIdleTime: Workbench.longIdleTime
             tabSize: Workbench.tabSize
-            onTextEdited: root.group.text = editor.text
+            onTextEdited: {
+                if (editor.mode === 0) {
+                    root.group.text = editor.text;
+                }
+            }
             onIdleExpired: root.group.idleExpired()
             onLongIdleExpired: root.group.longIdleExpired()
             markStarts: root.group.diagnosticStarts

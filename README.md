@@ -16,10 +16,23 @@ UTF-8, with the replacement character U+FFFD for every octet that is no
 character, `hex` shows them as hexadecimal digits, and `bin` as binary digits,
 as many octets per row as the width of the editor holds: 16, 32 or 64 in `hex`,
 4, 8, 16 or 32 in `bin`. The switch starts at `txt` for a text and at
-`hex` for other octets. In this version `hex` and `bin` are read-only, and an
-edit in `txt` replaces the octets by the UTF-8 encoding of the text. An input
-that is no valid UTF-8 is served as a binary document, and a diagnostic is
-marked in `hex` and `bin` by its bit offset.
+`hex` for other octets. An edit in `txt` replaces the octets by the UTF-8
+encoding of the text. An input that is no valid UTF-8 is served as a binary
+document, and a diagnostic is marked in `hex` and `bin` by its bit offset.
+
+An input is edited in `hex` and `bin` digit by digit, the nibble in `hex` and
+the bit in `bin`. Backspace removes the digit before the cursor and Delete the
+one at it, the digits behind moving toward the start. The digits that pad the
+last octet are placeholders, shown as `_` and worth 0, until they are
+overwritten or the long idle time expires. Digits are selected with Shift and
+the movement keys or by dragging, copied, cut and pasted as text, and edits are
+undone and redone. The outputs stay read-only.
+
+Typing inserts or overwrites, in `txt`, `hex` and `bin` alike. The typing mode
+is toggled by the insert key and by the menu `Edit`, and is shown at the bottom
+of every window with an editor. The insert key is fn + Return (Enter) on macOS
+and Insert elsewhere; `Settings > Insert key...` records another one, which is
+stored in `genc3wb.yaml` as `insert_key`.
 
 NOTE: Portions of this project's code and documentation were developed with AI
 assistance (Claude), under the author's direction, review, and authorisation.
@@ -210,7 +223,7 @@ working directory is the root of the distribution, so the file lies there.
 
 The file is YAML and holds the idle time and the long idle time in seconds
 with one decimal, whether the times are set automatically, the path of the
-network file and the path of the build system. The node window names nothing of
+network file, the path of the build system and the insert key. The node window names nothing of
 its own: the meta compiler DSL, the inputs and the outputs of a node are taken
 from the network file when the node is opened. Where the file does not exist,
 the idle time is 2 seconds, the long idle time 16 seconds, the automatic setting

@@ -5,7 +5,8 @@
 
 use crate::core::api_message::Marks;
 use crate::core::input_file::{InputFile, InputKind, ProcessingState};
-use crate::core::octet_view::{EditorMode, row_count, row_segments, row_text};
+use crate::core::octet_edit::{digits_of_text, text_of_digits};
+use crate::core::octet_view::{EditorMode, row_count, row_segments, row_text_of_bits};
 use crate::core::settings::Settings;
 use crate::core::text_increment::IncrementTracker;
 
@@ -71,7 +72,7 @@ impl Default for InputGroup {
 
 // realises FR-007, FR-011 to FR-017, FR-056, FR-059, FR-069, FR-083, FR-086, FR-087, FR-106,
 // FR-107, FR-108, FR-113, FR-114, FR-116, FR-126, FR-127, FR-128, FR-154, FR-156 to FR-159,
-// FR-163 to FR-173, FR-175
+// FR-163 to FR-173, FR-175, FR-177, FR-179 to FR-187, FR-202, FR-203, FR-205, FR-207, FR-208
 #[qobject(NoQmlElement)]
 impl InputGroup {
     qproperty!("caption", Read = caption, Constant);
@@ -81,6 +82,7 @@ impl InputGroup {
     qproperty!("isText", Read = is_text, Notify = text_changed);
     qproperty!("revision", Read = revision, Notify = text_changed);
     qproperty!("octetCount", Read = octet_count, Notify = text_changed);
+    qproperty!("bitCount", Read = bit_count, Notify = text_changed);
     qproperty!(
         "octetMarkSeverities",
         Read = octet_mark_severities,
@@ -155,6 +157,11 @@ impl InputGroup {
     // realises FR-173, FR-175
     fn octet_count(&self) -> i32 {
         int_of(self.file.octets().len())
+    }
+
+    // realises FR-179
+    fn bit_count(&self) -> i32 {
+        int_of(self.file.bit_count())
     }
 
     // realises FR-169, FR-170
@@ -307,14 +314,72 @@ impl InputGroup {
         }
     }
 
-    // realises FR-083
+    // realises FR-083, FR-185
     /// Schedules `longIdleExpired` of the network editor, for the *network file* alone: the text
-    /// was not modified for the *long idle time*.
+    /// was not modified for the *long idle time*; and takes every placeholder of the document
+    /// as a digit 0, emitting `text_changed` where there was one.
     #[qslot(qml_name = "longIdleExpired")]
     fn long_idle_expired(&mut self) {
         if let (Some(receiver), InputKind::Network) = (&self.receiver, self.file.kind()) {
             invoke_method!(receiver, "longIdleExpired");
         }
+        if self.file.complete_placeholders() {
+            self.announce_text();
+        }
+    }
+
+    // realises FR-177, FR-180 to FR-184, FR-186, FR-187, FR-203, FR-205
+    /// Replaces `removed` digits from the digit `start` on by the digits `text` holds in the
+    /// *editor mode* of index `mode`, as `InputFile::replace_digits` does, records that the
+    /// document was edited, and announces the text and the *processing state*; yields the digit
+    /// behind the digits inserted, and -1 where nothing was replaced: for a text that holds
+    /// another character than digits of the mode, for nothing replaced by nothing, for an index
+    /// that names no mode, and for a group whose code editor has no *mode switch*.
+    #[qslot(qml_name = "replaceDigits")]
+    fn replace_digits(&mut self, mode: i32, start: i32, removed: i32, text: String) -> i32 {
+        let replaced = mode_of(mode)
+            .filter(|_| self.octet_modes())
+            .and_then(|mode| digits_of_text(&text, mode).map(|digits| (mode, digits)))
+            .and_then(|(mode, digits)| {
+                self.file
+                    .replace_digits(mode, count_of(start), count_of(removed), &digits)
+            });
+        self.announce_edit(replaced.is_some());
+        replaced.map_or(-1, int_of)
+    }
+
+    // realises FR-207
+    /// Takes the last edit made in hex or bin back, as `InputFile::undo` does; yields the digit
+    /// of the *editor mode* of index `mode` behind what was restored, -1 where no edit is made.
+    #[qslot(qml_name = "undo")]
+    fn undo(&mut self, mode: i32) -> i32 {
+        let cursor = self.file.undo();
+        self.announce_edit(cursor.is_some());
+        digit_of_bit(cursor, mode)
+    }
+
+    // realises FR-208
+    /// Makes the edit taken back last again, as `InputFile::redo` does; yields the digit of the
+    /// *editor mode* of index `mode` behind what was inserted, -1 where no edit is taken back.
+    #[qslot(qml_name = "redo")]
+    fn redo(&mut self, mode: i32) -> i32 {
+        let cursor = self.file.redo();
+        self.announce_edit(cursor.is_some());
+        digit_of_bit(cursor, mode)
+    }
+
+    // realises FR-202
+    /// Yields the digits from the digit `start` to the digit `end`, exclusive, of the
+    /// *editor mode* of index `mode` as text, as `text_of_digits` does; empty for an index that
+    /// names no mode.
+    #[qslot(qml_name = "digitsText")]
+    fn digits_text(&self, mode: i32, start: i32, end: i32) -> String {
+        mode_of(mode).map_or_else(String::new, |mode| {
+            text_of_digits(
+                &self.file.digits(mode, count_of(start), count_of(end)),
+                mode,
+            )
+        })
     }
 
     // realises FR-086, FR-087, FR-113, FR-114
@@ -350,7 +415,13 @@ impl InputGroup {
     #[qslot(qml_name = "rowText")]
     fn row_text(&self, mode: i32, per_row: i32, row: i32) -> String {
         match (mode_of(mode), usize::try_from(row)) {
-            (Some(mode), Ok(row)) => row_text(self.file.octets(), row, mode, count_of(per_row)),
+            (Some(mode), Ok(row)) => row_text_of_bits(
+                self.file.octets(),
+                self.file.bit_count(),
+                row,
+                mode,
+                count_of(per_row),
+            ),
             (None, _) | (_, Err(_)) => String::new(),
         }
     }
@@ -481,6 +552,19 @@ impl InputGroup {
         }
     }
 
+    // realises FR-019, FR-021, FR-113
+    /// Announces an edit made in hex or bin, where `edited`: records that the document was
+    /// edited, and announces the text and the *processing state*.
+    fn announce_edit(&mut self, edited: bool) {
+        if !edited {
+            return;
+        }
+        let temporary_before = self.temporary_edit();
+        self.edited_since_named = true;
+        self.announce_text();
+        self.announce_state(temporary_before != self.temporary_edit());
+    }
+
     /// Counts the change of the octets and emits `text_changed`.
     fn announce_text(&mut self) {
         self.revision = self.revision.wrapping_add(1);
@@ -558,6 +642,16 @@ impl InputGroup {
 /// Yields the *editor mode* of the index `mode`, `None` where the index names none.
 fn mode_of(mode: i32) -> Option<EditorMode> {
     usize::try_from(mode).ok().and_then(EditorMode::of_index)
+}
+
+/// Yields the digit of the *editor mode* of index `mode` that begins at the bit `bit`; -1 where
+/// there is no bit, and for an index that names no mode or names txt.
+fn digit_of_bit(bit: Option<usize>, mode: i32) -> i32 {
+    let unit = mode_of(mode).map_or(0, EditorMode::digit_bits);
+    match (bit, unit) {
+        (None, _) | (_, 0) => -1,
+        (Some(bit), unit) => int_of(bit / unit),
+    }
 }
 
 /// Yields `value` as a count; 0 where it is negative.

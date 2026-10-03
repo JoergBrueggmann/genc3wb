@@ -54,11 +54,16 @@ Window {
 
             Layout.fillWidth: true
             Layout.fillHeight: true
-            text: editorWindow.group.text
+            // the text is bound in txt alone, so that an edit in hex or bin does not lay it out anew
+            text: editor.mode === 0 ? editorWindow.group.text : ""
             idleTime: Workbench.idleTime
             longIdleTime: Workbench.longIdleTime
             tabSize: Workbench.tabSize
-            onTextEdited: editorWindow.group.text = editor.text
+            onTextEdited: {
+                if (editor.mode === 0) {
+                    editorWindow.group.text = editor.text;
+                }
+            }
             onIdleExpired: editorWindow.group.idleExpired()
             onLongIdleExpired: editorWindow.group.longIdleExpired()
             markStarts: editorWindow.group.diagnosticStarts
@@ -68,6 +73,12 @@ Window {
             mode: editorWindow.group.octetModes ? modeSwitch.mode : 0
             octets: editorWindow.group
             octetsMarked: true
+        }
+
+        TypingModeLabel {
+            id: typingModeLabel
+
+            Layout.alignment: Qt.AlignRight
         }
     }
 

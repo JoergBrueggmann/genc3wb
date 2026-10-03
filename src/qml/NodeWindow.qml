@@ -197,14 +197,23 @@ Window {
             }
         }
 
-        Label {
-            id: statusLine
+        RowLayout {
+            id: statusRow
 
-            text: Workbench.node.status.length > 0
-                  ? Workbench.node.status
-                  : !Workbench.node.served
-                    ? qsTr("The node is not served.")
-                    : Workbench.node.busy ? qsTr("The node is processing.") : qsTr("The node is served.")
+            Label {
+                id: statusLine
+
+                Layout.fillWidth: true
+                text: Workbench.node.status.length > 0
+                      ? Workbench.node.status
+                      : !Workbench.node.served
+                        ? qsTr("The node is not served.")
+                        : Workbench.node.busy ? qsTr("The node is processing.") : qsTr("The node is served.")
+            }
+
+            TypingModeLabel {
+                id: typingModeLabel
+            }
         }
     }
 

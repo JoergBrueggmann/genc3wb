@@ -5,7 +5,8 @@
 //! Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
 
 use crate::core::editing::text_area_form;
-use crate::core::octet_view::{is_utf8, text_of_octets};
+use crate::core::octet_edit::{Bits, History, applied, replacement};
+use crate::core::octet_view::{EditorMode, is_utf8, text_of_octets};
 
 use std::fmt;
 use std::fs;
@@ -130,8 +131,10 @@ pub struct InputFile {
     kind: InputKind,
     /// the path named in the file name field, empty where none is named
     path: String,
-    /// the octets of the document
-    octets: Vec<u8>,
+    /// the octets of the document, and how many of their bits are digits of it (FR-179)
+    bits: Bits,
+    /// the *edit history* of the edits made in hex and bin (FR-207)
+    history: History,
     /// the octets read as UTF-8 (FR-157)
     text: String,
     /// the *file octets*, `None` where it is not established that the file exists
@@ -146,7 +149,8 @@ impl InputFile {
         InputFile {
             kind,
             path: String::new(),
-            octets: Vec::new(),
+            bits: Bits::default(),
+            history: History::default(),
             text: String::new(),
             file_octets: None,
             edited_since_unknown: false,
@@ -172,13 +176,20 @@ impl InputFile {
     // realises FR-163
     /// Yields the octets of the document.
     pub fn octets(&self) -> &[u8] {
-        &self.octets
+        self.bits.octets()
+    }
+
+    // realises FR-179
+    /// Yields the number of bits of the octets that are digits of the document; the bits of the
+    /// last octet behind them are placeholders.
+    pub fn bit_count(&self) -> usize {
+        self.bits.len()
     }
 
     // realises FR-156, FR-167
     /// Yields whether the octets of the document are valid UTF-8.
     pub fn is_text(&self) -> bool {
-        is_utf8(&self.octets)
+        is_utf8(self.bits.octets())
     }
 
     // realises FR-013, FR-015, FR-163, FR-164, IR-009
@@ -217,7 +228,8 @@ impl InputFile {
         }
         self.text = text_of_octets(&octets);
         self.file_octets = Some(octets.clone());
-        self.octets = octets;
+        self.bits = Bits::of_octets(octets);
+        self.history.clear();
         Ok(true)
     }
 
@@ -226,7 +238,7 @@ impl InputFile {
     /// unknown.
     pub fn has_unsaved_changes(&self) -> bool {
         match &self.file_octets {
-            Some(file_octets) => self.octets != *file_octets,
+            Some(file_octets) => self.bits.octets() != file_octets.as_slice(),
             None => self.edited_since_unknown,
         }
     }
@@ -242,11 +254,85 @@ impl InputFile {
             return false;
         }
         self.text = text.to_owned();
-        self.octets = text.as_bytes().to_vec();
+        self.bits = Bits::of_octets(text.as_bytes().to_vec());
+        self.history.clear();
         if self.file_octets.is_none() {
             self.edited_since_unknown = true;
         }
         true
+    }
+
+    // realises FR-177, FR-180 to FR-184, FR-187, FR-205, FR-207
+    /// Replaces `removed` digits of `mode` from the digit `start` on by `digits`, as
+    /// [`replacement`] does, and records the step in the *edit history*; yields the digit behind
+    /// the digits inserted, `None` where nothing is replaced by nothing, and for txt.
+    pub fn replace_digits(
+        &mut self,
+        mode: EditorMode,
+        start: usize,
+        removed: usize,
+        digits: &[u8],
+    ) -> Option<usize> {
+        let unit = mode.digit_bits();
+        if unit == 0 {
+            return None;
+        }
+        let step = replacement(&self.bits, unit, start, removed, digits);
+        let cursor = step
+            .last()
+            .map(|edit| (edit.start + edit.inserted.len()) / unit)?;
+        self.take_bits(applied(&self.bits, &step));
+        self.history.record(step);
+        Some(cursor)
+    }
+
+    // realises FR-207
+    /// Takes the last step of the *edit history* back; yields the bit behind what it restored,
+    /// `None` where no step is made.
+    pub fn undo(&mut self) -> Option<usize> {
+        let (bits, cursor) = self.history.undo(&self.bits)?;
+        self.take_bits(bits);
+        Some(cursor)
+    }
+
+    // realises FR-208
+    /// Makes the step taken back last again; yields the bit behind what it inserted, `None`
+    /// where no step is taken back.
+    pub fn redo(&mut self) -> Option<usize> {
+        let (bits, cursor) = self.history.redo(&self.bits)?;
+        self.take_bits(bits);
+        Some(cursor)
+    }
+
+    // realises FR-185
+    /// Takes every placeholder as a digit 0; yields whether there was one.
+    ///
+    /// * The octets stay as they are, the placeholders being 0 already.
+    pub fn complete_placeholders(&mut self) -> bool {
+        if self.bits.padding() == 0 {
+            return false;
+        }
+        self.bits = self.bits.completed();
+        true
+    }
+
+    // realises FR-202
+    /// Yields the digits of `mode` from the digit `start` to the digit `end`, exclusive, as
+    /// their values; none for txt.
+    pub fn digits(&self, mode: EditorMode, start: usize, end: usize) -> Vec<u8> {
+        match mode.digit_bits() {
+            0 => Vec::new(),
+            unit => self.bits.digits(unit, start, end),
+        }
+    }
+
+    /// Takes `bits` as the document after an edit in hex or bin: the text becomes their reading.
+    fn take_bits(&mut self, bits: Bits) {
+        self.text = text_of_octets(bits.octets());
+        self.bits = bits;
+        if self.file_octets.is_none() {
+            self.edited_since_unknown = true;
+        }
     }
 
     // realises FR-016, IR-010
@@ -259,11 +345,11 @@ impl InputFile {
         if self.path.is_empty() {
             return Err(InputFileError::NoPath);
         }
-        fs::write(&self.path, &self.octets).map_err(|error| InputFileError::Io {
+        fs::write(&self.path, self.bits.octets()).map_err(|error| InputFileError::Io {
             path: self.path.clone(),
             reason: error.to_string(),
         })?;
-        self.file_octets = Some(self.octets.clone());
+        self.file_octets = Some(self.bits.octets().to_vec());
         self.edited_since_unknown = false;
         Ok(())
     }
@@ -286,7 +372,9 @@ impl InputFile {
  * edge cases       : ✅
  * conforms to doc  : ✅
  * covers bridge    : InputGroup::set_path, InputGroup::name_document, InputGroup::set_text, InputGroup::answer_save,
- *                    InputGroup::idle_expired, InputGroup::is_text */
+ *                    InputGroup::idle_expired, InputGroup::is_text, InputGroup::replace_digits,
+ *                    InputGroup::undo, InputGroup::redo, InputGroup::digits_text,
+ *                    InputGroup::long_idle_expired */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -449,6 +537,97 @@ mod tests {
                 "a\r\nb\u{00A0}c".as_bytes(),
                 ProcessingState::ValidFileTextUntouched
             )
+        );
+    }
+
+    #[test]
+    fn a_digit_typed_in_hex_changes_the_octets_the_text_and_the_state() {
+        // FR-177, FR-180, FR-182
+        let dir = CaseDir::new("digit");
+        let path = dir.path("a.bin");
+        fs::write(&path, [0x41, 0x42]).expect("the file can be written");
+        let mut file = InputFile::new(InputKind::Input);
+        file.load(&path).expect("the file can be loaded");
+        let cursor = file.replace_digits(EditorMode::Hex, 4, 0, &[4]);
+        assert_eq!(
+            (
+                cursor,
+                file.octets(),
+                file.bit_count(),
+                file.text(),
+                file.state()
+            ),
+            (
+                Some(5),
+                &[0x41, 0x42, 0x40][..],
+                20,
+                "AB@",
+                ProcessingState::ValidFileTextChanged
+            )
+        );
+    }
+
+    #[test]
+    fn an_edit_in_hex_is_taken_back_and_made_again() {
+        // FR-207, FR-208
+        let mut file = InputFile::new(InputKind::Input);
+        file.set_text("AB");
+        let _ = file.replace_digits(EditorMode::Hex, 1, 1, &[2]);
+        let edited = file.octets().to_vec();
+        let undone = (file.undo(), file.octets().to_vec());
+        let redone = (file.redo(), file.octets().to_vec(), file.redo());
+        assert_eq!(
+            (edited, undone, redone),
+            (
+                vec![0x42, 0x42],
+                (Some(8), vec![0x41, 0x42]),
+                (Some(8), vec![0x42, 0x42], None)
+            )
+        );
+    }
+
+    #[test]
+    fn an_edit_in_txt_and_a_load_forget_the_edit_history() {
+        // FR-209
+        let dir = CaseDir::new("forgotten");
+        let path = dir.path("a.bin");
+        fs::write(&path, [0x41]).expect("the file can be written");
+        let mut file = InputFile::new(InputKind::Input);
+        file.set_text("AB");
+        let _ = file.replace_digits(EditorMode::Hex, 0, 1, &[5]);
+        file.set_text("typed");
+        let after_text = file.undo();
+        let _ = file.replace_digits(EditorMode::Hex, 0, 1, &[5]);
+        file.load(&path).expect("the file can be loaded");
+        assert_eq!((after_text, file.undo()), (None, None));
+    }
+
+    #[test]
+    fn placeholders_are_completed_once_and_leave_the_octets() {
+        // FR-185
+        let mut file = InputFile::new(InputKind::Input);
+        let _ = file.replace_digits(EditorMode::Hex, 0, 0, &[0xa]);
+        let before = (file.bit_count(), file.octets().to_vec());
+        let completed = (file.complete_placeholders(), file.complete_placeholders());
+        assert_eq!(
+            (before, completed, file.bit_count(), file.octets()),
+            ((4, vec![0xa0]), (true, false), 8, &[0xa0][..])
+        );
+    }
+
+    #[test]
+    fn digits_of_a_span_are_read_in_the_mode_and_txt_has_none() {
+        // FR-202
+        let mut file = InputFile::new(InputKind::Input);
+        file.set_text("A");
+        assert_eq!(
+            (
+                file.digits(EditorMode::Hex, 0, 2),
+                file.digits(EditorMode::Bin, 0, 3),
+                file.digits(EditorMode::Txt, 0, 2),
+                file.replace_digits(EditorMode::Txt, 0, 0, &[1])
+            ),
+            (vec![4, 1], vec![0, 1, 0], vec![], None)
         );
     }
 

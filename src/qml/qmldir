@@ -7,6 +7,8 @@ DiagnosticMark 1.0 DiagnosticMark.qml
 WavyLine 1.0 WavyLine.qml
 ModeSwitch 1.0 ModeSwitch.qml
 OctetView 1.0 OctetView.qml
+TypingModeLabel 1.0 TypingModeLabel.qml
+InsertKeyDialog 1.0 InsertKeyDialog.qml
 ProcessingStateIndicator 1.0 ProcessingStateIndicator.qml
 OutputGroup 1.0 OutputGroup.qml
 OutputWindow 1.0 OutputWindow.qml

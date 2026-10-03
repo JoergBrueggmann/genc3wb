@@ -25,6 +25,7 @@ const KEY_DIAGNOSTICS: u64 = 11;
 const KEY_ERROR: u64 = 13;
 const KEY_NODES: u64 = 14;
 const KEY_OCTETS: u64 = 15;
+const KEY_OCTET_DELTAS: u64 = 16;
 
 /// The kinds of the *messages* *product* encodes and decodes.
 const KIND_OPEN: u64 = 1;
@@ -204,6 +205,19 @@ impl Diagnostic {
     }
 }
 
+// realises FR-210
+/// An *octet delta*: the span of the octets before it that `replacement` replaces
+/// (\[AD3\] IR-113).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OctetDelta {
+    /// the number of octets preceding the span
+    pub start: u64,
+    /// the number of octets preceding the end of the span
+    pub end: u64,
+    /// the octets replacing the span
+    pub replacement: Vec<u8>,
+}
+
 // realises IR-019, IR-027
 /// A *request* *product* transmits to the *build system* or to the *node*.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -218,6 +232,13 @@ pub enum Request {
         document: String,
         version: u64,
         deltas: Vec<EditDelta>,
+    },
+    /// an edit request of a *binary document*, carrying the *document version* it applies to
+    /// and its *octet deltas* (\[AD3\] IR-114)
+    EditOctets {
+        document: String,
+        version: u64,
+        deltas: Vec<OctetDelta>,
     },
     /// a *store request*, transmitted to the *node* alone
     Store,
@@ -397,6 +418,30 @@ pub fn marks_of_diagnostics(text: &str, diagnostics: &[Diagnostic]) -> Marks {
     }
 }
 
+// realises FR-210
+/// Derives the *octet delta* by which `before` becomes `after`: the span between the octets the
+/// two begin with alike and those they end with alike, and the octets of `after` in its place.
+///
+/// * Equal octets yield an empty span at their end with no replacement.
+pub fn octet_delta_between(before: &[u8], after: &[u8]) -> OctetDelta {
+    let prefix = before
+        .iter()
+        .zip(after)
+        .take_while(|(before, after)| before == after)
+        .count();
+    let suffix = before[prefix..]
+        .iter()
+        .rev()
+        .zip(after[prefix..].iter().rev())
+        .take_while(|(before, after)| before == after)
+        .count();
+    OctetDelta {
+        start: prefix as u64,
+        end: (before.len() - suffix) as u64,
+        replacement: after[prefix..after.len() - suffix].to_vec(),
+    }
+}
+
 // realises FR-169, FR-170
 /// Yields the marks of `diagnostics` in hex and bin, in their order: every *diagnostic*, with
 /// the *offsets* of its range in bits, whether it has a *read position* or not.
@@ -451,6 +496,19 @@ pub fn encode_request(identifier: u64, request: &Request) -> Vec<u8> {
             pairs.push((
                 KEY_DELTAS,
                 Value::Array(deltas.iter().map(value_of_delta).collect()),
+            ));
+        }
+        Request::EditOctets {
+            document,
+            version,
+            deltas,
+        } => {
+            pairs.push((KEY_KIND, unsigned(KIND_EDIT)));
+            pairs.push((KEY_DOCUMENT, Value::Text(document.clone())));
+            pairs.push((KEY_VERSION, unsigned(*version)));
+            pairs.push((
+                KEY_OCTET_DELTAS,
+                Value::Array(deltas.iter().map(value_of_octet_delta).collect()),
             ));
         }
         Request::Store => pairs.push((KEY_KIND, unsigned(KIND_STORE))),
@@ -701,6 +759,15 @@ fn value_of_delta(delta: &EditDelta) -> Value {
             value_of_position(&delta.end),
         ]),
         Value::Text(delta.text.clone()),
+    ])
+}
+
+/// Yields an *octet delta* as the array `[start, end, replacement]` of the message schema.
+fn value_of_octet_delta(delta: &OctetDelta) -> Value {
+    Value::Array(vec![
+        unsigned(delta.start),
+        unsigned(delta.end),
+        Value::Bytes(delta.replacement.clone()),
     ])
 }
 
@@ -1093,6 +1160,79 @@ mod tests {
                 severities: vec![0, 1],
                 texts: vec!["no match".to_owned(), "doubtful".to_owned()],
             }
+        );
+    }
+
+    #[test]
+    fn octet_delta_spans_what_lies_between_the_common_start_and_the_common_end() {
+        // FR-210
+        assert_eq!(
+            (
+                octet_delta_between(&[1, 2, 3, 4, 5], &[1, 2, 9, 9, 9, 5]),
+                octet_delta_between(&[1, 2, 3], &[1, 3]),
+                octet_delta_between(&[], &[7]),
+                octet_delta_between(&[1, 1], &[1, 1, 1])
+            ),
+            (
+                OctetDelta {
+                    start: 2,
+                    end: 4,
+                    replacement: vec![9, 9, 9]
+                },
+                OctetDelta {
+                    start: 1,
+                    end: 2,
+                    replacement: vec![]
+                },
+                OctetDelta {
+                    start: 0,
+                    end: 0,
+                    replacement: vec![7]
+                },
+                OctetDelta {
+                    start: 2,
+                    end: 2,
+                    replacement: vec![1]
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn octet_delta_of_equal_octets_replaces_nothing_by_nothing() {
+        // FR-210
+        assert_eq!(
+            octet_delta_between(&[1, 2], &[1, 2]),
+            OctetDelta {
+                start: 2,
+                end: 2,
+                replacement: vec![]
+            }
+        );
+    }
+
+    #[test]
+    fn edit_request_of_a_binary_document_carries_its_octet_deltas_under_key_16() {
+        // FR-210, [AD3] IR-114
+        let bytes = encode_request(
+            2,
+            &Request::EditOctets {
+                document: "n".to_owned(),
+                version: 3,
+                deltas: vec![OctetDelta {
+                    start: 1,
+                    end: 2,
+                    replacement: vec![0xff],
+                }],
+            },
+        );
+        // { 0: 2, 1: 2, 2: "n", 3: 3, 16: [[1, 2, h'ff']] }
+        assert_eq!(
+            bytes,
+            vec![
+                0xa5, 0x00, 0x02, 0x01, 0x02, 0x02, 0x61, b'n', 0x03, 0x03, 0x10, 0x81, 0x83, 0x01,
+                0x02, 0x41, 0xff
+            ]
         );
     }
 

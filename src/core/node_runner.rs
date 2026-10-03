@@ -166,6 +166,26 @@ impl NodeRunner {
         outcome.map_err(|error| error.to_string())
     }
 
+    // realises FR-210, FR-107, FR-112
+    /// Transmits the change of a *binary document* to the served *node*, as
+    /// [`NodeSession::edit_octets`].
+    ///
+    /// # Errors
+    /// Returns the text of FR-112, as [`NodeRunner::transmit`] does.
+    pub fn edit_octets(
+        &mut self,
+        document: &str,
+        octets_before: &[u8],
+        octets_after: &[u8],
+    ) -> Result<Vec<Diagnostic>, String> {
+        let Some(session) = self.session.as_mut() else {
+            return Err(NOT_SERVED.to_owned());
+        };
+        let outcome = session.edit_octets(document, octets_before, octets_after);
+        self.give_up_on(&outcome);
+        outcome.map_err(|error| error.to_string())
+    }
+
     // realises FR-109, FR-111, FR-112
     /// Transmits a *store request* to the served *node*, as [`NodeSession::store`].
     ///
@@ -241,7 +261,10 @@ mod tests {
         // FR-112
         let mut runner = NodeRunner::new(case_dir("unserved"));
         let transmitted = runner.transmit("a.gc3", "", &increment(), "a");
-        let opened = runner.open_octets("a.bin", &[0xff]);
+        let opened =
+            runner
+                .open_octets("a.bin", &[0xff])
+                .and(runner.edit_octets("a.bin", &[0xff], &[0x00]));
         let stored = runner.store();
         assert_eq!(
             (transmitted, opened, stored),

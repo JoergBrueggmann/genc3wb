@@ -39,6 +39,12 @@ enum NodeCommand {
     },
     /// transmit the octets of a document, as a *binary document* (FR-167)
     Open { document: String, octets: Vec<u8> },
+    /// transmit the change of a *binary document* (FR-210)
+    EditOctets {
+        document: String,
+        octets_before: Vec<u8>,
+        octets_after: Vec<u8>,
+    },
     /// transmit a *store request* (FR-109)
     Store,
     /// shut the served *node* down (FR-105); the thread ends where `end` holds
@@ -80,9 +86,9 @@ pub struct NodeEditor {
     input_page: usize,
     /// the *provided text* of each document, by its *document identifier*, as a receiver holds it
     provided: BTreeMap<String, String>,
-    /// the octets of each document provided as a *binary document*, read as UTF-8 (FR-157), by
-    /// its *document identifier*
-    provided_octets: BTreeMap<String, String>,
+    /// the octets of each document provided as a *binary document*, by its
+    /// *document identifier*, as the *node* holds them
+    provided_octets: BTreeMap<String, Vec<u8>>,
     /// the *diagnostics* of each document, by its *document identifier*, as the *node* last
     /// answered them
     diagnostics: BTreeMap<String, Vec<Diagnostic>>,
@@ -337,11 +343,12 @@ impl NodeEditor {
         self.count_request();
     }
 
-    // realises FR-167, FR-168
-    /// Reads the octets the *input group* of `document` provided, takes their reading under
-    /// UTF-8 as the *provided text* of `document`, by which its *diagnostics* are marked in txt,
-    /// and hands the octets to the *node thread*; scheduled by an *input group* of the
-    /// *node window*.
+    // realises FR-167, FR-168, FR-210
+    /// Reads the octets the *input group* of `document` provided, keeps them as the octets the
+    /// *node* holds, by whose reading under UTF-8 its *diagnostics* are marked in txt, and hands
+    /// them to the *node thread*: as an open request where no octets of `document` were
+    /// provided before, and as the change from those otherwise; scheduled by an *input group*
+    /// of the *node window*.
     ///
     /// * The *input group* then holds an empty *provided text*, so that the next
     ///   *text increment* of the document carries its whole text; the *node editor* overwrites
@@ -354,10 +361,18 @@ impl NodeEditor {
         else {
             return;
         };
-        self.provided_octets
-            .insert(document.clone(), text_of_octets(&octets));
+        let before = self
+            .provided_octets
+            .insert(document.clone(), octets.clone());
         self.provided.remove(&document);
-        self.send(NodeCommand::Open { document, octets });
+        self.send(match before {
+            Some(octets_before) => NodeCommand::EditOctets {
+                document,
+                octets_before,
+                octets_after: octets,
+            },
+            None => NodeCommand::Open { document, octets },
+        });
         self.changes_started.push_back(Instant::now());
         self.count_request();
     }
@@ -492,8 +507,8 @@ impl NodeEditor {
         let text = self
             .provided_octets
             .get(document)
-            .or_else(|| self.provided.get(document))
-            .cloned()
+            .map(|octets| text_of_octets(octets))
+            .or_else(|| self.provided.get(document).cloned())
             .unwrap_or_default();
         if let Some(group) = self.group_of(document) {
             let marks = marks_of_diagnostics(&text, diagnostics);
@@ -673,6 +688,17 @@ fn node_thread(
             NodeCommand::Open { document, octets } => (
                 NodeReport::Transmitted {
                     outcome: runner.open_octets(&document, &octets),
+                    document,
+                },
+                false,
+            ),
+            NodeCommand::EditOctets {
+                document,
+                octets_before,
+                octets_after,
+            } => (
+                NodeReport::Transmitted {
+                    outcome: runner.edit_octets(&document, &octets_before, &octets_after),
                     document,
                 },
                 false,
