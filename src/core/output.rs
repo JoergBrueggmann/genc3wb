@@ -48,7 +48,7 @@ pub struct Presentation {
 }
 
 // realises FR-027, FR-032, FR-033, FR-034, FR-035, FR-036, FR-122, FR-125, FR-150, FR-151,
-// FR-152
+// FR-152, FR-211, FR-213
 /// The pages of the output group: the *output pages* of the opened *node*, then the
 /// *diagnostics page*, and which of them is presented.
 ///
@@ -56,12 +56,18 @@ pub struct Presentation {
 ///   before a *node* is opened, and the *diagnostics page* is the one page then.
 /// * The presented page follows the *diagnostics* as [`presentation_after`] yields it, and is
 ///   changed by hand through [`OutputPages::next`] and [`OutputPages::previous`] at any time.
+/// * The *output pages* are *outdated* from a failed *store request* until the *outputs* are
+///   read again; the *diagnostics page* then lists the failure before the *diagnostics*, and
+///   the failure counts as a *diagnostic* for the presented page.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct OutputPages {
     /// the *outputs*, in the order of the *node description*
     files: Vec<OutputFile>,
     /// the text of the *diagnostics page*: the *diagnostics* of every document, one per line
     diagnostics: String,
+    /// the text of FR-112 of the failed *store request* while the *output pages* are
+    /// *outdated* (FR-211), `None` otherwise
+    store_failure: Option<String>,
     /// the index of the presented page
     current: usize,
     /// the *output page* to return to when the *diagnostics* are gone (FR-151)
@@ -78,28 +84,73 @@ impl OutputPages {
         OutputPages {
             files: paths.iter().map(|path| OutputFile::of_path(path)).collect(),
             diagnostics: String::new(),
+            store_failure: None,
             current: 0,
             return_page: None,
         }
     }
 
     // realises FR-107, FR-108, FR-125, FR-150, FR-151, FR-152
-    /// Replaces the text of the *diagnostics page*, and presents the page that
+    /// Replaces the *diagnostics* the *diagnostics page* lists, and presents the page that
     /// [`presentation_after`] yields for the change; yields whether the presented page changed.
     ///
     /// * An empty text holds no *diagnostics*; any other text holds at least one.
     pub fn set_diagnostics(&mut self, text: &str) -> bool {
-        let had_diagnostics = !self.diagnostics.is_empty();
-        let has_diagnostics = !text.is_empty();
+        let listed = self.lists();
         self.diagnostics = text.to_owned();
+        self.present_after(listed)
+    }
+
+    // realises FR-150, FR-151, FR-211, FR-213
+    /// Takes the *output pages* as *outdated* by a *store request* that failed with `message`,
+    /// and presents the page that [`presentation_after`] yields for the line the
+    /// *diagnostics page* lists for it; yields whether the presented page changed.
+    pub fn set_store_failure(&mut self, message: &str) -> bool {
+        let listed = self.lists();
+        self.store_failure = Some(message.to_owned());
+        self.present_after(listed)
+    }
+
+    // realises FR-211
+    /// Yields whether the *output pages* are *outdated*.
+    pub fn is_outdated(&self) -> bool {
+        self.store_failure.is_some()
+    }
+
+    // realises FR-212
+    /// Yields the text of FR-112 of the failed *store request*, empty where the *output pages*
+    /// are not *outdated*.
+    pub fn store_failure(&self) -> &str {
+        self.store_failure.as_deref().unwrap_or("")
+    }
+
+    // realises FR-125, FR-213
+    /// Yields the text of the *diagnostics page*: the line of the failed *store request* where
+    /// the *output pages* are *outdated*, then the *diagnostics*.
+    pub fn listing(&self) -> String {
+        match &self.store_failure {
+            Some(message) if self.diagnostics.is_empty() => format!("store: error: {message}"),
+            Some(message) => format!("store: error: {message}\n{}", self.diagnostics),
+            None => self.diagnostics.clone(),
+        }
+    }
+
+    /// Yields whether the *diagnostics page* lists a line.
+    fn lists(&self) -> bool {
+        self.store_failure.is_some() || !self.diagnostics.is_empty()
+    }
+
+    /// Presents the page that [`presentation_after`] yields where the *diagnostics page* listed
+    /// a line before as `listed` says; yields whether the presented page changed.
+    fn present_after(&mut self, listed: bool) -> bool {
         let presentation = presentation_after(
             Presentation {
                 page: self.current,
                 return_page: self.return_page,
             },
             self.files.len(),
-            had_diagnostics,
-            has_diagnostics,
+            listed,
+            self.lists(),
         );
         let changed = presentation.page != self.current;
         self.current = presentation.page;
@@ -108,7 +159,7 @@ impl OutputPages {
     }
 
     // realises FR-125
-    /// Yields the text of the *diagnostics page*.
+    /// Yields the *diagnostics* the *diagnostics page* lists.
     pub fn diagnostics(&self) -> &str {
         &self.diagnostics
     }
@@ -119,12 +170,17 @@ impl OutputPages {
         self.current >= self.files.len()
     }
 
-    // realises FR-111, IR-009
-    /// Reads the file of every *output* again.
-    pub fn reload(&mut self) {
+    // realises FR-111, FR-151, FR-211, IR-009
+    /// Reads the file of every *output* again, after which the *output pages* are not
+    /// *outdated*; yields whether the presented page changed, the line of a failed
+    /// *store request* being gone.
+    pub fn reload(&mut self) -> bool {
         for file in &mut self.files {
             *file = OutputFile::of_path(&file.path);
         }
+        let listed = self.lists();
+        self.store_failure = None;
+        self.present_after(listed)
     }
 
     // realises FR-027, FR-036
@@ -221,7 +277,8 @@ pub fn presentation_after(
  * edge cases       : ✅
  * conforms to doc  : ✅
  * covers bridge    : OutputGroup::next, OutputGroup::previous, OutputGroup::set_paths,
- *                    OutputGroup::reload, OutputGroup::set_diagnostics */
+ *                    OutputGroup::reload, OutputGroup::set_diagnostics,
+ *                    OutputGroup::set_store_failure */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -437,5 +494,111 @@ mod tests {
         let changed_text = (pages.set_diagnostics("a.gc3: other fault"), pages.current());
         let gone = (pages.set_diagnostics(""), pages.current());
         assert_eq!((changed_text, gone), ((false, 1), (true, 0)));
+    }
+
+    #[test]
+    fn pages_are_not_outdated_before_a_store_fails() {
+        // FR-211
+        let pages = OutputPages::of_paths(&paths(&["a"]));
+        assert_eq!(
+            (pages.is_outdated(), pages.store_failure(), pages.listing()),
+            (false, "", String::new())
+        );
+    }
+
+    #[test]
+    fn a_failed_store_leaves_the_content_and_takes_the_pages_as_outdated() {
+        // FR-211, FR-212
+        let dir = case_dir("outdated");
+        let path = dir.join("out.txt");
+        fs::write(&path, "stored").expect("the file can be written");
+        let mut pages = OutputPages::of_paths(&[path.to_string_lossy().into_owned()]);
+        fs::write(&path, "written by another").expect("the file can be written");
+        pages.set_store_failure("out.txt: does not exist");
+        pages.previous();
+        let content = pages.current_file().map(|file| file.content.clone());
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(
+            (pages.is_outdated(), pages.store_failure(), content),
+            (true, "out.txt: does not exist", Some("stored".to_owned()))
+        );
+    }
+
+    #[test]
+    fn a_failed_store_with_an_empty_message_takes_the_pages_as_outdated() {
+        // FR-211
+        let mut pages = OutputPages::of_paths(&paths(&["a"]));
+        pages.set_store_failure("");
+        assert_eq!(
+            (pages.is_outdated(), pages.listing()),
+            (true, "store: error: ".to_owned())
+        );
+    }
+
+    #[test]
+    fn the_diagnostics_page_lists_the_failed_store_before_the_diagnostics() {
+        // FR-213
+        let mut pages = OutputPages::of_paths(&paths(&["a"]));
+        pages.set_store_failure("fault of the store");
+        let alone = pages.listing();
+        pages.set_diagnostics("a.gc3: warning 1:1-1:2: fault");
+        assert_eq!(
+            (
+                alone.as_str(),
+                pages.listing().as_str(),
+                pages.diagnostics()
+            ),
+            (
+                "store: error: fault of the store",
+                "store: error: fault of the store\na.gc3: warning 1:1-1:2: fault",
+                "a.gc3: warning 1:1-1:2: fault"
+            )
+        );
+    }
+
+    #[test]
+    fn a_failed_store_presents_the_diagnostics_page_and_a_reload_returns() {
+        // FR-150, FR-151, FR-211, FR-213
+        let mut pages = OutputPages::of_paths(&paths(&["a", "b"]));
+        pages.next();
+        let failed = (pages.set_store_failure("fault"), pages.current());
+        let failed_again = (pages.set_store_failure("other fault"), pages.current());
+        let reloaded = (pages.reload(), pages.current(), pages.is_outdated());
+        assert_eq!(
+            (failed, failed_again, reloaded),
+            ((true, 2), (false, 2), (true, 1, false))
+        );
+    }
+
+    #[test]
+    fn a_reload_keeps_the_diagnostics_page_while_diagnostics_are_listed() {
+        // FR-151, FR-213
+        let mut pages = OutputPages::of_paths(&paths(&["a"]));
+        pages.set_diagnostics("a.gc3: warning 1:1-1:2: fault");
+        pages.set_store_failure("fault");
+        let reloaded = (pages.reload(), pages.current(), pages.listing());
+        assert_eq!(
+            reloaded,
+            (false, 1, "a.gc3: warning 1:1-1:2: fault".to_owned())
+        );
+    }
+
+    #[test]
+    fn diagnostics_that_go_keep_the_diagnostics_page_while_the_pages_are_outdated() {
+        // FR-151, FR-213
+        let mut pages = OutputPages::of_paths(&paths(&["a"]));
+        pages.set_store_failure("fault");
+        pages.set_diagnostics("a.gc3: error 1:1-1:2: fault");
+        let gone = (pages.set_diagnostics(""), pages.current());
+        assert_eq!(gone, (false, 1));
+    }
+
+    #[test]
+    fn the_pages_of_a_node_started_anew_are_not_outdated() {
+        // FR-211
+        let mut pages = OutputPages::of_paths(&paths(&["a"]));
+        pages.set_store_failure("fault");
+        pages = OutputPages::of_paths(&paths(&["a"]));
+        assert!(!pages.is_outdated());
     }
 }

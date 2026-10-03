@@ -10,6 +10,19 @@ and this project adheres to a four-part version number.
 
 ## [Unreleased]
 
+## [0.15.1.0] - 2026-10-03
+
+**_Outdated_output_pages_**
+
+Leading work item: definition 0.11.1.0
+
+- Fix the *software problem report* '**_Output_page_keeps_stale_content_when_the_store_fails_**': where the *node* answers a *store request* with an error response or is not reached for it, the *output pages* kept the content of an earlier store, and the status line alone told the failure.
+- Mark every *output page* as *outdated* then, as the definition 0.11.1.0 states: an exclamation mark beside the file name, whose tooltip names the failure, until a *store request* is acknowledged or a *node* is started.
+- List the failed store on the *diagnostics page* as the line `store: error: <message>` before the *diagnostics*; the page is presented when the line appears, and the *output page* presented before is returned to when it is gone.
+- Raise the version in 'Cargo.toml' to 0.15.1; the README describes the mark.
+- The 309 unit tests pass; the five tests of the build system pass against the *service executable* of the distribution folder of genc³ 0.28.2.0, one of them reproducing the failed store by a *node* whose directory was deleted and created anew.
+- A corrected fault: a patch bump to 0.15.1.0.
+
 ## [0.15.0.0] - 2026-10-03
 
 **_Editing_in_hex_and_bin_**

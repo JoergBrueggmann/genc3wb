@@ -21,7 +21,8 @@ pub struct OutputGroup {
 }
 
 // realises FR-027, FR-030, FR-032 to FR-036, FR-042, FR-044, FR-102, FR-107, FR-108, FR-110,
-// FR-111, FR-122, FR-125, FR-150 to FR-152, FR-154, FR-156 to FR-159, FR-163, FR-173, FR-175
+// FR-111, FR-122, FR-125, FR-150 to FR-152, FR-154, FR-156 to FR-159, FR-163, FR-173, FR-175,
+// FR-211 to FR-213
 #[qobject(NoQmlElement)]
 impl OutputGroup {
     qproperty!("pageIndex", Read = page_index, Notify = page_changed);
@@ -39,6 +40,12 @@ impl OutputGroup {
     qproperty!("revision", Read = revision, Notify = content_changed);
     qproperty!("octetCount", Read = octet_count, Notify = content_changed);
     qproperty!("diagnostics", Read = diagnostics, Notify = content_changed);
+    qproperty!("outdated", Read = outdated, Notify = content_changed);
+    qproperty!(
+        "storeFailure",
+        Read = store_failure,
+        Notify = content_changed
+    );
 
     // getters
     fn page_index(&self) -> i32 {
@@ -62,9 +69,19 @@ impl OutputGroup {
         self.pages.is_diagnostics_page()
     }
 
-    // realises FR-125
+    // realises FR-125, FR-213
     fn diagnostics(&self) -> String {
-        self.pages.diagnostics().to_owned()
+        self.pages.listing()
+    }
+
+    // realises FR-211, FR-212
+    fn outdated(&self) -> bool {
+        self.pages.is_outdated()
+    }
+
+    // realises FR-212
+    fn store_failure(&self) -> String {
+        self.pages.store_failure().to_owned()
     }
 
     fn file_path(&self) -> String {
@@ -157,11 +174,28 @@ impl OutputGroup {
         self.announce_content();
     }
 
-    // realises FR-111
-    /// Reads every *output* again and emits `content_changed`; scheduled by the *node editor*.
+    // realises FR-111, FR-151, FR-211
+    /// Reads every *output* again, after which the *output pages* are not *outdated*, and emits
+    /// `content_changed`, and `page_changed` first where the line of a failed *store request*
+    /// that is gone switched the presented page; scheduled by the *node editor*.
     #[qslot(qml_name = "reload")]
     fn reload(&mut self) {
-        self.pages.reload();
+        if self.pages.reload() {
+            self.announce_page();
+        }
+        self.announce_content();
+    }
+
+    // realises FR-150, FR-211, FR-212, FR-213
+    /// Takes the *output pages* as *outdated* by a *store request* that failed with `message`
+    /// and emits `content_changed`, and `page_changed` first where the line the
+    /// *diagnostics page* lists for it switched the presented page; scheduled by the
+    /// *node editor*.
+    #[qslot(qml_name = "setStoreFailure")]
+    fn set_store_failure(&mut self, message: String) {
+        if self.pages.set_store_failure(&message) {
+            self.announce_page();
+        }
         self.announce_content();
     }
 

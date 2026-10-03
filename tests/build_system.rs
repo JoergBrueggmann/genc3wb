@@ -233,3 +233,51 @@ fn octets_are_served_as_a_binary_document_with_octet_deltas_stores_and_diagnosti
         )
     );
 }
+
+// FR-211, FR-112
+// needs the service executable genc3d of genc³ 0.19.0.0 or later, named by the environment
+// variable GENC3D
+#[test]
+#[ignore]
+fn store_fails_where_the_directory_of_the_node_was_deleted_and_created_anew() {
+    use genc3wb::core::node_runner::{NodeRunner, NodeStart};
+
+    let directory = case_directory("lost", TWO_NODES);
+    fs::write(directory.join("a.gc3"), COPY_META_DSL)
+        .expect("the meta compiler DSL can be written");
+    fs::write(directory.join("a.in"), "hello").expect("the input can be written");
+    let mut runner = NodeRunner::new(directory.join("scratch"));
+    let started = runner.start(&NodeStart {
+        executable: build_system(),
+        directory: directory.clone(),
+        meta_dsl: "a.gc3".to_owned(),
+        inputs: vec!["a.in".to_owned()],
+        outputs: vec!["x.txt".to_owned()],
+    });
+    let stored_first = runner.store();
+    fs::remove_dir_all(&directory).expect("the directory can be deleted");
+    fs::create_dir_all(&directory).expect("the directory can be created anew");
+    let transmitted = runner.transmit(
+        "a.in",
+        "",
+        &increment_between("", "hello world"),
+        "hello world",
+    );
+    let stored = runner.store();
+    let output = fs::read_to_string(directory.join("x.txt")).ok();
+    drop(runner);
+    let _ = fs::remove_dir_all(&directory);
+    assert_eq!(
+        (started, stored_first, transmitted, stored, output),
+        (
+            Ok(()),
+            Ok(()),
+            Ok(vec![]),
+            Err(
+                "x.txt: x.txt: withBinaryFile: does not exist (No such file or directory)"
+                    .to_owned()
+            ),
+            None
+        )
+    );
+}

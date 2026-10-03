@@ -408,7 +408,7 @@ impl NodeEditor {
         }
     }
 
-    // realises FR-107, FR-108, FR-109, FR-111, FR-112, FR-125, FR-126
+    // realises FR-107, FR-108, FR-109, FR-111, FR-112, FR-125, FR-126, FR-211
     /// Takes every report of the *node thread*; scheduled by that thread on the main thread.
     #[qslot(qml_name = "reportArrived")]
     fn report_arrived(&mut self) {
@@ -455,7 +455,12 @@ impl NodeEditor {
                                 invoke_method!(output, "reload");
                             }
                         }
-                        Err(message) => self.set_status(message),
+                        Err(message) => {
+                            if let Some(output) = &self.output {
+                                invoke_method!(output, "setStoreFailure", message.clone());
+                            }
+                            self.set_status(message);
+                        }
                     }
                 }
                 NodeReport::Stopped { .. } => {}

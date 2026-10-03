@@ -175,7 +175,7 @@ with
 mkdir -p reports && cargo test 2>&1 | tee reports/test.txt
 ```
 
-Four tests run the build system and `dot` and are therefore left out of that
+Five tests run the build system and `dot` and are therefore left out of that
 run. They are run with the path of `genc3d` in the environment variable
 `GENC3D`:
 
@@ -251,7 +251,11 @@ its editor by a wavy line under the faulty place — red for an error, orange fo
 a warning, blue for information — whose tooltip shows the message, and all of
 them are listed on the last page of the outputs, 'Diagnostics'. After every
 change the node accepts without an error, its outputs are stored and shown on
-the output pages. The diagnostics of the network file are marked in its editor
+the output pages. Where the outputs could not be stored, the output pages keep
+what was stored last and carry an exclamation mark beside the file name, whose
+tooltip names the failure; the failure is listed on the page 'Diagnostics' as
+well, which is presented then. The mark is gone with the next change whose
+outputs are stored. The diagnostics of the network file are marked in its editor
 the same way.
 
 An input that another node produces is editable all the same. As soon as it is

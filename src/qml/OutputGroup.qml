@@ -1,5 +1,5 @@
-// The output group: navigation, page label, detach button, the output pages with their mode switch and the
-// diagnostics page, which is presented while diagnostics appear.
+// The output group: navigation, page label, detach button, the output pages with their mode switch and
+// their mark of an outdated content, and the diagnostics page, which is presented while diagnostics appear.
 //
 // Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 // Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -83,6 +83,21 @@ GroupBox {
                         Layout.fillWidth: true
                         readOnly: true
                         text: root.output.filePath
+                    }
+
+                    Image {
+                        id: outdatedIcon
+
+                        source: "qrc:/genc3wb/qml/icons/error.png"
+                        fillMode: Image.PreserveAspectFit
+                        sourceSize.height: 20
+                        visible: root.output.outdated
+                        ToolTip.visible: outdatedHover.hovered
+                        ToolTip.text: qsTr("This content is outdated: the outputs of the last change could not be stored. %1").arg(root.output.storeFailure)
+
+                        HoverHandler {
+                            id: outdatedHover
+                        }
                     }
 
                     ModeSwitch {
