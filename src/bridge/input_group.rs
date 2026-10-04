@@ -4,19 +4,21 @@
 //! Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
 
 use crate::core::api_message::Marks;
+use crate::core::file_lock::{FileLock, Refusal, Taking};
 use crate::core::input_file::{InputFile, InputKind, ProcessingState};
 use crate::core::octet_edit::{digits_of_text, text_of_digits};
 use crate::core::octet_view::{EditorMode, row_count, row_segments, row_text_of_bits};
-use crate::core::settings::Settings;
+use crate::core::settings::SettingsStore;
 use crate::core::text_increment::IncrementTracker;
 
 use qtbridge::{QmlMethodInvoker, invoke_method, qobject};
 
 use std::cell::RefCell;
 use std::io::Write;
+use std::path::Path;
 use std::rc::Rc;
 
-// realises FR-007, FR-113
+// realises FR-007, FR-113, FR-214, FR-216
 /// One *input group* as the *front end* binds to it.
 pub struct InputGroup {
     /// the input file
@@ -43,7 +45,13 @@ pub struct InputGroup {
     /// the number of changes of the octets since the group was created
     revision: i32,
     /// the settings, to store the path; wired by the *workbench object* for the *network file*
-    settings: Option<Rc<RefCell<Settings>>>,
+    settings: Option<Rc<RefCell<SettingsStore>>>,
+    /// the *lock file* of the *network file*, held while it is named (FR-214); `None` for every
+    /// other file, and where it could not be created (FR-222)
+    network_lock: Option<FileLock>,
+    /// the *refusal* of the *network file* last named, until a *network file* is named
+    /// (FR-216, FR-217, FR-220)
+    refusal: Option<Refusal>,
     /// the invoker of the receiver of the *text increments*: the network editor for the
     /// *network file*, which receives the path and the expiry of the *long idle time* as well,
     /// and the *node editor* for an *input group* of the *node window*
@@ -65,6 +73,8 @@ impl Default for InputGroup {
             provided_octets: None,
             revision: 0,
             settings: None,
+            network_lock: None,
+            refusal: None,
             receiver: None,
         }
     }
@@ -72,7 +82,8 @@ impl Default for InputGroup {
 
 // realises FR-007, FR-011 to FR-017, FR-056, FR-059, FR-069, FR-083, FR-086, FR-087, FR-106,
 // FR-107, FR-108, FR-113, FR-114, FR-116, FR-126, FR-127, FR-128, FR-154, FR-156 to FR-159,
-// FR-163 to FR-173, FR-175, FR-177, FR-179 to FR-187, FR-202, FR-203, FR-205, FR-207, FR-208
+// FR-163 to FR-173, FR-175, FR-177, FR-179 to FR-187, FR-202, FR-203, FR-205, FR-207, FR-208,
+// FR-214, FR-216, FR-217, FR-219, FR-220
 #[qobject(NoQmlElement)]
 impl InputGroup {
     qproperty!("caption", Read = caption, Constant);
@@ -122,8 +133,47 @@ impl InputGroup {
         Read = diagnostic_texts,
         Notify = diagnostics_changed
     );
+    // the refusal of the network file and its holder, empty and 0 where there is none (FR-220)
+    qproperty!("refusedFile", Read = refused_file, Notify = refusal_changed);
+    qproperty!("holderPid", Read = holder_pid, Notify = refusal_changed);
+    qproperty!("holderHost", Read = holder_host, Notify = refusal_changed);
+    qproperty!("holderSince", Read = holder_since, Notify = refusal_changed);
 
     // getters
+    // realises FR-219, FR-220
+    fn refused_file(&self) -> String {
+        self.refusal
+            .as_ref()
+            .map(|refusal| refusal.file.clone())
+            .unwrap_or_default()
+    }
+
+    // realises FR-219, FR-220
+    fn holder_pid(&self) -> i32 {
+        self.refusal
+            .as_ref()
+            .and_then(|refusal| refusal.holder.as_ref())
+            .map_or(0, |holder| i32::try_from(holder.pid).unwrap_or(i32::MAX))
+    }
+
+    // realises FR-219, FR-220
+    fn holder_host(&self) -> String {
+        self.refusal
+            .as_ref()
+            .and_then(|refusal| refusal.holder.as_ref())
+            .map(|holder| holder.host.clone())
+            .unwrap_or_default()
+    }
+
+    // realises FR-219, FR-220
+    fn holder_since(&self) -> String {
+        self.refusal
+            .as_ref()
+            .and_then(|refusal| refusal.holder.as_ref())
+            .map(|holder| holder.since.clone())
+            .unwrap_or_default()
+    }
+
     fn caption(&self) -> String {
         self.file.kind().caption().to_owned()
     }
@@ -260,6 +310,12 @@ impl InputGroup {
 
     #[qsignal(qml_name = "askToSave")]
     fn ask_to_save(&mut self, path: String);
+
+    #[qsignal(qml_name = "refusalChanged")]
+    fn refusal_changed(&mut self);
+
+    #[qsignal(qml_name = "refused")]
+    fn refused(&mut self);
 
     #[qsignal(qml_name = "incrementProvided")]
     fn increment_provided(&mut self, rendering: String);
@@ -522,12 +578,19 @@ impl InputGroup {
     pub fn configure(
         &mut self,
         kind: InputKind,
-        settings: Option<Rc<RefCell<Settings>>>,
+        settings: Option<Rc<RefCell<SettingsStore>>>,
         receiver: Option<QmlMethodInvoker>,
     ) {
         self.file = InputFile::new(kind);
         self.settings = settings;
         self.receiver = receiver;
+    }
+
+    // realises FR-214, FR-221
+    /// Releases and removes the *lock file* of the *network file*, where it is held; called by
+    /// the *workbench object* when *product* terminates.
+    pub fn release_lock(&mut self) {
+        self.network_lock = None;
     }
 
     // realises FR-167
@@ -571,9 +634,12 @@ impl InputGroup {
         self.text_changed();
     }
 
-    // realises FR-090
+    // realises FR-090, FR-214, FR-217
     /// Loads the file at the path the settings hold for the *network file*, announces the state,
     /// and announces the path to the network editor where one is wired.
+    ///
+    /// * Where another genc³wb holds the *lock file* of that *network file*, no *network file*
+    ///   is named, and the path stays in the settings as it is.
     pub fn load_initial(&mut self) {
         let path = self
             .settings
@@ -581,6 +647,11 @@ impl InputGroup {
             .filter(|_| self.file.kind() == InputKind::Network)
             .map(|settings| settings.borrow().network_path().to_owned())
             .unwrap_or_default();
+        let path = if self.lock_network(&path) {
+            path
+        } else {
+            String::new()
+        };
         let _ = self.file.load(&path);
         self.announce_state(false);
         self.announce_path();
@@ -606,14 +677,21 @@ impl InputGroup {
         }
     }
 
-    // realises FR-012, FR-013, FR-091
+    // realises FR-012, FR-013, FR-091, FR-214, FR-216
     /// Stores `path` in the settings for the *network file*, loads the file, and notifies the
     /// *front end*.
+    ///
+    /// * Where another genc³wb holds the *lock file* of the *network file* at `path`, the
+    ///   *network file* named before stays, and `path_changed` restores its path in the field.
     fn apply_path(&mut self, path: &str) {
+        if !self.lock_network(path) {
+            self.path_changed();
+            return;
+        }
         if let (Some(settings), InputKind::Network) = (&self.settings, self.file.kind()) {
             let mut settings = settings.borrow_mut();
             settings.set_network_path(path);
-            let _ = settings.save(&Settings::default_path());
+            let _ = settings.store();
         }
         let octets_before = self.file.octets().to_vec();
         let _ = self.file.load(path);
@@ -625,6 +703,43 @@ impl InputGroup {
         }
         self.announce_state(temporary_before != self.temporary_edit());
         self.announce_path();
+    }
+
+    // realises FR-214, FR-216, FR-217, FR-219, FR-220, FR-221, FR-222
+    /// Takes the *lock file* of the *network file* at `path`, releasing the one held before;
+    /// yields whether `path` may be named, which every file but a *network file* may.
+    ///
+    /// * The empty path names no *network file* and needs no *lock file*; a *lock file* that
+    ///   cannot be created is passed over (FR-222).
+    /// * The *lock file* already held for the same file is kept.
+    /// * Where another genc³wb holds it, the *refusal* is held and announced by
+    ///   `refusal_changed` and `refused`, and the *lock file* held before is kept.
+    fn lock_network(&mut self, path: &str) -> bool {
+        if self.file.kind() != InputKind::Network {
+            return true;
+        }
+        let held = self
+            .network_lock
+            .as_ref()
+            .is_some_and(|lock| lock.guards(Path::new(path)));
+        if !held && !path.is_empty() {
+            match FileLock::take(Path::new(path)) {
+                Taking::Held(lock) => self.network_lock = Some(lock),
+                Taking::Unlockable(_) => self.network_lock = None,
+                Taking::Refused(refusal) => {
+                    self.refusal = Some(refusal);
+                    self.refusal_changed();
+                    self.refused();
+                    return false;
+                }
+            }
+        } else if path.is_empty() {
+            self.network_lock = None;
+        }
+        if self.refusal.take().is_some() {
+            self.refusal_changed();
+        }
+        true
     }
 
     // realises FR-017, FR-113

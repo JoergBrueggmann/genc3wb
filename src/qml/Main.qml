@@ -1,4 +1,5 @@
-// The main window, the compiler network editor: menu bar, status bar, the network file and its graph.
+// The main window, the compiler network editor: menu bar, status bar, the network file and its graph, and the
+// dialog telling a refusal of the network file or of the settings file.
 //
 // Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 // Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -20,9 +21,50 @@ ApplicationWindow {
     height: 800
     visible: true
     title: "genc³wb"
+
+    // the refusal of the settings file and of the network file, empty where there is none
+    // (FR-219, FR-220)
+    readonly property string settingsRefusal: Workbench.settingsRefusedFile.length > 0
+                                              ? qsTr("The settings are not stored: %1")
+                                                .arg(heldText(Workbench.settingsRefusedFile,
+                                                              Workbench.settingsHolderPid,
+                                                              Workbench.settingsHolderHost,
+                                                              Workbench.settingsHolderSince))
+                                              : ""
+    readonly property string networkRefusal: Workbench.networkInput.refusedFile.length > 0
+                                             ? qsTr("The network is not opened: %1")
+                                               .arg(heldText(Workbench.networkInput.refusedFile,
+                                                             Workbench.networkInput.holderPid,
+                                                             Workbench.networkInput.holderHost,
+                                                             Workbench.networkInput.holderSince))
+                                             : ""
+
+    // Yields that `file` is held by the holder of its lock file, the time in the local time of
+    // the user (FR-219); a process number of 0 names no holder.
+    function heldText(file: string, pid: int, host: string, since: string): string {
+        if (pid <= 0) {
+            return qsTr("%1 is held by another genc³wb.").arg(file);
+        }
+        const time = new Date(since).toLocaleString(Qt.locale(), Locale.ShortFormat);
+        return host.length > 0
+               ? qsTr("%1 is held by genc³wb, process %2 on %3, since %4.").arg(file).arg(pid).arg(host).arg(time)
+               : qsTr("%1 is held by genc³wb, process %2, since %3.").arg(file).arg(pid).arg(time);
+    }
+
+    // Presents the dialog of FR-219 with `texts`, where one is not empty.
+    function tellRefusals(texts: list<string>) {
+        const told = texts.filter(text => text.length > 0);
+        if (told.length > 0) {
+            refusalDialog.text = told.join("\n\n");
+            refusalDialog.open();
+        }
+    }
+
+    Component.onCompleted: tellRefusals([settingsRefusal, networkRefusal])
     onClosing: {
         Workbench.network.shutDown();
         Workbench.node.shutDown();
+        Workbench.releaseLocks();
     }
 
     menuBar: MenuBar {
@@ -83,9 +125,13 @@ ApplicationWindow {
 
             Layout.fillWidth: true
             padding: 4
-            text: !Workbench.network.available
-                  ? qsTr("The build system is not available on this platform.")
-                  : Workbench.network.building ? qsTr("The build system is building.") : ""
+            // the refusals while they last (FR-220), then the state of the build system
+            text: [mainWindow.settingsRefusal,
+                   mainWindow.networkRefusal,
+                   !Workbench.network.available
+                   ? qsTr("The build system is not available on this platform.")
+                   : Workbench.network.building ? qsTr("The build system is building.") : ""]
+                  .filter(part => part.length > 0).join("  ·  ")
         }
 
         TypingModeLabel {
@@ -131,6 +177,27 @@ ApplicationWindow {
         id: infoDialog
     }
 
+    Dialog {
+        id: refusalDialog
+
+        property alias text: refusalText.text
+
+        // a width of its own, since the width of the style follows the text and the text would
+        // follow the width
+        width: Math.min(mainWindow.width - 48, 560)
+        modal: true
+        title: qsTr("Held by another genc³wb")
+        standardButtons: Dialog.Ok
+        anchors.centerIn: parent
+
+        Label {
+            id: refusalText
+
+            width: refusalDialog.availableWidth
+            wrapMode: Text.Wrap
+        }
+    }
+
     SettingsDialog {
         id: settingsDialog
     }
@@ -157,6 +224,14 @@ ApplicationWindow {
 
         function onProcessingMeasured(processingTime) {
             Workbench.reportProcessingTime(processingTime);
+        }
+    }
+
+    Connections {
+        target: Workbench.networkInput
+
+        function onRefused() {
+            mainWindow.tellRefusals([mainWindow.networkRefusal]);
         }
     }
 

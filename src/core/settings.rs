@@ -4,12 +4,14 @@
 //! Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 //! Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
 
+use crate::core::file_lock::{FileLock, Refusal, Taking};
 use crate::core::key_stroke::KeyStroke;
 
 use serde::{Deserialize, Serialize};
 
 use std::fmt;
 use std::fs;
+use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 
 // realises IR-011, IR-012
@@ -483,6 +485,94 @@ impl Settings {
     }
 }
 
+// realises FR-215, FR-218, FR-220, FR-222, IR-011, IR-012
+/// The settings of the session with the *settings file* they are stored in, and the
+/// *lock file* of that *settings file*, which entitles to store them.
+///
+/// * The *lock file* is taken when the store is opened and held until it is dropped (FR-215).
+/// * Where another genc³wb holds it, the settings are read all the same, but not stored: the
+///   store holds the *refusal* (FR-218).
+/// * Where it cannot be created, the settings are stored as though it were held (FR-222).
+/// * It dereferences to the [`Settings`] it holds, which are read and changed through it.
+#[derive(Debug)]
+pub struct SettingsStore {
+    /// the settings of the session
+    settings: Settings,
+    /// the path of the *settings file*
+    path: PathBuf,
+    /// the *lock file* of the *settings file*, `None` where it is not held
+    lock: Option<FileLock>,
+    /// the *refusal* of the *settings file*, `None` where no other genc³wb holds its
+    /// *lock file*
+    refusal: Option<Refusal>,
+}
+
+impl SettingsStore {
+    // realises FR-094, FR-095, FR-215, FR-218, FR-222, IR-011
+    /// Takes the *lock file* of the *settings file* at `path` and restores the settings from
+    /// it, as [`Settings::load`] does; the default settings where it cannot be read.
+    pub fn open(path: &Path) -> SettingsStore {
+        let (lock, refusal) = match FileLock::take(path) {
+            Taking::Held(lock) => (Some(lock), None),
+            Taking::Unlockable(_) => (None, None),
+            Taking::Refused(refusal) => (None, Some(refusal)),
+        };
+        SettingsStore {
+            settings: Settings::load(path).unwrap_or_default(),
+            path: path.to_owned(),
+            lock,
+            refusal,
+        }
+    }
+
+    // realises FR-218, IR-012
+    /// Writes the settings to the *settings file*, unless another genc³wb holds its
+    /// *lock file*; yields whether they were written.
+    ///
+    /// # Errors
+    /// Returns what [`Settings::save`] returns.
+    pub fn store(&self) -> Result<bool, SettingsError> {
+        if self.refusal.is_some() {
+            return Ok(false);
+        }
+        self.settings.save(&self.path).map(|()| true)
+    }
+
+    // realises FR-218, FR-219, FR-220
+    /// Yields the *refusal* of the *settings file*, `None` where no other genc³wb holds its
+    /// *lock file*.
+    pub fn refusal(&self) -> Option<&Refusal> {
+        self.refusal.as_ref()
+    }
+
+    // realises FR-215
+    /// Yields whether the store holds the *lock file* of the *settings file*.
+    pub fn holds_lock(&self) -> bool {
+        self.lock.is_some()
+    }
+
+    // realises FR-215, FR-221
+    /// Releases and removes the *lock file* of the *settings file*, where it is held; called
+    /// when *product* terminates.
+    pub fn release_lock(&mut self) {
+        self.lock = None;
+    }
+}
+
+impl Deref for SettingsStore {
+    type Target = Settings;
+
+    fn deref(&self) -> &Settings {
+        &self.settings
+    }
+}
+
+impl DerefMut for SettingsStore {
+    fn deref_mut(&mut self) -> &mut Settings {
+        &mut self.settings
+    }
+}
+
 /*  * validated        : ✅
  * completeness     : ✅
  * independence     : ✅
@@ -496,11 +586,21 @@ impl Settings {
 mod tests {
     use super::*;
 
+    use crate::core::file_lock::lock_path_of;
+
     fn case_file(name: &str) -> PathBuf {
         let dir =
             std::env::temp_dir().join(format!("genc3wb-settings-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         dir.join("sub").join(SETTINGS_FILE_NAME)
+    }
+
+    fn case_dir(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("genc3wb-settings-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("the temporary directory of the test can be created");
+        dir
     }
 
     fn remove_case(file: &Path) {
@@ -909,5 +1009,64 @@ mod tests {
     fn the_settings_file_lies_in_the_working_directory() {
         // IR-011, IR-012
         assert_eq!(Settings::default_path(), Path::new(SETTINGS_FILE_NAME));
+    }
+
+    #[test]
+    fn a_store_takes_the_lock_file_and_writes_the_settings() {
+        // FR-215, IR-012
+        let dir = case_dir("store-held");
+        let path = dir.join(SETTINGS_FILE_NAME);
+        let mut store = SettingsStore::open(&path);
+        let locked = (store.holds_lock(), lock_path_of(&path).exists());
+        store.set_network_path("n.gc3n");
+        let stored = store.store();
+        let read = Settings::load(&path).map(|settings| settings.network_path().to_owned());
+        store.release_lock();
+        let released = lock_path_of(&path).exists();
+        drop(store);
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(
+            (locked, stored, read, released),
+            ((true, true), Ok(true), Ok("n.gc3n".to_owned()), false)
+        );
+    }
+
+    #[test]
+    fn a_second_store_reads_the_settings_but_does_not_write_them() {
+        // FR-218
+        let dir = case_dir("store-refused");
+        let path = dir.join(SETTINGS_FILE_NAME);
+        let mut first = SettingsStore::open(&path);
+        first.set_network_path("first.gc3n");
+        let _ = first.store();
+        let mut second = SettingsStore::open(&path);
+        let read = second.network_path().to_owned();
+        second.set_network_path("second.gc3n");
+        let stored = second.store();
+        let on_disk = Settings::load(&path).map(|settings| settings.network_path().to_owned());
+        let refusal = second.refusal().map(|refusal| refusal.file.clone());
+        drop(second);
+        drop(first);
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(
+            (read.as_str(), stored, on_disk, refusal),
+            (
+                "first.gc3n",
+                Ok(false),
+                Ok("first.gc3n".to_owned()),
+                Some(path.to_string_lossy().into_owned())
+            )
+        );
+    }
+
+    #[test]
+    fn a_store_whose_lock_file_cannot_be_created_writes_as_though_it_held_it() {
+        // FR-222: the folder that does not exist is created by the writing
+        let dir = case_dir("store-unlockable");
+        let path = dir.join("absent").join(SETTINGS_FILE_NAME);
+        let store = SettingsStore::open(&path);
+        let state = (store.holds_lock(), store.refusal().is_none(), store.store());
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(state, (false, true, Ok(true)));
     }
 }

@@ -10,6 +10,34 @@ and this project adheres to a four-part version number.
 
 ## [Unreleased]
 
+At the moment, nothing unreleased here.
+
+## [0.16.1.0] - 2026-10-04
+
+**_Info_dialog_version_and_insert_key_**
+
+Leading work item: definition 0.12.1.0
+
+- Fix the *software problem report* '**_Info_dialog_names_a_stale_version_**': the info dialog named the literal version 0.6.0.1 in every release from 0.6.0.2 on.
+- Fix the *software problem report* '**_Key_toggling_the_edit_mode_modifies_the_content_**', taken into this cycle on the decision of the product owner on 2026-10-04: an *insert key* other than Return, Enter and Tab toggled the *typing mode* and was entered as well, or had its command carried out, since the key handler left its key event unaccepted. `toggledBy` of 'CodeEditor.qml' and `handleKey` of 'OctetView.qml' now accept the key event of the *insert key*.
+- Add the component `crate::core::version` with `version_of_package` and its tests, among them one that holds the version of 'Cargo.toml' to the topmost version heading of 'CHANGELOG.md', so that a release that does not raise 'Cargo.toml' fails its tests.
+- Add the constant property `version` of `Workbench`, taken from `env!("CARGO_PKG_VERSION")`, and bind the text of the info dialog to it.
+- Add the integration test 'tests/code_editor.rs', ignored by default since it needs the QML test runner of Qt: it runs 'tests/qml/tst_insert_key.qml' against the QML files of the code editor, with stand-ins of `Workbench` and `Editing`, and presses a printable key, a command key stroke, Return and Enter as the *insert key* in txt, hex and bin.
+- Raise the version in 'Cargo.toml' to 0.16.1.
+- A corrected fault: a patch bump to 0.16.1.0.
+
+## [0.16.0.0] - 2026-10-03
+
+**_Network_lock_on_MacOS_**
+
+Leading work item: definition 0.12.0.0
+
+- Engineer the *change request* '**_Network_lock_on_MacOS_**', decided by the product owner on 2026-10-03, as the definition 0.12.0.0 states: hold the *lock file* of the *network file* while it is named, and the *lock file* of the *settings file* from the start to the termination; a second genc³wb refuses a network another one holds, keeping the network it had or opening none at its start, and stores none of its settings where another holds the *settings file*.
+- Tell a *refusal* by a dialog and in the status bar of the main window, naming the *holder* by its process number, its host and the time it took the *lock file*, in the local time of the user.
+- Add the component `crate::core::file_lock`, which takes a *lock file* by `File::try_lock` of the standard library, `flock` on MacOS, writes the *holder* into it and removes it on release, and the `SettingsStore` of `crate::core::settings`, through which the settings are read, changed and stored; release both *lock files* when the main window closes.
+- Raise the least version of Rust to 1.89, which has `File::try_lock`, and the version in 'Cargo.toml' to 0.16.0; the README describes the locks.
+- A new capability: a minor bump to 0.16.0.0.
+
 ## [0.15.1.0] - 2026-10-03
 
 **_Outdated_output_pages_**

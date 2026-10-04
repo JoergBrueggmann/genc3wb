@@ -44,7 +44,7 @@ bridging code against Qt.
 
 ## Preconditions
 
-- Rust, stable, 1.87 or later, with cargo, from <https://rustup.rs>. A Rust
+- Rust, stable, 1.89 or later, with cargo, from <https://rustup.rs>. A Rust
   installed earlier is brought up to date with `rustup update stable`.
 
 - Qt 6.10 or later for the desktop, with the modules `qtbase` and
@@ -236,6 +236,24 @@ With the automatic setting on, the workbench measures how long the node or the
 build system takes to answer a change — up to the storing of the outputs — and
 sets the idle time to twice that, rounded up to 0.2 seconds, and the long idle
 time to eight times the idle time, after every answered change.
+
+### One workbench per network and per settings file
+
+A genc³wb holds a lock file beside the network file it has open, named like
+the network file with `.lock` appended, e.g. `network.gc3n.lock`, and one
+beside its settings file, `genc3wb.yaml.lock`, which the first genc³wb started
+in a folder takes for its whole run. A lock file names its holder: the process
+number, the host and the time it was taken. A second genc³wb on the same Mac
+does not open a network another one holds: it keeps the network it had, or
+opens none at its start. Started in the same folder, it works with the
+settings it read but stores none of its changes. Either refusal is told by a
+dialog and in the status bar of the main window, naming the holder.
+
+The lock is the advisory lock of the operating system, which is released when
+its holder terminates in whatever way, so that a lock file left behind by a
+crash blocks nothing. In this version the locks are made for MacOS on a local
+disk, and they bind genc³wb alone: a `genc3d` started in a terminal or a text
+editor is not kept from the files.
 
 ### The node window
 

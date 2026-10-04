@@ -8,7 +8,7 @@ use crate::core::build_system::BuildSession;
 use crate::core::executable;
 use crate::core::network_builder::{BuildOutcome, BuiltGraph, NetworkBuilder};
 use crate::core::network_graph::{GraphLayout, files_of_node, node_index_of_vertex};
-use crate::core::settings::Settings;
+use crate::core::settings::SettingsStore;
 use crate::core::text_increment::TextIncrement;
 
 use qtbridge::{QObjectHolder, QmlMethodInvoker, invoke_method, qobject};
@@ -82,7 +82,7 @@ pub struct NetworkEditor {
     /// the reports of the build thread
     reports: Option<Receiver<Report>>,
     /// the settings, to store the path; wired by the *workbench object*
-    settings: Option<Rc<RefCell<Settings>>>,
+    settings: Option<Rc<RefCell<SettingsStore>>>,
     /// the invoker of the *node editor*, which receives the opened *node*
     node: Option<QmlMethodInvoker>,
     /// the invoker of the *input group* of the *network file*, which receives the marks of the
@@ -173,7 +173,7 @@ impl NetworkEditor {
         if let Some(settings) = &self.settings {
             let mut settings = settings.borrow_mut();
             settings.set_build_system_path(&self.build_system_path);
-            let _ = settings.save(&Settings::default_path());
+            let _ = settings.store();
         }
         self.executable = executable::is_executable(&self.build_system_path);
         self.build_system_path_changed();
@@ -394,7 +394,7 @@ impl NetworkEditor {
     /// * Called by the *workbench object* once, before the *front end* binds to the group.
     pub fn configure(
         &mut self,
-        settings: Rc<RefCell<Settings>>,
+        settings: Rc<RefCell<SettingsStore>>,
         node: QmlMethodInvoker,
         network_input: QmlMethodInvoker,
     ) {

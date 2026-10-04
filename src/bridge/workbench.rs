@@ -7,20 +7,23 @@ use crate::bridge::input_group::InputGroup;
 use crate::bridge::network_editor::NetworkEditor;
 use crate::bridge::node_editor::NodeEditor;
 use crate::bridge::output_group::OutputGroup;
+use crate::core::file_lock::Holder;
 use crate::core::input_file::InputKind;
 use crate::core::key_stroke::KeyStroke;
-use crate::core::settings::{Settings, tab_size_violation, times_of_processing};
+use crate::core::settings::{Settings, SettingsStore, tab_size_violation, times_of_processing};
+use crate::core::version::version_of_package;
 
 use qtbridge::{QObjectHolder, qobject};
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
-// realises FR-001, FR-063, FR-090, FR-095, FR-099, FR-140, FR-141, FR-149, FR-192
+// realises FR-001, FR-063, FR-090, FR-095, FR-099, FR-140, FR-141, FR-149, FR-192, FR-215,
+// FR-218
 /// The *workbench object*.
 pub struct Workbench {
-    /// the settings, shared with the groups
-    settings: Rc<RefCell<Settings>>,
+    /// the settings with the *settings file* and its *lock file*, shared with the groups
+    settings: Rc<RefCell<SettingsStore>>,
     /// the output group
     output: Rc<RefCell<OutputGroup>>,
     /// the *node editor*
@@ -34,14 +37,12 @@ pub struct Workbench {
 }
 
 impl Default for Workbench {
-    /// Restores the settings, creates the groups, and wires them: the *node editor* with the
-    /// output group, the network editor with the *node editor* and the *input group* of the
-    /// *network file*, and that *input group* with the network editor, the two last with their
-    /// paths.
+    /// Takes the *lock file* of the *settings file* and restores the settings, creates the
+    /// groups, and wires them: the *node editor* with the output group, the network editor with
+    /// the *node editor* and the *input group* of the *network file*, and that *input group* with
+    /// the network editor, the two last with their paths.
     fn default() -> Self {
-        let settings = Rc::new(RefCell::new(
-            Settings::load(&Settings::default_path()).unwrap_or_default(),
-        ));
+        let settings = Rc::new(RefCell::new(SettingsStore::open(&Settings::default_path())));
         let output = OutputGroup::default_with_attached_qobject();
         let node = NodeEditor::default_with_attached_qobject();
         let network = NetworkEditor::default_with_attached_qobject();
@@ -72,7 +73,7 @@ impl Default for Workbench {
 }
 
 // realises FR-001, FR-063, FR-095, FR-099, FR-130 to FR-135, FR-140, FR-141, FR-146 to FR-149,
-// FR-192 to FR-194, FR-198 to FR-200
+// FR-192 to FR-194, FR-198 to FR-200, FR-214, FR-215, FR-218 to FR-221, FR-224
 #[qobject(Singleton)]
 impl Workbench {
     qproperty!("output", Read = output, Constant);
@@ -117,6 +118,21 @@ impl Workbench {
         Read = network_left_width,
         Notify = splitters_changed
     );
+    // the refusal of the settings file and its holder, empty and 0 where there is none (FR-220)
+    qproperty!(
+        "settingsRefusedFile",
+        Read = settings_refused_file,
+        Constant
+    );
+    qproperty!("settingsHolderPid", Read = settings_holder_pid, Constant);
+    qproperty!("settingsHolderHost", Read = settings_holder_host, Constant);
+    qproperty!(
+        "settingsHolderSince",
+        Read = settings_holder_since,
+        Constant
+    );
+    // the version of the product in its four parts (FR-224)
+    qproperty!("version", Read = version, Constant);
 
     fn output(&self) -> Rc<RefCell<OutputGroup>> {
         Rc::clone(&self.output)
@@ -187,6 +203,40 @@ impl Workbench {
     // realises FR-148, FR-149
     fn network_left_width(&self) -> u32 {
         self.settings.borrow().network_left_width()
+    }
+
+    // realises FR-218, FR-219, FR-220
+    fn settings_refused_file(&self) -> String {
+        self.settings
+            .borrow()
+            .refusal()
+            .map(|refusal| refusal.file.clone())
+            .unwrap_or_default()
+    }
+
+    // realises FR-219, FR-220
+    fn settings_holder_pid(&self) -> i32 {
+        self.settings_holder()
+            .map_or(0, |holder| i32::try_from(holder.pid).unwrap_or(i32::MAX))
+    }
+
+    // realises FR-219, FR-220
+    fn settings_holder_host(&self) -> String {
+        self.settings_holder()
+            .map(|holder| holder.host)
+            .unwrap_or_default()
+    }
+
+    // realises FR-219, FR-220
+    fn settings_holder_since(&self) -> String {
+        self.settings_holder()
+            .map(|holder| holder.since)
+            .unwrap_or_default()
+    }
+
+    // realises FR-224: the version the package was compiled as
+    fn version(&self) -> String {
+        version_of_package(env!("CARGO_PKG_VERSION"))
     }
 
     // signals
@@ -346,6 +396,15 @@ impl Workbench {
         self.splitters_changed();
     }
 
+    // realises FR-214, FR-215, FR-221
+    /// Releases and removes the *lock files* of the *settings file* and of the *network file*;
+    /// called by the *front end* when the main window closes, since *product* terminates then.
+    #[qslot(qml_name = "releaseLocks")]
+    fn release_locks(&mut self) {
+        self.settings.borrow_mut().release_lock();
+        self.network_input.borrow_mut().release_lock();
+    }
+
     // realises FR-129, FR-130
     /// Takes a measured *processing time* in milliseconds: with the *automatic setting* on, sets
     /// the two times to those of `times_of_processing`, stores them and emits `times_changed`;
@@ -375,10 +434,20 @@ impl Workbench {
 }
 
 impl Workbench {
-    // realises IR-012
-    /// Writes the *settings file*; a failure leaves the settings of the session as they are.
+    // realises FR-218, IR-012
+    /// Writes the *settings file*, unless another genc³wb holds its *lock file*; a failure
+    /// leaves the settings of the session as they are.
     fn store(&self) {
-        let _ = self.settings.borrow().save(&Settings::default_path());
+        let _ = self.settings.borrow().store();
+    }
+
+    /// Yields the *holder* of the *lock file* of the *settings file* where the *settings file*
+    /// is refused and its *lock file* names one.
+    fn settings_holder(&self) -> Option<Holder> {
+        self.settings
+            .borrow()
+            .refusal()
+            .and_then(|refusal| refusal.holder.clone())
     }
 
     // realises FR-199, FR-200
@@ -394,7 +463,7 @@ impl Workbench {
     }
 
     /// Yields the settings the groups share.
-    pub fn settings(&self) -> Rc<RefCell<Settings>> {
+    pub fn settings(&self) -> Rc<RefCell<SettingsStore>> {
         Rc::clone(&self.settings)
     }
 }

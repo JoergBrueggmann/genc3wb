@@ -157,6 +157,7 @@ Item {
         const movement = movements.indexOf(event.key);
         const whole = (event.modifiers & Qt.ControlModifier) !== 0;
         if (Workbench.toggledByKey(event.key, event.modifiers)) {
+            event.accepted = true;
             return;
         }
         // on MacOS the command key with an arrow key moves to the start or the end of the row or of the document

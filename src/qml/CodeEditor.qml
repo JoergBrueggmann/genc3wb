@@ -77,9 +77,14 @@ Frame {
                                                        textArea.x + cursor.x + cursor.width + root.characterWidth);
     }
 
-    // Yields whether the key is the insert key, which toggles the typing mode.
+    // Yields whether the key is the insert key, which toggles the typing mode; its key event is then
+    // accepted, so that the text area enters nothing for it.
     function toggledBy(event: KeyEvent): bool {
-        return Workbench.toggledByKey(event.key, event.modifiers);
+        const toggled = Workbench.toggledByKey(event.key, event.modifiers);
+        if (toggled) {
+            event.accepted = true;
+        }
+        return toggled;
     }
 
     // Inserts a line break and the indentation of the line of the cursor in place of the selection.
