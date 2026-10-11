@@ -54,6 +54,8 @@ Window {
 
             Layout.fillWidth: true
             Layout.fillHeight: true
+            // an input of a producer is not edited: its content is what the node holds (FR-238)
+            readOnly: editorWindow.group.produced
             // the text is bound in txt alone, so that an edit in hex or bin does not lay it out anew
             text: editor.mode === 0 ? editorWindow.group.text : ""
             idleTime: Workbench.idleTime

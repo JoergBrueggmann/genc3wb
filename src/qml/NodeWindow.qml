@@ -22,6 +22,31 @@ Window {
     title: Workbench.node.name.length > 0 ? "genc³wb - " + Workbench.node.name : "genc³wb"
     onClosing: Workbench.node.close()
 
+    // Yields the text of the node mode `mode` for the status line, as the message schema
+    // numbers it: 1 invalid, 2 valid, 3 active; empty for 0, where none is told (FR-123)
+    function nodeModeText(mode: int): string {
+        switch (mode) {
+        case 1:
+            return qsTr("The node is an invalid node.");
+        case 2:
+            return qsTr("The node is a valid node, not active.");
+        case 3:
+            return qsTr("The node is an active node.");
+        default:
+            return "";
+        }
+    }
+
+    // Closes every detached window and the node window, where it is presented: the network
+    // ceased to be active (FR-263)
+    function closeWithDetachedWindows() {
+        outputWindowModel.clear();
+        editorWindowModel.clear();
+        if (nodeWindow.visible) {
+            nodeWindow.close();
+        }
+    }
+
     ColumnLayout {
         id: layout
 
@@ -204,11 +229,15 @@ Window {
                 id: statusLine
 
                 Layout.fillWidth: true
-                text: Workbench.node.status.length > 0
-                      ? Workbench.node.status
-                      : !Workbench.node.served
-                        ? qsTr("The node is not served.")
-                        : Workbench.node.busy ? qsTr("The node is processing.") : qsTr("The node is served.")
+                // the text of FR-112, or whether the node is served and processing, then its
+                // node mode (FR-123)
+                text: [Workbench.node.status.length > 0
+                       ? Workbench.node.status
+                       : !Workbench.node.served
+                         ? qsTr("The node is not served.")
+                         : Workbench.node.busy ? qsTr("The node is processing.") : qsTr("The node is served."),
+                       nodeWindow.nodeModeText(Workbench.node.nodeMode)]
+                      .filter(part => part.length > 0).join("  ·  ")
             }
 
             TypingModeLabel {

@@ -26,7 +26,7 @@ pub fn lock_path_of(file: &Path) -> PathBuf {
     PathBuf::from(path)
 }
 
-// realises FR-219, IR-034
+// realises FR-219, IR-034, IR-037
 /// The *holder* of a *lock file*: the genc³wb that holds it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Holder {
@@ -62,7 +62,7 @@ impl Holder {
         )
     }
 
-    // realises IR-034
+    // realises IR-037
     /// Yields the *holder* a *lock file* names by `text`, as [`Holder::text`] writes it; `None`
     /// where `text` does not have that form, as a *lock file* being written has not.
     pub fn of_text(text: &str) -> Option<Holder> {
@@ -120,11 +120,11 @@ pub struct FileLock {
 }
 
 impl FileLock {
-    // realises FR-214, FR-215, FR-216, FR-218, FR-222, IR-034
+    // realises FR-214, FR-215, FR-216, FR-218, FR-222, IR-034, IR-037
     /// Takes the *lock file* of the file at `file` and writes this process into it as its
     /// *holder*.
     ///
-    /// * Where another holds the *lock file*, its *holder* is read from it (IR-034).
+    /// * Where another holds the *lock file*, its *holder* is read from it (IR-037).
     /// * Where the *holder* removes the *lock file* between its opening and its locking here,
     ///   the locked file is no longer the *lock file*, and the *lock file* is taken again.
     pub fn take(file: &Path) -> Taking {
@@ -340,7 +340,7 @@ mod tests {
 
     #[test]
     fn a_holder_is_read_back_from_its_text() {
-        // IR-034
+        // IR-034, IR-037
         let holder = Holder {
             pid: 4711,
             host: "Mac-mini.local".to_owned(),
@@ -366,7 +366,7 @@ mod tests {
 
     #[test]
     fn a_text_of_another_form_names_no_holder() {
-        // IR-034
+        // IR-037
         assert_eq!(
             [
                 "",
@@ -399,7 +399,7 @@ mod tests {
 
     #[test]
     fn a_held_lock_file_is_refused_and_names_its_holder() {
-        // FR-216, FR-218, IR-034
+        // FR-216, FR-218, IR-034, IR-037
         let dir = case_dir("refused");
         let file = dir.join("network.gc3n");
         let first = FileLock::take(&file);
@@ -427,7 +427,7 @@ mod tests {
 
     #[test]
     fn a_lock_file_whose_text_has_another_form_is_refused_without_a_holder() {
-        // FR-216, IR-034
+        // FR-216, IR-034, IR-037
         let dir = case_dir("unknown");
         let file = dir.join("network.gc3n");
         let first = FileLock::take(&file);

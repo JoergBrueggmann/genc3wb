@@ -1,5 +1,6 @@
 // The output group: navigation, page label, detach button, the output pages with their mode switch and
-// their mark of an outdated content, and the diagnostics page, which is presented while diagnostics appear.
+// their mark of an outdated file, and the diagnostics page with the icons of the origins, which is presented
+// while diagnostics or origins appear.
 //
 // Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 // Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -93,7 +94,7 @@ GroupBox {
                         sourceSize.height: 20
                         visible: root.output.outdated
                         ToolTip.visible: outdatedHover.hovered
-                        ToolTip.text: qsTr("This content is outdated: the outputs of the last change could not be stored. %1").arg(root.output.storeFailure)
+                        ToolTip.text: qsTr("The file of this output is outdated: the outputs of the last change could not be stored. %1").arg(root.output.storeFailure)
 
                         HoverHandler {
                             id: outdatedHover
@@ -120,12 +121,57 @@ GroupBox {
                 }
             }
 
-            CodeEditor {
-                id: diagnosticsEditor
+            ColumnLayout {
+                // one icon per origin of the opened node, a node upstream that counts an error:
+                // its tooltip names that node, and activating it opens that node (FR-234, FR-235)
+                RowLayout {
+                    id: originsRow
 
-                readOnly: true
-                tabSize: Workbench.tabSize
-                text: root.output.diagnostics
+                    visible: root.output.origins.length > 0
+
+                    Repeater {
+                        id: originRepeater
+
+                        model: root.output.origins
+                        delegate: Image {
+                            id: originIcon
+
+                            required property string modelData
+
+                            source: "qrc:/genc3wb/qml/icons/error.png"
+                            fillMode: Image.PreserveAspectFit
+                            sourceSize.height: 20
+                            ToolTip.visible: originHover.hovered
+                            ToolTip.text: qsTr("Errors originate at node %1 ...").arg(originIcon.modelData)
+
+                            HoverHandler {
+                                id: originHover
+
+                                cursorShape: Qt.PointingHandCursor
+                            }
+
+                            TapHandler {
+                                id: originTap
+
+                                onTapped: Workbench.network.openNodeNamed(originIcon.modelData)
+                            }
+                        }
+                    }
+
+                    Item {
+                        Layout.fillWidth: true
+                    }
+                }
+
+                CodeEditor {
+                    id: diagnosticsEditor
+
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    readOnly: true
+                    tabSize: Workbench.tabSize
+                    text: root.output.diagnostics
+                }
             }
         }
     }

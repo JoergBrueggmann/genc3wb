@@ -9,7 +9,7 @@ use crate::core::input_file::{InputFile, InputKind, ProcessingState};
 use crate::core::octet_edit::{digits_of_text, text_of_digits};
 use crate::core::octet_view::{EditorMode, row_count, row_segments, row_text_of_bits};
 use crate::core::settings::SettingsStore;
-use crate::core::text_increment::IncrementTracker;
+use crate::core::text_increment::{IncrementTracker, TextIncrement};
 
 use qtbridge::{QmlMethodInvoker, invoke_method, qobject};
 
@@ -18,7 +18,7 @@ use std::io::Write;
 use std::path::Path;
 use std::rc::Rc;
 
-// realises FR-007, FR-113, FR-214, FR-216
+// realises FR-007, FR-214, FR-216, FR-238, FR-239
 /// One *input group* as the *front end* binds to it.
 pub struct InputGroup {
     /// the input file
@@ -31,10 +31,9 @@ pub struct InputGroup {
     announced_state: ProcessingState,
     /// the *document identifier* of the file at the *node*; empty for the *network file*
     identifier: String,
-    /// the name of the *producer* of the *input*; empty where it has none
-    producer: String,
-    /// whether the text was edited since the document was named
-    edited_since_named: bool,
+    /// whether the document is an *input* that has a *producer*, which the user does not edit
+    /// and whose content is what the *node* holds (FR-238, FR-239)
+    produced: bool,
     /// the marks of the *diagnostics* of the document; none where there is none
     marks: Marks,
     /// the marks of the *diagnostics* of the document in hex and bin, their ranges in bits
@@ -66,8 +65,7 @@ impl Default for InputGroup {
             pending_path: None,
             announced_state: ProcessingState::default(),
             identifier: String::new(),
-            producer: String::new(),
-            edited_since_named: false,
+            produced: false,
             marks: Marks::default(),
             octet_marks: Marks::default(),
             provided_octets: None,
@@ -81,9 +79,9 @@ impl Default for InputGroup {
 }
 
 // realises FR-007, FR-011 to FR-017, FR-056, FR-059, FR-069, FR-083, FR-086, FR-087, FR-106,
-// FR-107, FR-108, FR-113, FR-114, FR-116, FR-126, FR-127, FR-128, FR-154, FR-156 to FR-159,
+// FR-116, FR-126, FR-127, FR-128, FR-154, FR-156 to FR-159,
 // FR-163 to FR-173, FR-175, FR-177, FR-179 to FR-187, FR-202, FR-203, FR-205, FR-207, FR-208,
-// FR-214, FR-216, FR-217, FR-219, FR-220
+// FR-214, FR-216, FR-217, FR-219, FR-220, FR-238, FR-239, FR-240, FR-246, FR-247, FR-253
 #[qobject(NoQmlElement)]
 impl InputGroup {
     qproperty!("caption", Read = caption, Constant);
@@ -107,12 +105,8 @@ impl InputGroup {
     qproperty!("path", Read = path, Write = set_path, Notify = path_changed);
     qproperty!("text", Read = text, Write = set_text, Notify = text_changed);
     qproperty!("state", Read = state, Notify = state_changed);
-    qproperty!("producer", Read = producer, Notify = document_changed);
-    qproperty!(
-        "temporaryEdit",
-        Read = temporary_edit,
-        Notify = state_changed
-    );
+    // whether the document is an input that has a producer, which the user does not edit (FR-238)
+    qproperty!("produced", Read = produced, Notify = document_changed);
     qproperty!(
         "diagnosticStarts",
         Read = diagnostic_starts,
@@ -236,17 +230,12 @@ impl InputGroup {
         self.file.state().index() as i32
     }
 
-    // realises FR-114
-    fn producer(&self) -> String {
-        self.producer.clone()
+    // realises FR-238
+    fn produced(&self) -> bool {
+        self.produced
     }
 
-    // realises FR-113
-    fn temporary_edit(&self) -> bool {
-        !self.producer.is_empty() && self.edited_since_named
-    }
-
-    // realises FR-107, FR-108, FR-126
+    // realises FR-126, FR-246, FR-247
     fn diagnostic_starts(&self) -> Vec<i32> {
         self.marks.starts.clone()
     }
@@ -275,18 +264,16 @@ impl InputGroup {
         self.name_path(path);
     }
 
-    // realises FR-019, FR-021, FR-055, FR-113, FR-165, FR-166
-    // Replaces the octets by the encoding of the text where the user modified it, records that
-    // the document was edited, and announces the *processing state*; a text as the text area
-    // holds the text of the document is no edit.
+    // realises FR-019, FR-021, FR-055, FR-165, FR-166, FR-238
+    // Replaces the octets by the encoding of the text where the user modified it, and announces
+    // the *processing state*; a text as the text area holds the text of the document is no
+    // edit, and neither is a text set for an input that has a producer.
     fn set_text(&mut self, text: String) {
-        if !self.file.set_text(&text) {
+        if self.produced || !self.file.set_text(&text) {
             return;
         }
-        let temporary_before = self.temporary_edit();
-        self.edited_since_named = true;
         self.announce_text();
-        self.announce_state(temporary_before != self.temporary_edit());
+        self.announce_state();
     }
 
     // signals
@@ -342,31 +329,17 @@ impl InputGroup {
     /// * Where the octets are no valid UTF-8, no *text increment* is provided: the octets are
     ///   provided where they differ from those provided before, the *provided text* becomes
     ///   empty, and `applyOctets` of the receiver is scheduled with the *document identifier*.
+    /// * The document of an *input* that has a *producer* provides nothing and is not saved:
+    ///   the *producer* transmits it to the *node* (FR-240).
     #[qslot(qml_name = "idleExpired")]
     fn idle_expired(&mut self) {
-        if !self.file.is_text() {
-            self.provide_octets();
-        } else if let Some(increment) = self.tracker.provide(self.file.text()) {
-            self.provided_octets = None;
-            let rendering = increment.rendering();
-            let mut stdout = std::io::stdout().lock();
-            let _ = writeln!(stdout, "{rendering}");
-            let _ = stdout.flush();
-            self.increment_provided(rendering);
-            if let Some(receiver) = &self.receiver {
-                invoke_method!(
-                    receiver,
-                    "applyIncrement",
-                    self.identifier.clone(),
-                    i32::try_from(increment.position).unwrap_or(i32::MAX),
-                    i32::try_from(increment.range).unwrap_or(i32::MAX),
-                    increment.text
-                );
-            }
+        if self.produced {
+            return;
         }
+        self.provide(false);
         if self.file.has_unsaved_changes() && !self.file.path().is_empty() {
             let _ = self.file.save();
-            self.announce_state(false);
+            self.announce_state();
         }
     }
 
@@ -394,7 +367,7 @@ impl InputGroup {
     #[qslot(qml_name = "replaceDigits")]
     fn replace_digits(&mut self, mode: i32, start: i32, removed: i32, text: String) -> i32 {
         let replaced = mode_of(mode)
-            .filter(|_| self.octet_modes())
+            .filter(|_| self.octet_modes() && !self.produced)
             .and_then(|mode| digits_of_text(&text, mode).map(|digits| (mode, digits)))
             .and_then(|(mode, digits)| {
                 self.file
@@ -409,7 +382,11 @@ impl InputGroup {
     /// of the *editor mode* of index `mode` behind what was restored, -1 where no edit is made.
     #[qslot(qml_name = "undo")]
     fn undo(&mut self, mode: i32) -> i32 {
-        let cursor = self.file.undo();
+        let cursor = if self.produced {
+            None
+        } else {
+            self.file.undo()
+        };
         self.announce_edit(cursor.is_some());
         digit_of_bit(cursor, mode)
     }
@@ -419,7 +396,11 @@ impl InputGroup {
     /// *editor mode* of index `mode` behind what was inserted, -1 where no edit is taken back.
     #[qslot(qml_name = "redo")]
     fn redo(&mut self, mode: i32) -> i32 {
-        let cursor = self.file.redo();
+        let cursor = if self.produced {
+            None
+        } else {
+            self.file.redo()
+        };
         self.announce_edit(cursor.is_some());
         digit_of_bit(cursor, mode)
     }
@@ -438,22 +419,40 @@ impl InputGroup {
         })
     }
 
-    // realises FR-086, FR-087, FR-113, FR-114
-    /// Names the document of a *node*: records `identifier` and `producer`, forgets the
-    /// *provided text*, the octets provided and the *diagnostics*, so that the next
-    /// *text increment* carries the whole text, and names `path` as the file name field does,
-    /// loading the file even where the path is the one before, since the file may have changed;
-    /// scheduled by the *node editor*.
+    // realises FR-086, FR-087, FR-238, FR-239
+    /// Names the document of a *node*: records `identifier` and whether the document is an
+    /// *input* that has a *producer*, forgets the *provided text*, the octets provided and the
+    /// *diagnostics*, so that the next *text increment* carries the whole text, and names
+    /// `path` as the file name field does, loading the file even where the path is the one
+    /// before, since the file may have changed; scheduled by the *node editor*.
+    ///
+    /// * The file of an *input* that has a *producer* is not loaded: its document is empty
+    ///   until `setContent` brings what the *node* holds of it.
     #[qslot(qml_name = "nameDocument")]
-    fn name_document(&mut self, identifier: String, path: String, producer: String) {
+    fn name_document(&mut self, identifier: String, path: String, produced: bool) {
         self.identifier = identifier;
-        self.producer = producer;
+        self.produced = produced;
         self.tracker = IncrementTracker::default();
         self.provided_octets = None;
         self.document_changed();
         self.set_diagnostics(vec![], vec![], vec![], vec![]);
         self.set_octet_marks(vec![], vec![], vec![], vec![]);
         self.name_path(path);
+    }
+
+    // realises FR-239
+    /// Replaces the octets of the document of an *input* that has a *producer* by `octets`, the
+    /// content the *node* holds of it, and announces the text and the *processing state*; does
+    /// nothing for every other document, which the user edits; scheduled by the *node editor*.
+    #[qslot(qml_name = "setContent")]
+    fn set_content(&mut self, octets: Vec<u8>) {
+        if !self.produced || octets == self.file.octets() {
+            return;
+        }
+        let path = self.file.path().to_owned();
+        self.file.hold(&path, octets);
+        self.announce_text();
+        self.announce_state();
     }
 
     // realises FR-158, FR-159
@@ -542,7 +541,7 @@ impl InputGroup {
         self.octet_marks_changed();
     }
 
-    // realises FR-107, FR-108, FR-126, FR-127, FR-128
+    // realises FR-126, FR-127, FR-128, FR-246, FR-247
     /// Replaces the marks of the *diagnostics*: per *diagnostic* the start and the end of its
     /// range as offsets in UTF-16 code units, the index of its severity and its message text;
     /// scheduled by the *node editor* or by the network editor.
@@ -600,6 +599,46 @@ impl InputGroup {
         self.provided_octets.clone().unwrap_or_default()
     }
 
+    // realises FR-056, FR-057, FR-059, FR-106, FR-167, FR-242, IR-015, IR-016
+    /// Provides what the document holds to the receiver: the pending *text increment*, written
+    /// to standard output and announced by `increment_provided`, as `applyIncrement`; or, where
+    /// the octets are no valid UTF-8, the octets, as `applyOctets`.
+    ///
+    /// * Where `registering`, the document is provided although nothing is pending, by a
+    ///   *text increment* that changes nothing, so that the receiver transmits the open request
+    ///   of a document that is empty as well (FR-242); that one is no *text increment* of the
+    ///   code editor, and is neither written nor announced.
+    fn provide(&mut self, registering: bool) {
+        if !self.file.is_text() {
+            self.provide_octets();
+            return;
+        }
+        let increment = match self.tracker.provide(self.file.text()) {
+            Some(increment) => {
+                let rendering = increment.rendering();
+                let mut stdout = std::io::stdout().lock();
+                let _ = writeln!(stdout, "{rendering}");
+                let _ = stdout.flush();
+                drop(stdout);
+                self.increment_provided(rendering);
+                increment
+            }
+            None if registering => TextIncrement::default(),
+            None => return,
+        };
+        self.provided_octets = None;
+        if let Some(receiver) = &self.receiver {
+            invoke_method!(
+                receiver,
+                "applyIncrement",
+                self.identifier.clone(),
+                i32::try_from(increment.position).unwrap_or(i32::MAX),
+                i32::try_from(increment.range).unwrap_or(i32::MAX),
+                increment.text
+            );
+        }
+    }
+
     // realises FR-167, FR-168
     /// Provides the octets where they differ from those provided before: the *provided text*
     /// becomes empty, and `applyOctets` of the receiver is scheduled with the
@@ -615,17 +654,15 @@ impl InputGroup {
         }
     }
 
-    // realises FR-019, FR-021, FR-113
-    /// Announces an edit made in hex or bin, where `edited`: records that the document was
-    /// edited, and announces the text and the *processing state*.
+    // realises FR-019, FR-021
+    /// Announces an edit made in hex or bin, where `edited`: announces the text and the
+    /// *processing state*.
     fn announce_edit(&mut self, edited: bool) {
         if !edited {
             return;
         }
-        let temporary_before = self.temporary_edit();
-        self.edited_since_named = true;
         self.announce_text();
-        self.announce_state(temporary_before != self.temporary_edit());
+        self.announce_state();
     }
 
     /// Counts the change of the octets and emits `text_changed`.
@@ -653,7 +690,7 @@ impl InputGroup {
             String::new()
         };
         let _ = self.file.load(&path);
-        self.announce_state(false);
+        self.announce_state();
         self.announce_path();
     }
 
@@ -677,12 +714,17 @@ impl InputGroup {
         }
     }
 
-    // realises FR-012, FR-013, FR-091, FR-214, FR-216
+    // realises FR-012, FR-013, FR-091, FR-214, FR-216, FR-239, FR-242, FR-253
     /// Stores `path` in the settings for the *network file*, loads the file, and notifies the
     /// *front end*.
     ///
+    /// * The document of a *node* the user edits is provided to the *node editor* at once, an
+    ///   empty one included, so that the *node* is transmitted an open request for it without
+    ///   an edit (FR-242).
     /// * Where another genc³wb holds the *lock file* of the *network file* at `path`, the
     ///   *network file* named before stays, and `path_changed` restores its path in the field.
+    /// * The file of an *input* that has a *producer* is not loaded: its document is named and
+    ///   empty.
     fn apply_path(&mut self, path: &str) {
         if !self.lock_network(path) {
             self.path_changed();
@@ -694,18 +736,23 @@ impl InputGroup {
             let _ = settings.store();
         }
         let octets_before = self.file.octets().to_vec();
-        let _ = self.file.load(path);
-        let temporary_before = self.temporary_edit();
-        self.edited_since_named = false;
+        if self.produced {
+            self.file.hold(path, Vec::new());
+        } else {
+            let _ = self.file.load(path);
+        }
         self.path_changed();
         if self.file.octets() != octets_before {
             self.announce_text();
         }
-        self.announce_state(temporary_before != self.temporary_edit());
+        self.announce_state();
         self.announce_path();
+        if !self.identifier.is_empty() && !self.produced {
+            self.provide(true);
+        }
     }
 
-    // realises FR-214, FR-216, FR-217, FR-219, FR-220, FR-221, FR-222
+    // realises FR-214, FR-216, FR-217, FR-219, FR-220, FR-221, FR-222, FR-253
     /// Takes the *lock file* of the *network file* at `path`, releasing the one held before;
     /// yields whether `path` may be named, which every file but a *network file* may.
     ///
@@ -742,11 +789,11 @@ impl InputGroup {
         true
     }
 
-    // realises FR-017, FR-113
-    /// Emits `state_changed` where the *processing state* changed, or where `temporary_changed`.
-    fn announce_state(&mut self, temporary_changed: bool) {
+    // realises FR-017
+    /// Emits `state_changed` where the *processing state* changed.
+    fn announce_state(&mut self) {
         let state = self.file.state();
-        if state == self.announced_state && !temporary_changed {
+        if state == self.announced_state {
             return;
         }
         self.announced_state = state;

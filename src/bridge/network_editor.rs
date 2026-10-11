@@ -3,11 +3,12 @@
 //! Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 //! Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
 
-use crate::core::api_message::{NodeDescription, marks_of_diagnostics};
-use crate::core::build_system::BuildSession;
+use crate::core::api_message::{NetworkMode, NodeDescription, NodeState, marks_of_diagnostics};
+use crate::core::build_system::{BuildError, BuildSession, Watched};
 use crate::core::executable;
-use crate::core::network_builder::{BuildOutcome, BuiltGraph, NetworkBuilder};
+use crate::core::network_builder::{BuildOutcome, BuiltGraph, NetworkBuilder, StateSinks};
 use crate::core::network_graph::{GraphLayout, files_of_node, node_index_of_vertex};
+use crate::core::node_state::{NodeStates, StoreGate};
 use crate::core::settings::SettingsStore;
 use crate::core::text_increment::TextIncrement;
 
@@ -18,6 +19,7 @@ use std::collections::VecDeque;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// The time the main thread waits for the build thread to shut the *build system* down.
@@ -36,22 +38,40 @@ enum Command {
         increment: TextIncrement,
         provided_after: String,
     },
+    /// transmit a *store request* to the *build system* (FR-109); `deferred` says that it was
+    /// held back first (FR-241)
+    Store { deferred: bool },
+    /// transmit an *activate request* to the *build system* (FR-260)
+    Activate,
     /// shut the *build system* down and end the thread (FR-068)
     Stop,
 }
 
-/// What the build thread reports to the main thread.
+/// What the build thread and the reader thread of the connection to the *build system* report
+/// to the main thread.
 enum Report {
     /// the outcome of a *build*: the *diagnostics* of the change, and the graph or the
     /// *error message*
     Built(BuildOutcome),
     /// the *build system* could not be started; carries the *error message*
     NotStarted(String),
+    /// the outcome of a *store request*, the text of FR-112 where it failed
+    Stored {
+        outcome: Result<(), String>,
+        deferred: bool,
+    },
+    /// the outcome of an *activate request*, the *error message* of FR-261 where it failed
+    Activated(Result<(), String>),
+    /// the *node states* and the *network mode* of a *state response* of the *build system*,
+    /// as the reader thread received it (FR-229)
+    Watched(Vec<NodeState>, Option<NetworkMode>),
+    /// the connection to the *build system* was lost
+    Lost,
     /// the build thread ended
     Stopped,
 }
 
-// realises FR-064
+// realises FR-064, FR-109, FR-229, FR-241, FR-252, FR-258, FR-259
 /// The group for the *network graph* as the *front end* binds to it.
 #[derive(Default)]
 pub struct NetworkEditor {
@@ -77,6 +97,15 @@ pub struct NetworkEditor {
     builds_pending: u32,
     /// when each *build* not yet reported was handed over, in their order (FR-129)
     builds_started: VecDeque<Instant>,
+    /// the *node state* of every *node* and the *network mode*, as the *build system* told them
+    /// last (FR-229)
+    states: NodeStates,
+    /// whether a *store request* is held back until the *node states* count no error and the
+    /// network is active (FR-109, FR-241, FR-252)
+    gate: StoreGate,
+    /// the number of *activate requests* handed to the build thread and not yet reported
+    /// (FR-259)
+    activations_pending: u32,
     /// the commands to the build thread, `None` before the first one and after `shut_down`
     commands: Option<Sender<Command>>,
     /// the reports of the build thread
@@ -91,7 +120,7 @@ pub struct NetworkEditor {
 }
 
 // realises FR-064 to FR-069, FR-078 to FR-083, FR-085 to FR-088, FR-091, FR-092, FR-102 to FR-104,
-// FR-128
+// FR-109, FR-128, FR-228, FR-229, FR-235, FR-241, FR-245, FR-252, FR-258 to FR-263
 #[qobject(NoQmlElement)]
 impl NetworkEditor {
     qproperty!(
@@ -120,6 +149,8 @@ impl NetworkEditor {
         Notify = view_changed
     );
     qproperty!("building", Read = building, Notify = building_changed);
+    qproperty!("networkMode", Read = network_mode, Notify = mode_changed);
+    qproperty!("activatable", Read = activatable, Notify = mode_changed);
 
     // getters
     fn build_system_path(&self) -> String {
@@ -147,7 +178,7 @@ impl NetworkEditor {
         self.showing_error
     }
 
-    // realises FR-079, FR-081
+    // realises FR-079, FR-081, FR-245
     fn error_button_visible(&self) -> bool {
         !self.error_message.is_empty() && !self.showing_error
     }
@@ -159,6 +190,19 @@ impl NetworkEditor {
 
     fn building(&self) -> bool {
         self.builds_pending > 0
+    }
+
+    // realises FR-258
+    // The network mode as the message schema numbers it, 1 to 3, and 0 where none is kept.
+    fn network_mode(&self) -> i32 {
+        self.states
+            .mode()
+            .map_or(0, |mode| i32::try_from(mode.number()).unwrap_or(0))
+    }
+
+    // realises FR-259
+    fn activatable(&self) -> bool {
+        self.states.is_activatable() && self.activations_pending == 0
     }
 
     // setters
@@ -189,6 +233,12 @@ impl NetworkEditor {
 
     #[qsignal(qml_name = "buildingChanged")]
     fn building_changed(&mut self);
+
+    #[qsignal(qml_name = "modeChanged")]
+    fn mode_changed(&mut self);
+
+    #[qsignal(qml_name = "networkDeactivated")]
+    fn network_deactivated(&mut self);
 
     #[qsignal(qml_name = "nodeOpened")]
     fn node_opened(&mut self, name: String);
@@ -231,58 +281,68 @@ impl NetworkEditor {
     }
 
     // realises FR-085, FR-086, FR-087, FR-088, FR-102, FR-103, FR-104, IR-024
-    /// Opens the *node* whose vertex lies at a point of the image: schedules `openNode` of the
-    /// *node editor* with the name, the path of the *build system*, the directory of the
-    /// *network file*, the *document identifiers* of the files and the *producers* of the
-    /// *inputs*, and emits `node_opened`; does nothing for a *proxy node*, for a file, and
-    /// beside every vertex.
+    /// Opens the *node* whose vertex lies at a point of the image, as `open_node` does; does
+    /// nothing for a file, and beside every vertex.
     ///
     /// # Arguments
     /// * `horizontal` - the distance from the left edge, as a fraction of the width of the image
     /// * `vertical` - the distance from the top edge, as a fraction of the height of the image
     #[qslot(qml_name = "openNodeAt")]
     fn open_node_at(&mut self, horizontal: f64, vertical: f64) {
-        let Some(node) = self
+        let index = self
             .layout
             .vertex_at(horizontal, vertical)
-            .and_then(node_index_of_vertex)
-            .and_then(|index| self.nodes.get(index))
-        else {
-            return;
-        };
-        let Some(files) = files_of_node(node, &self.nodes) else {
-            return;
-        };
-        let directory = Path::new(&self.network_path)
-            .parent()
-            .unwrap_or_else(|| Path::new(""))
-            .to_string_lossy()
-            .into_owned();
-        let identifiers = |files: &[crate::core::network_graph::NodeFile]| {
-            files
-                .iter()
-                .map(|file| file.identifier.clone())
-                .collect::<Vec<String>>()
-        };
-        let producers: Vec<String> = files
-            .inputs
-            .iter()
-            .map(|file| file.producer.clone())
-            .collect();
-        if let Some(node) = &self.node {
-            invoke_method!(
-                node,
-                "openNode",
-                files.name.clone(),
-                self.build_system_path.clone(),
-                directory,
-                files.meta_dsl.identifier.clone(),
-                identifiers(&files.inputs),
-                producers,
-                identifiers(&files.outputs)
-            );
+            .and_then(node_index_of_vertex);
+        if let Some(index) = index {
+            self.open_node(index);
         }
-        self.node_opened(files.name);
+    }
+
+    // realises FR-235, IR-036
+    /// Opens the *node* of the name `name`, as `open_node` does: the *node* an *origin* names,
+    /// whose icon the user activated; does nothing where the *network graph* holds no *node*
+    /// of that name.
+    #[qslot(qml_name = "openNodeNamed")]
+    fn open_node_named(&mut self, name: String) {
+        if let Some(index) = self.nodes.iter().position(|node| node.name == name) {
+            self.open_node(index);
+        }
+    }
+
+    // realises FR-259, FR-260
+    /// Transmits an *activate request* to the *build system*: hands it to the build thread while
+    /// the *network mode* is *valid network* and no *activate request* awaits its *response*;
+    /// does nothing otherwise, the button being disabled then.
+    #[qslot(qml_name = "activate")]
+    fn activate(&mut self) {
+        if !self.activatable() {
+            return;
+        }
+        self.activations_pending += 1;
+        self.send(Command::Activate);
+        self.mode_changed();
+    }
+
+    // realises FR-109, FR-241, FR-252
+    /// Asks for the *store request* that follows a change the *node* answered without an error:
+    /// hands it to the build thread where the *node states* count no error and the network is
+    /// active, and holds it back otherwise, which `storeHeld` of the *node editor* is told;
+    /// scheduled by the *node editor*.
+    #[qslot(qml_name = "store")]
+    fn store(&mut self) {
+        if self.gate.request(&self.states) {
+            self.send(Command::Store { deferred: false });
+        } else if let Some(node) = &self.node {
+            invoke_method!(node, "storeHeld");
+        }
+    }
+
+    // realises FR-109, FR-241, FR-252
+    /// Gives up the *store request* held back, a later change being answered with an error;
+    /// scheduled by the *node editor*.
+    #[qslot(qml_name = "cancelStore")]
+    fn cancel_store(&mut self) {
+        self.gate.cancel();
     }
 
     // realises FR-068
@@ -345,11 +405,20 @@ impl NetworkEditor {
         self.show_error();
     }
 
-    // realises FR-078, FR-079, FR-128
-    /// Takes the reports of the build thread; scheduled by that thread on the main thread.
+    // realises FR-078, FR-079, FR-109, FR-128, FR-229, FR-241, FR-245, FR-252, FR-258, FR-259,
+    // FR-261, FR-263
+    /// Takes the reports of the build thread and of the reader thread of the connection to the
+    /// *build system*; scheduled by those threads on the main thread.
     ///
     /// * The *diagnostics* of a *build* are marked in the *input group* of the *network file*,
     ///   at their offsets in the *provided text*.
+    /// * The *node states* and the *network mode* of a *state response* are kept in place of
+    ///   those kept before, and the *store request* held back is handed to the build thread
+    ///   where they count no error and the network is active; where the network ceases to be
+    ///   active, `network_deactivated` is emitted, on which the *front end* closes the
+    ///   *node window*.
+    /// * The error response to an *activate request* becomes the *error message*.
+    /// * The answer to a *store request* is scheduled as `storeAnswered` of the *node editor*.
     #[qslot(qml_name = "reportArrived")]
     fn report_arrived(&mut self) {
         let reports: Vec<Report> = self
@@ -381,6 +450,36 @@ impl NetworkEditor {
                     self.take_outcome(outcome.graph);
                 }
                 Report::NotStarted(message) => self.take_outcome(Err(message)),
+                Report::Stored { outcome, deferred } => {
+                    if let Some(node) = &self.node {
+                        invoke_method!(
+                            node,
+                            "storeAnswered",
+                            outcome.is_ok(),
+                            outcome.err().unwrap_or_default(),
+                            deferred
+                        );
+                    }
+                }
+                Report::Activated(outcome) => {
+                    self.activations_pending = self.activations_pending.saturating_sub(1);
+                    self.mode_changed();
+                    if let Err(message) = outcome {
+                        self.take_outcome(Err(message));
+                    }
+                }
+                Report::Watched(states, mode) => {
+                    let was_active = self.states.is_active();
+                    self.states.take(states, mode);
+                    if self.gate.states_changed(&self.states) {
+                        self.send(Command::Store { deferred: true });
+                    }
+                    self.mode_changed();
+                    if was_active && !self.states.is_active() {
+                        self.network_deactivated();
+                    }
+                }
+                Report::Lost => self.forget_states(),
                 Report::Stopped => {}
             }
         }
@@ -414,7 +513,57 @@ impl NetworkEditor {
         self.set_build_system_path(path);
     }
 
-    // realises FR-078, FR-079
+    // realises FR-085, FR-086, FR-087, FR-088, FR-102, FR-103, FR-104, FR-238, FR-262
+    /// Opens the *node* of index `index` of the *network graph*: schedules `openNode` of the
+    /// *node editor* with the name, the directory of the *network file*, the path of the
+    /// *service socket*, the *document identifiers* of the files and whether each *input* has a
+    /// *producer*, and emits `node_opened`; does nothing for a *proxy node*, for an index
+    /// that names no *node*, and while the network is not an *active network*, since no *node*
+    /// runs then, the status bar showing the *network mode*.
+    fn open_node(&mut self, index: usize) {
+        if !self.states.is_active() {
+            return;
+        }
+        let Some(node) = self.nodes.get(index) else {
+            return;
+        };
+        let Some(files) = files_of_node(node, &self.nodes) else {
+            return;
+        };
+        let socket = node.socket.clone();
+        let directory = Path::new(&self.network_path)
+            .parent()
+            .unwrap_or_else(|| Path::new(""))
+            .to_string_lossy()
+            .into_owned();
+        let identifiers = |files: &[crate::core::network_graph::NodeFile]| {
+            files
+                .iter()
+                .map(|file| file.identifier.clone())
+                .collect::<Vec<String>>()
+        };
+        let produced: Vec<bool> = files
+            .inputs
+            .iter()
+            .map(|file| !file.producer.is_empty())
+            .collect();
+        if let Some(node) = &self.node {
+            invoke_method!(
+                node,
+                "openNode",
+                files.name.clone(),
+                directory,
+                socket,
+                files.meta_dsl.identifier.clone(),
+                identifiers(&files.inputs),
+                produced,
+                identifiers(&files.outputs)
+            );
+        }
+        self.node_opened(files.name);
+    }
+
+    // realises FR-078, FR-079, FR-245
     /// Presents the *network graph* of a successful *build* and hides both buttons, or keeps what
     /// is presented and holds the *error message* of a failed one.
     fn take_outcome(&mut self, outcome: Result<BuiltGraph, String>) {
@@ -431,11 +580,27 @@ impl NetworkEditor {
         self.view_changed();
     }
 
-    // realises FR-067, FR-070
+    // realises FR-067, FR-229, FR-263
+    /// Forgets the *node states* and the *network mode*, the *build system* that told them
+    /// running no more, and gives up the *store request* held back; emits `mode_changed`, and
+    /// `network_deactivated` where the network was active.
+    fn forget_states(&mut self) {
+        let was_active = self.states.is_active();
+        self.states.clear();
+        self.gate.cancel();
+        self.mode_changed();
+        if was_active {
+            self.network_deactivated();
+        }
+    }
+
+    // realises FR-067, FR-070, FR-229, FR-263
     /// Hands the paths to the build thread, which restarts the *build system*, and, where a
     /// *provided text* is held and both paths are named, a *build* without a change, which opens
-    /// the *network file* with the *provided text*.
+    /// the *network file* with the *provided text*; the *node states* and the *network mode* of
+    /// the *build system* before are forgotten, and so is the *store request* held back.
     fn restart(&mut self) {
+        self.forget_states();
         self.send(Command::Restart {
             executable: self.build_system_path.clone(),
             network_path: self.network_path.clone(),
@@ -486,10 +651,42 @@ fn milliseconds_since(started: Instant) -> i32 {
     i32::try_from(started.elapsed().as_millis()).unwrap_or(i32::MAX)
 }
 
+/// Schedules `reportArrived` of the network editor on the main thread.
+fn schedule_report(invoker: &Arc<Mutex<QmlMethodInvoker>>) {
+    if let Ok(invoker) = invoker.lock() {
+        invoke_method!(invoker, "reportArrived");
+    }
+}
+
+// realises FR-229
+/// Yields what yields the sink of the watch of each *build system* started: the sink is called
+/// on the reader thread of the connection to the *build system*, reports the *node states* of
+/// every *state response* and the loss of the connection through `reports`, and schedules
+/// `reportArrived` on the main thread.
+fn sinks_of(reports: Sender<Report>, invoker: Arc<Mutex<QmlMethodInvoker>>) -> StateSinks {
+    Box::new(move || {
+        let reports = reports.clone();
+        let invoker = Arc::clone(&invoker);
+        Box::new(move |told: Result<Watched, BuildError>| {
+            let report = match told {
+                Ok(watched) => Report::Watched(watched.states, watched.mode),
+                Err(_) => Report::Lost,
+            };
+            if reports.send(report).is_ok() {
+                schedule_report(&invoker);
+            }
+        })
+    })
+}
+
 /// Runs the build thread: carries out every command with the [`NetworkBuilder`] it owns, reports
 /// through `reports`, and schedules `reportArrived` on the main thread after every report.
 fn build_thread(commands: Receiver<Command>, reports: Sender<Report>, invoker: QmlMethodInvoker) {
-    let mut builder = NetworkBuilder::new(NetworkBuilder::default_directory());
+    let invoker = Arc::new(Mutex::new(invoker));
+    let mut builder = NetworkBuilder::new(
+        NetworkBuilder::default_directory(),
+        sinks_of(reports.clone(), Arc::clone(&invoker)),
+    );
     while let Ok(command) = commands.recv() {
         let report = match command {
             Command::Restart {
@@ -508,13 +705,18 @@ fn build_thread(commands: Receiver<Command>, reports: Sender<Report>, invoker: Q
                 &increment,
                 &provided_after,
             ))),
+            Command::Store { deferred } => Some(Report::Stored {
+                outcome: builder.store(),
+                deferred,
+            }),
+            Command::Activate => Some(Report::Activated(builder.activate())),
             Command::Stop => break,
         };
         if let Some(report) = report {
             if reports.send(report).is_err() {
                 break;
             }
-            invoke_method!(invoker, "reportArrived");
+            schedule_report(&invoker);
         }
     }
     drop(builder);

@@ -326,7 +326,7 @@ impl Settings {
         })
     }
 
-    // realises FR-091, FR-099, FR-141, FR-149, IR-012
+    // realises FR-091, FR-099, FR-141, FR-149, FR-255, IR-012
     /// Stores the settings, to be restored at the next start.
     ///
     /// * The directory of the file is created where it does not exist.
@@ -485,7 +485,7 @@ impl Settings {
     }
 }
 
-// realises FR-215, FR-218, FR-220, FR-222, IR-011, IR-012
+// realises FR-215, FR-218, FR-220, FR-222, FR-254, IR-011, IR-012
 /// The settings of the session with the *settings file* they are stored in, and the
 /// *lock file* of that *settings file*, which entitles to store them.
 ///
@@ -1033,7 +1033,7 @@ mod tests {
 
     #[test]
     fn a_second_store_reads_the_settings_but_does_not_write_them() {
-        // FR-218
+        // FR-218, FR-254
         let dir = case_dir("store-refused");
         let path = dir.join(SETTINGS_FILE_NAME);
         let mut first = SettingsStore::open(&path);

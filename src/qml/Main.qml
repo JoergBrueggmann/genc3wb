@@ -51,6 +51,21 @@ ApplicationWindow {
                : qsTr("%1 is held by genc³wb, process %2, since %3.").arg(file).arg(pid).arg(time);
     }
 
+    // Yields the text of the network mode `mode` for the status bar, as the message schema
+    // numbers it: 1 invalid, 2 valid, 3 active; empty for 0, where none is kept (FR-258)
+    function networkModeText(mode: int): string {
+        switch (mode) {
+        case 1:
+            return qsTr("The network is invalid: no node runs.");
+        case 2:
+            return qsTr("The network is valid and not active: no node runs, activate the network to open a node.");
+        case 3:
+            return qsTr("The network is active.");
+        default:
+            return "";
+        }
+    }
+
     // Presents the dialog of FR-219 with `texts`, where one is not empty.
     function tellRefusals(texts: list<string>) {
         const told = texts.filter(text => text.length > 0);
@@ -125,12 +140,14 @@ ApplicationWindow {
 
             Layout.fillWidth: true
             padding: 4
-            // the refusals while they last (FR-220), then the state of the build system
+            // the refusals while they last (FR-220), then the state of the build system and
+            // the network mode (FR-258)
             text: [mainWindow.settingsRefusal,
                    mainWindow.networkRefusal,
                    !Workbench.network.available
                    ? qsTr("The build system is not available on this platform.")
-                   : Workbench.network.building ? qsTr("The build system is building.") : ""]
+                   : Workbench.network.building ? qsTr("The build system is building.") : "",
+                   mainWindow.networkModeText(Workbench.network.networkMode)]
                   .filter(part => part.length > 0).join("  ·  ")
         }
 
@@ -220,6 +237,12 @@ ApplicationWindow {
             nodeWindow.show();
             nodeWindow.raise();
             nodeWindow.requestActivate();
+        }
+
+        // the network ceased to be active: no node runs, so the node window and its detached
+        // windows close (FR-263)
+        function onNetworkDeactivated() {
+            nodeWindow.closeWithDetachedWindows();
         }
 
         function onProcessingMeasured(processingTime) {

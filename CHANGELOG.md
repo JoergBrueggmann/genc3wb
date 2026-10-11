@@ -7,10 +7,58 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to a four-part version number.
 
-
 ## [Unreleased]
 
 At the moment, nothing unreleased here.
+
+## [0.18.0.0] - 2026-10-11
+
+**_Adopt_genc³api_0.17.0.0_and_genc³_0.30.2.1_**
+
+Leading work item: definition 0.14.0.0
+
+- Decode the *node mode* as the fourth element of a *node state* (`NodeMode`, `NodeState.mode`) and the *network mode* under key 21 of a *state response* (`NetworkMode`, `Response::State.mode`, `Watched.mode`), encode the *activate request*, kind 15 (`Request::Activate`, `Conversation::activate`, `BuildSession::activate`, `NetworkBuilder::activate`), and accept the cancelled response, kind 36 (`Response::Cancelled`), to a content query request, which `query_content` of `Conversation`, `NodeSession` and `NodeRunner` yields as `None`, so that the next *state response* asks for the content anew, in `crate::core::api_message`, `crate::core::build_system` and `crate::core::node_runner`; a *node state* of three elements is an invalid value, and a key above 21 is ignored.
+- Keep the *network mode* with the *node states* in `NodeStates` of `crate::core::node_state` (`mode`, `is_active`, `is_activatable`), hold the *store request* back while the network is not active (`admits` of the *store gate*), and offer `networkMode`, `activatable`, `activate`, `modeChanged` and `networkDeactivated` of `NetworkEditor`, which also forgets the modes on a loss of the connection and a restart (`forget_states`), and `nodeMode` of `NodeEditor`.
+- Add the activate button to 'NetworkGraphGroup.qml', enabled while the network is a valid network and no *activate request* awaits its *response*, the *network mode* to the status bar of 'Main.qml' (`networkModeText`) and the *node mode* to the status line of 'NodeWindow.qml' (`nodeModeText`); open a *node* only while the network is active, and close the *node window* and its *detached windows* (`closeWithDetachedWindows`) when it ceases to be; an error response to the *activate request* is the *error message*, shown on the error button.
+- Adapt the ignored integration tests of 'tests/build_system.rs' to genc3d of genc³ 0.30.2.1, which they need: the test of the error of a *node* and its *origins* downstream puts the error into the *source input* of the first *node*, since an invalid *meta compiler DSL* now makes the *node* an *invalid node*, on which the *factory* deactivates the network and ends the *nodes*, and awaits the settled active network first, since every *node* counts an error for a produced *input* that does not exist yet while the network is activated; add the test of the activation: a *node* whose *meta compiler DSL* is invalid leaves the network a valid network and the *activate request* refused naming it, and the *activate request* after the correction makes it active, every *node* telling *active node* in the states of the *factory* and in its own; the *state responses* assert the modes.
+- Name genc³api 0.17.0.0 and genc³ 0.30.2.1 in 'README.md', with the modes and the activate button; raise the version in 'Cargo.toml' to 0.18.0.
+- A new capability against an extended interface: a minor bump.
+
+## [0.17.0.1] - 2026-10-11
+
+**_Form_of_the_specification_and_the_design_**
+
+Leading work item: definition 0.13.1.0
+
+- Propagate the IDs split off in definition 0.13.1.0 to the comments 'realises' of the code and to the comments of the tests that cite them; no test name cites an ID.
+- Raise the version in 'Cargo.toml' to 0.17.0+1, which the test of the version holds to the topmost version heading of 'CHANGELOG.md'.
+- Changes nothing of what the project folder delivers: a build bump.
+
+## [0.17.0.0] - 2026-10-07
+
+**_Multiple_inputs_shared_syntax_**
+
+Leading work item: definition 0.13.0.0
+
+- Decode the *diagnostic groups* of a *diagnostic* response, key 17 of genc³api 0.13.0.0 (IR-028): add `DiagnosticGroup` and the field `groups` of `Response::Diagnostics` to `crate::core::api_message`; a response without key 17 carries none.
+- Show and mark the *diagnostics* of a *diagnostic group* at the *input* it names, in place of those of that *input* received before (FR-225): `NodeEditor::report_arrived` records and marks them as those of the document of the *request*, in txt, hex and bin, and lists the *diagnostics page* once per response.
+- Leave out a *diagnostic group* that names no *input* of the *node* or the document of the *request* (FR-226), and one that states another *document version* than the one held for its *input*, or names an *input* not opened (FR-227): add `DiagnosticAnswer` and `Conversation::answer_of` to `crate::core::build_system`, and `answer_of_inputs` and the *inputs* of the *node* attached to to `crate::core::node_runner`; `transmit`, `open_octets` and `edit_octets` of `Conversation`, `NodeSession` and `NodeRunner` yield a `DiagnosticAnswer`, which carries the *document version* answered.
+- Encode the *watch request* and the content query request, kinds 12 and 14, and decode the *state response* and the content response, kinds 40 and 41, with the keys 18 and 20 (IR-019, IR-020, IR-027, IR-028): add `NodeState`, `Request::Watch`, `Request::QueryContent`, `Response::State`, `Response::Content` and `Response::is_terminal`; a key above 20 is ignored.
+- Run the whole network live (FR-067, IR-017): `BuildSession::start` starts the *build system* without `--no-nodes`, so that it starts every *node*, and transmits the one *watch request* (FR-228); `NetworkEditor` keeps the *node state* of every *node* from the *state responses* in `NodeStates` of the new component `crate::core::node_state` (FR-229).
+- Receive a *state response* unasked: add the trait `Connection`, which every byte stream implements, and the `WatchedConnection`, whose reader thread reads every *response* of a *service socket* (`read_responses`), hands a *state response* to the `StateSink` and every other one to the `Conversation`, which passes a *response* that is no *terminal response* over; the sinks of `NetworkEditor` and `NodeEditor` report through the channel of the reports and schedule `reportArrived` on the main thread.
+- Attach the *node window* to the running *node* (FR-104, FR-105, FR-230, IR-026): `NodeSession::attach` connects to the *service socket* of the *node description*, starts no process and transmits the *watch request*; closing the *node window*, and opening another *node*, closes the connection and transmits no *shutdown request*; replace `NodeStart`, `NodeRunner::start`, `stop` and `store` by `NodeAttach`, `attach`, `detach` and `query_content`.
+- Show every *diagnostic* the *node* tells by its *state responses*, of its *meta compiler DSL* and of every *input*, whoever caused it (FR-231 to FR-233): `groups_of_state` takes a group of a document the *product* edits at the *document version* answered last, and a group of an *input* of a *producer* at any, which `NodeEditor` marks in the content of that *document version*.
+- Register every document the *product* edits with the *node* when the *node window* attaches, by an open request without an edit, an empty document included (FR-242): `InputGroup::provide` provides the document when it is named, so that its *diagnostics* are shown from the first *state response* on; the reason for which a *node* is not served stays in the status line.
+- Show one exclamation mark per *origin* on the *diagnostics page*, with the tooltip `Errors originate at node <name> ...`, which opens that *node* (FR-234 to FR-237, IR-035, IR-036): add `OutputPages::set_origins`, `OutputGroup.origins` and `setOrigins`, `NetworkEditor::open_node_named`, and `originsRow` of 'OutputGroup.qml'.
+- Make an *input* of a *producer* read-only and show what the *node* holds of it (FR-238 to FR-240), in place of the temporary edit (FR-113 to FR-115, withdrawn): add `InputFile::hold`, `InputGroup.produced` and `setContent`, and `WatchedDocuments`, by which the content is read again when a *state response* states another *document version*; remove `Originals`, `producer`, `temporaryEdit` and `temporaryIcon`; such an *input* is neither transmitted nor saved.
+- Show on the *output pages* what the *node* holds, read by the content query request and read again when a *state response* states another *document version* (FR-110, FR-111): add `Conversation::query_content`, `DocumentContent`, `OutputPages::set_content` and `OutputGroup::set_content`; `OutputPages` reads no file, and `stored` replaces `reload`; the tooltip of an *outdated* *output page* names the file (FR-211, FR-212).
+- Hold the *store request* back where a *diagnostic group* of the response carries a *diagnostic* of severity error, be the group left out or not, and transmit it to the *build system*, which passes it on to every *node*, while no *node state* counts an error (FR-109); transmit a *store request* held back once none counts one (FR-241): add `StoreGate`, `NetworkBuilder::store`, `BuildSession::store`, `NetworkEditor::store` and `cancel_store`, and `NodeEditor::store_answered` and `store_held`.
+- Tell a lost connection to the *node*, and a failed content query, in the status line (FR-112).
+- Adapt the ignored integration tests of 'tests/build_system.rs' to the attached *node*, and add those of the live network: a chain of three *nodes* whose middle one is made erroneous and corrected, with its *node state*, its *origin* downstream and its details in its own watch; a *node* with an *inputs section* whose second *input* is erroneous while the first is edited; a *node* whose *input* is empty and does not match its syntax, whose *diagnostics* are told without an edit; the content of an *input* of a *producer* and of an *output*; and the *store request* through the *build system*. They need `genc3d` of genc³ 0.29.0.0.
+- Describe the live network, the attached *node window*, the read-only *input* of a *producer* and the *origins* in 'README.md', and name genc³api 0.13.0.0 and genc³ 0.29.0.0 as required.
+- Raise the version in 'Cargo.toml' to 0.17.0.
+- Read the *input group* of 'InputGroup.qml' through `?.` in every binding, with a neutral value where it is gone: when the *node window* rebuilt its *input groups* for a *node* of another number of *inputs*, as on opening a *node* of two *inputs* after one of one, the bindings of the group being removed were evaluated once more and each wrote a `TypeError` to the standard error; found by the product owner on the example 'join', the first *node* of two *inputs*.
+- A new capability against an extended interface: a minor bump to 0.17.0.0.
 
 ## [0.16.1.0] - 2026-10-04
 
@@ -68,7 +116,6 @@ Leading work item: definition 0.11.0.0
 - The 301 unit tests pass, one of them against the bound of 200 milliseconds for an edit of 1 megabyte; the four tests of the build system pass against the *service executable* of the distribution folder of genc³ 0.28.2.0, one of them editing a *binary document* by *octet deltas*; 'make-dist.sh' builds the distribution folder with it.
 - A new capability: a minor bump to 0.15.0.0.
 
-
 ## [0.14.0.0] - 2026-10-02
 
 **_Editor_columns_in_hex_and_bin_**
@@ -80,7 +127,6 @@ Leading work item: definition 0.10.0.0
 - Raise the version in 'Cargo.toml' to 0.14.0; the README describes the octets per row.
 - The 231 unit tests pass; the four tests of the build system pass against the *service executable* of the distribution folder of genc³ 0.28.2.0; 'make-dist.sh' builds the distribution folder with it.
 - A new capability: a minor bump to 0.14.0.0.
-
 
 ## [0.13.0.0] - 2026-10-02
 
@@ -98,7 +144,6 @@ Leading work item: definition 0.9.0.0
 - The 220 unit tests pass, two of them against the bound of 1 second for 1 megabyte; the four tests of the build system pass against the *service executable* of the distribution folder of genc³ 0.28.2.0, one of them serving a *binary document*; 'make-dist.sh' builds the distribution folder with it.
 - A new capability: a minor bump to 0.13.0.0.
 
-
 ## [0.12.0.0] - 2026-09-29
 
 **_Symbol_tree_as_a_value_**
@@ -110,7 +155,6 @@ Leading work item: definition 0.28.0.0 (genc3)
 - Raise the version in 'Cargo.toml' to 0.12.0; the README names genc³ 0.28.0.0 or later.
 - The 178 unit tests pass; the three tests of the build system pass against the *service executable* of the distribution folder of genc³ 0.28.0.0; 'make-dist.sh' builds the distribution folder with it.
 - A new capability against a changed interface: a minor bump to 0.12.0.0.
-
 
 ## [0.11.1.0] - 2026-09-25
 

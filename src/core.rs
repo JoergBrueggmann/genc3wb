@@ -13,6 +13,7 @@ pub mod key_stroke;
 pub mod network_builder;
 pub mod network_graph;
 pub mod node_runner;
+pub mod node_state;
 pub mod octet_edit;
 pub mod octet_view;
 pub mod output;

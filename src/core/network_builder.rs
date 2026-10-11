@@ -4,11 +4,14 @@
 //! Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
 
 use crate::core::api_message::{Diagnostic, NodeDescription};
-use crate::core::build_system::{BuildError, BuildSession};
+use crate::core::build_system::{BuildError, BuildSession, StateSink};
 use crate::core::network_graph::{GraphLayout, dot_of_network, render};
 use crate::core::text_increment::TextIncrement;
 
 use std::path::PathBuf;
+
+/// The text of FR-112 where a *store request* is handed over while no *build system* runs.
+const NOT_RUNNING: &str = "No build system runs.";
 
 // realises FR-075, FR-077, FR-078
 /// What a successful *build* yields for the *front end*: the image of the *network graph*, its
@@ -34,15 +37,24 @@ pub struct BuildOutcome {
     pub graph: Result<BuiltGraph, String>,
 }
 
-// realises FR-067, FR-068, FR-069, FR-074
+// realises FR-229
+/// What yields the sink of the watch of each *build system* the builder starts: the receiver of
+/// its *state responses*.
+pub type StateSinks = Box<dyn FnMut() -> StateSink + Send>;
+
+// realises FR-067, FR-068, FR-069, FR-074, FR-109, FR-228, FR-244, FR-260
 /// The builder: the *build system* it runs, and the directory it lays the *network graphs* out in.
 ///
 /// * The builder is owned by one thread; every function of it blocks until the *build system* or
 ///   `dot` answered.
-#[derive(Debug)]
+/// * The *state responses* of the *build system* do not pass through the builder: the sink it
+///   hands to each *build system* it starts receives them on the reader thread of the
+///   connection.
 pub struct NetworkBuilder {
     /// the directory of the socket files and of the images
     directory: PathBuf,
+    /// what yields the sink of the watch of each *build system* started
+    sinks: StateSinks,
     /// the path of the *build system*, empty where none is named
     executable: String,
     /// the path of the *network file*, empty where none is named
@@ -58,10 +70,12 @@ pub struct NetworkBuilder {
 }
 
 impl NetworkBuilder {
-    /// Creates the builder that writes its socket files and images into `directory`.
-    pub fn new(directory: PathBuf) -> NetworkBuilder {
+    /// Creates the builder that writes its socket files and images into `directory`, and hands
+    /// a sink of `sinks` to each *build system* it starts.
+    pub fn new(directory: PathBuf, sinks: StateSinks) -> NetworkBuilder {
         NetworkBuilder {
             directory,
+            sinks,
             executable: String::new(),
             network_path: String::new(),
             session: None,
@@ -77,7 +91,7 @@ impl NetworkBuilder {
         std::env::temp_dir().join(format!("genc3wb-{}", std::process::id()))
     }
 
-    // realises FR-067, FR-068
+    // realises FR-067, FR-068, FR-244
     /// Names the *build system* and the *network file*: shuts the running *build system* down and
     /// starts the named one, where both are named.
     ///
@@ -179,6 +193,47 @@ impl NetworkBuilder {
         }
     }
 
+    // realises FR-109, FR-112, FR-211
+    /// Transmits a *store request* to the running *build system*, which passes it on to every
+    /// *node*, as [`BuildSession::store`].
+    ///
+    /// * Where the connection fails, the *build system* is given up, as a *build* gives it up.
+    ///
+    /// # Errors
+    /// Returns the text of FR-112: that no *build system* runs, or the rendering of the
+    /// [`BuildError`].
+    pub fn store(&mut self) -> Result<(), String> {
+        let Some(session) = self.session.as_mut() else {
+            return Err(NOT_RUNNING.to_owned());
+        };
+        let outcome = session.store();
+        if let Err(error) = &outcome {
+            self.give_up_on(error);
+        }
+        outcome.map_err(|error| error.to_string())
+    }
+
+    // realises FR-260, FR-261
+    /// Transmits an *activate request* to the running *build system*, which starts, wires and
+    /// activates every *node* of the network, as [`BuildSession::activate`].
+    ///
+    /// * Where the connection fails, the *build system* is given up, as a *build* gives it up.
+    ///
+    /// # Errors
+    /// Returns the *error message* of FR-261: that no *build system* runs, or the rendering of
+    /// the [`BuildError`], which is the message text of the error response where the
+    /// *network file* or a *node* is invalid.
+    pub fn activate(&mut self) -> Result<(), String> {
+        let Some(session) = self.session.as_mut() else {
+            return Err(NOT_RUNNING.to_owned());
+        };
+        let outcome = session.activate();
+        if let Err(error) = &outcome {
+            self.give_up_on(error);
+        }
+        outcome.map_err(|error| error.to_string())
+    }
+
     // realises FR-068
     /// Shuts the running *build system* down, where one runs.
     pub fn stop(&mut self) {
@@ -187,7 +242,9 @@ impl NetworkBuilder {
         }
     }
 
-    /// Starts the named *build system* on the named *network file*, on a socket file of its own.
+    // realises FR-067, FR-228
+    /// Starts the named *build system* on the named *network file*, on a socket file of its own,
+    /// with a sink for its watch.
     fn start(&mut self) -> Result<(), BuildError> {
         std::fs::create_dir_all(&self.directory)
             .map_err(|error| BuildError::Process(error.to_string()))?;
@@ -199,6 +256,7 @@ impl NetworkBuilder {
             &self.executable,
             &self.network_path,
             &socket_path,
+            (self.sinks)(),
         )?);
         Ok(())
     }
@@ -221,7 +279,8 @@ impl Drop for NetworkBuilder {
 * edge cases       : ✅
 * conforms to doc  : ✅
 * covers bridge    : NetworkEditor::set_network_path, NetworkEditor::set_build_system_path,
-                     NetworkEditor::apply_increment, NetworkEditor::shut_down */
+                     NetworkEditor::apply_increment, NetworkEditor::store,
+                     NetworkEditor::activate, NetworkEditor::shut_down */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -237,7 +296,23 @@ mod tests {
     fn builder(case: &str) -> NetworkBuilder {
         NetworkBuilder::new(
             std::env::temp_dir().join(format!("genc3wb-test-{}-{case}", std::process::id())),
+            Box::new(|| Box::new(|_| {})),
         )
+    }
+
+    #[test]
+    fn store_without_a_running_build_system_is_reported_as_not_running() {
+        // FR-112
+        assert_eq!(builder("nostore").store(), Err(NOT_RUNNING.to_owned()));
+    }
+
+    #[test]
+    fn activate_without_a_running_build_system_is_reported_as_not_running() {
+        // FR-261
+        assert_eq!(
+            builder("noactivate").activate(),
+            Err(NOT_RUNNING.to_owned())
+        );
     }
 
     #[test]

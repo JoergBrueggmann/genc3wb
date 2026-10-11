@@ -19,7 +19,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 // realises FR-001, FR-063, FR-090, FR-095, FR-099, FR-140, FR-141, FR-149, FR-192, FR-215,
-// FR-218
+// FR-218, FR-254
 /// The *workbench object*.
 pub struct Workbench {
     /// the settings with the *settings file* and its *lock file*, shared with the groups
@@ -38,17 +38,19 @@ pub struct Workbench {
 
 impl Default for Workbench {
     /// Takes the *lock file* of the *settings file* and restores the settings, creates the
-    /// groups, and wires them: the *node editor* with the output group, the network editor with
-    /// the *node editor* and the *input group* of the *network file*, and that *input group* with
-    /// the network editor, the two last with their paths.
+    /// groups, and wires them: the *node editor* with the output group and the network editor,
+    /// the network editor with the *node editor* and the *input group* of the *network file*,
+    /// and that *input group* with the network editor, the two last with their paths.
     fn default() -> Self {
         let settings = Rc::new(RefCell::new(SettingsStore::open(&Settings::default_path())));
         let output = OutputGroup::default_with_attached_qobject();
         let node = NodeEditor::default_with_attached_qobject();
         let network = NetworkEditor::default_with_attached_qobject();
         let network_input = InputGroup::default_with_attached_qobject();
-        node.borrow_mut()
-            .configure(output.borrow().get_qml_method_invoker());
+        node.borrow_mut().configure(
+            output.borrow().get_qml_method_invoker(),
+            network.borrow().get_qml_method_invoker(),
+        );
         network.borrow_mut().configure(
             Rc::clone(&settings),
             node.borrow().get_qml_method_invoker(),
@@ -73,7 +75,7 @@ impl Default for Workbench {
 }
 
 // realises FR-001, FR-063, FR-095, FR-099, FR-130 to FR-135, FR-140, FR-141, FR-146 to FR-149,
-// FR-192 to FR-194, FR-198 to FR-200, FR-214, FR-215, FR-218 to FR-221, FR-224
+// FR-192 to FR-194, FR-198 to FR-200, FR-214, FR-215, FR-218 to FR-221, FR-224, FR-254 to FR-257
 #[qobject(Singleton)]
 impl Workbench {
     qproperty!("output", Read = output, Constant);
@@ -305,7 +307,7 @@ impl Workbench {
     }
 
     // slots
-    // realises FR-099, FR-100, FR-132, FR-133, FR-134, FR-135, FR-140, FR-141
+    // realises FR-099, FR-100, FR-132, FR-133, FR-134, FR-135, FR-140, FR-141, FR-255, FR-257
     /// Sets the two times of every code editor, in milliseconds, the *automatic setting* and the
     /// *tab size*, in characters, and stores them; yields whether the values satisfy the
     /// constraints, and emits `settings_rejected` with the message naming the violated one where
@@ -405,7 +407,7 @@ impl Workbench {
         self.network_input.borrow_mut().release_lock();
     }
 
-    // realises FR-129, FR-130
+    // realises FR-129, FR-130, FR-256
     /// Takes a measured *processing time* in milliseconds: with the *automatic setting* on, sets
     /// the two times to those of `times_of_processing`, stores them and emits `times_changed`;
     /// does nothing otherwise. Called by the *front end* on `processingMeasured` of the *node

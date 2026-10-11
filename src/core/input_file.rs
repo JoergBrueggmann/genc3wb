@@ -233,6 +233,22 @@ impl InputFile {
         Ok(true)
     }
 
+    // realises FR-239, FR-240
+    /// Names `path` and takes `octets` as the octets of the document, as the *node* holds them:
+    /// the document of an *input* that has a *producer*, which is read from no file and written
+    /// to none.
+    ///
+    /// * The *file octets* become `octets` as well, so that the document holds no unsaved
+    ///   change and its *processing state* is *valid file, text untouched*.
+    pub fn hold(&mut self, path: &str, octets: Vec<u8>) {
+        self.path = path.to_owned();
+        self.edited_since_unknown = false;
+        self.text = text_of_octets(&octets);
+        self.file_octets = Some(octets.clone());
+        self.bits = Bits::of_octets(octets);
+        self.history.clear();
+    }
+
     // realises FR-014
     /// Yields whether the octets differ from the *file octets*, or were edited while the file is
     /// unknown.
@@ -371,7 +387,8 @@ impl InputFile {
  * independence     : ✅
  * edge cases       : ✅
  * conforms to doc  : ✅
- * covers bridge    : InputGroup::set_path, InputGroup::name_document, InputGroup::set_text, InputGroup::answer_save,
+ * covers bridge    : InputGroup::set_path, InputGroup::name_document, InputGroup::set_content,
+ *                    InputGroup::set_text, InputGroup::answer_save,
  *                    InputGroup::idle_expired, InputGroup::is_text, InputGroup::replace_digits,
  *                    InputGroup::undo, InputGroup::redo, InputGroup::digits_text,
  *                    InputGroup::long_idle_expired */
@@ -410,6 +427,31 @@ mod tests {
         assert_eq!(file.text(), "");
         assert_eq!(file.state(), ProcessingState::UnknownFileTextUntouched);
         assert!(!file.has_unsaved_changes());
+    }
+
+    #[test]
+    fn content_held_of_an_input_of_a_producer_is_read_from_no_file_and_is_no_unsaved_change() {
+        // FR-239, FR-240: the path names no file that exists
+        let mut file = InputFile::new(InputKind::Input);
+        file.hold("/nonexistent/genc3wb/x.txt", vec![b'a', 0xff]);
+        assert_eq!(
+            (
+                file.path(),
+                file.octets(),
+                file.text(),
+                file.is_text(),
+                file.has_unsaved_changes(),
+                file.state()
+            ),
+            (
+                "/nonexistent/genc3wb/x.txt",
+                &[b'a', 0xff][..],
+                "a\u{fffd}",
+                false,
+                false,
+                ProcessingState::ValidFileTextUntouched
+            )
+        );
     }
 
     #[test]

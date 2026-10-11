@@ -1,6 +1,6 @@
-// One input group: file name field, file selector, indicator, the icon of an input of a producer, the mode
-// switch of an input, code editor with the marks of the diagnostics, detach button, and the dialogs of that
-// group.
+// One input group: file name field, file selector, indicator, the mode switch of an input, code editor with
+// the marks of the diagnostics, which is read-only for an input of a producer, detach button, and the dialogs
+// of that group.
 //
 // Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 // Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -24,7 +24,9 @@ GroupBox {
 
     signal detachRequested()
 
-    title: root.group.caption
+    // an input group whose group is gone, as while the node window rebuilds its input groups for a node
+    // of another number of inputs, presents nothing: its bindings read the group through `?.`
+    title: root.group?.caption ?? ""
 
     ColumnLayout {
         anchors.fill: parent
@@ -34,8 +36,8 @@ GroupBox {
                 id: pathField
 
                 Layout.fillWidth: true
-                text: root.group.path
-                readOnly: !root.group.selectable
+                text: root.group?.path ?? ""
+                readOnly: !(root.group?.selectable ?? false)
                 onEditingFinished: root.group.path = pathField.text
             }
 
@@ -43,30 +45,15 @@ GroupBox {
                 id: selectButton
 
                 text: "..."
-                visible: root.group.selectable
+                visible: root.group?.selectable ?? false
                 onClicked: fileDialog.open()
-            }
-
-            Image {
-                id: temporaryIcon
-
-                source: "qrc:/genc3wb/qml/icons/error.png"
-                fillMode: Image.PreserveAspectFit
-                sourceSize.height: 20
-                visible: root.group.temporaryEdit
-                ToolTip.visible: temporaryHover.hovered
-                ToolTip.text: qsTr("This edit is temporary and will be overwritten, because it is also output of node %1.").arg(root.group.producer)
-
-                HoverHandler {
-                    id: temporaryHover
-                }
             }
 
             ModeSwitch {
                 id: modeSwitch
 
-                visible: root.group.octetModes
-                documentIsText: root.group.isText
+                visible: root.group?.octetModes ?? false
+                documentIsText: root.group?.isText ?? true
             }
 
             ToolButton {
@@ -81,7 +68,7 @@ GroupBox {
         ProcessingStateIndicator {
             id: indicator
 
-            processingState: root.group.state
+            processingState: root.group?.state ?? 2
         }
 
         CodeEditor {
@@ -89,8 +76,10 @@ GroupBox {
 
             Layout.fillWidth: true
             Layout.fillHeight: true
+            // an input of a producer is not edited: its content is what the node holds (FR-238)
+            readOnly: root.group?.produced ?? false
             // the text is bound in txt alone, so that an edit in hex or bin does not lay it out anew
-            text: editor.mode === 0 ? root.group.text : ""
+            text: editor.mode === 0 ? (root.group?.text ?? "") : ""
             idleTime: Workbench.idleTime
             longIdleTime: Workbench.longIdleTime
             tabSize: Workbench.tabSize
@@ -101,11 +90,11 @@ GroupBox {
             }
             onIdleExpired: root.group.idleExpired()
             onLongIdleExpired: root.group.longIdleExpired()
-            markStarts: root.group.diagnosticStarts
-            markEnds: root.group.diagnosticEnds
-            markSeverities: root.group.diagnosticSeverities
-            markTexts: root.group.diagnosticTexts
-            mode: root.group.octetModes ? modeSwitch.mode : 0
+            markStarts: root.group?.diagnosticStarts ?? []
+            markEnds: root.group?.diagnosticEnds ?? []
+            markSeverities: root.group?.diagnosticSeverities ?? []
+            markTexts: root.group?.diagnosticTexts ?? []
+            mode: (root.group?.octetModes ?? false) ? modeSwitch.mode : 0
             octets: root.group
             octetsMarked: true
         }
@@ -114,15 +103,15 @@ GroupBox {
     FileDialog {
         id: fileDialog
 
-        title: root.group.caption
-        nameFilters: [root.group.fileFilter]
+        title: root.group?.caption ?? ""
+        nameFilters: [root.group?.fileFilter ?? ""]
         onAccepted: root.group.path = PathOfUrl.path(fileDialog.selectedFile)
     }
 
     MessageDialog {
         id: saveDialog
 
-        title: root.group.caption
+        title: root.group?.caption ?? ""
         text: qsTr("The editor holds unsaved changes. Save them before the named file is loaded?")
         buttons: MessageDialog.Yes | MessageDialog.No
         onAccepted: root.group.answerSave(true)

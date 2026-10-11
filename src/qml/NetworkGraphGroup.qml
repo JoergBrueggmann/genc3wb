@@ -1,4 +1,5 @@
-// The group for the network graph: the build system, the graph, the error message, and the two buttons.
+// The group for the network graph: the build system with its activate button, the graph, the error message,
+// and the two buttons.
 //
 // Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 // Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -41,6 +42,16 @@ GroupBox {
 
                 text: "..."
                 onClicked: fileDialog.open()
+            }
+
+            // the activate button: enabled while the network is a valid network and no activate
+            // request awaits its response, greyed otherwise (FR-259, FR-260)
+            ToolButton {
+                id: activateButton
+
+                text: qsTr("Activate")
+                enabled: root.network.activatable
+                onClicked: root.network.activate()
             }
 
             Image {

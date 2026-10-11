@@ -65,7 +65,7 @@ pub struct RenderedGraph {
     pub layout: GraphLayout,
 }
 
-// realises FR-086, FR-087, FR-102, FR-113
+// realises FR-086, FR-087, FR-102, FR-238
 /// One file of a *node*: the path as the *node description* carries it, which is its
 /// *document identifier* (\[AD5\] IR-044), and, for an *input*, the name of its *producer*.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -258,7 +258,7 @@ pub fn node_index_of_vertex(identifier: &str) -> Option<usize> {
     identifier.strip_prefix('n')?.parse().ok()
 }
 
-// realises FR-086, FR-087, FR-088, FR-102, FR-103, FR-113
+// realises FR-086, FR-087, FR-088, FR-102, FR-103, FR-238
 /// Yields the files the *node window* presents for `node`, `None` for a *proxy node*.
 ///
 /// * The paths are those of the *node description*, which are the *document identifiers*.
@@ -553,7 +553,7 @@ mod tests {
 
     #[test]
     fn input_that_another_node_outputs_names_that_node_as_its_producer() {
-        // FR-113
+        // FR-238
         let nodes = vec![
             node("a", NodeKind::MetaCompilerCompiler, &["a.in"], &["x.txt"]),
             node(
@@ -570,7 +570,7 @@ mod tests {
 
     #[test]
     fn input_the_node_itself_outputs_has_no_producer() {
-        // FR-113: a node that reads its own output is no producer of itself
+        // FR-238: a node that reads its own output is no producer of itself
         let nodes = vec![node(
             "a",
             NodeKind::MetaCompilerCompiler,

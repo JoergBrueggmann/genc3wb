@@ -21,7 +21,7 @@ Dialog {
     modal: true
     anchors.centerIn: Overlay.overlay
     // the dialog is left by its two buttons alone: OK stores where the constraints hold, Cancel
-    // discards (FR-100, FR-135, FR-141)
+    // discards (FR-100, FR-135, FR-141, FR-257)
     closePolicy: Popup.NoAutoClose
 
     // the fields take the stored values whenever the dialog opens, so that a rejected

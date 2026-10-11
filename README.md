@@ -5,10 +5,23 @@ network editor: it edits a compiler network file (gc3n-file), lets a build syste
 such as `genc3d` evaluate it while it is edited, and shows the network it states
 as a graph. A double-click on a node of the graph opens the node window, which
 shows the node as the network file states it: its meta compiler DSL, its inputs
-and its outputs. The build system serves that one node while its files are
-edited: every change is transmitted to it, its diagnostics are shown at the
-editor they concern, and its outputs are stored and presented after every
-change it accepts without an error.
+and its outputs. The build system runs the whole network live while its files
+are edited: every change is transmitted to the node, the diagnostics of the
+node are shown at the editor they concern, whoever caused them, its outputs are
+presented as the node holds them, and the outputs of every node are stored
+after every change the node accepts without an error, while no node of the
+network has an error and the network is active.
+
+The network has a mode, which the status bar of the main window shows: it is
+invalid while the network file cannot be read as a network, valid while it can
+and no node runs, and active while every node runs. The build system activates
+a valid network when it starts; where a node's meta compiler DSL is invalid, the
+activation fails, the network stays valid and the error names the node. The
+button `Activate` beside the build system, enabled in a valid network alone,
+activates it again, once the files are corrected. A node is opened while the
+network is active alone, and the node window closes when the network ceases to
+be active, for example when a meta compiler DSL is made invalid. The status
+line of the node window names the mode of the node: invalid, valid or active.
 
 An input and an output are held as their octets, whatever they are. The code
 editor of each has a switch of three positions: `txt` shows the octets read as
@@ -61,11 +74,13 @@ bridging code against Qt.
   `/usr/local/bin` and `/usr/bin`. The graph is rendered as a PNG image, so
   that the module `qtsvg` of Qt is not needed.
 
-- A build system that conforms to genc³api 0.12.0.0 and offers the description
-  mode, which is `genc3d` of genc³ 0.28.0.0 or later. It is named in the
-  compiler network editor; without it a network file is edited, but no graph is
-  shown. genc³wb reaches it through a Unix domain socket, so that in this
-  version the graph is shown on Linux and macOS alone.
+- A build system that conforms to genc³api 0.17.0.0, which is `genc3d` of
+  genc³ 0.30.2.1 or later: genc³wb has it activate the network and run every
+  node of it, watches the modes and the states of the nodes, and reads what a
+  node holds of its inputs and outputs. It is named in the compiler network editor; without it a network
+  file is edited, but no graph is shown. genc³wb reaches it and its nodes
+  through Unix domain sockets, so that in this version the graph is shown on
+  Linux and macOS alone.
 
 Qt Bridge for Rust supports Linux x86_64, Windows x64 and macOS arm64, the
 last as experimental.
@@ -175,8 +190,8 @@ with
 mkdir -p reports && cargo test 2>&1 | tee reports/test.txt
 ```
 
-Five tests run the build system and `dot` and are therefore left out of that
-run. They are run with the path of `genc3d` in the environment variable
+Eleven tests run the build system, with the nodes of a network, and `dot` and
+are therefore left out of that run. They are run with the path of `genc3d` in the environment variable
 `GENC3D`:
 
 ```bash
@@ -260,24 +275,33 @@ editor is not kept from the files.
 A double-click on a meta compiler-compiler in the graph opens it. The window
 shows the node as a machine: the inputs on the left, the outputs on the right,
 the gear in the middle, and the meta compiler DSL below as its control. The
-build system named in the compiler network editor is started for that one node,
-in the directory of the network file, and shut down when another node is
-opened, when the node window closes and when the workbench terminates. An edit
-of the meta compiler DSL or of an input is saved after the idle time and
-transmitted to the node, which answers with its diagnostics: each is marked in
-its editor by a wavy line under the faulty place — red for an error, orange for
-a warning, blue for information — whose tooltip shows the message, and all of
-them are listed on the last page of the outputs, 'Diagnostics'. After every
-change the node accepts without an error, its outputs are stored and shown on
-the output pages. Where the outputs could not be stored, the output pages keep
-what was stored last and carry an exclamation mark beside the file name, whose
-tooltip names the failure; the failure is listed on the page 'Diagnostics' as
-well, which is presented then. The mark is gone with the next change whose
-outputs are stored. The diagnostics of the network file are marked in its editor
-the same way.
+build system named in the compiler network editor runs every node of the
+network file, from the moment both are named until they change or the
+workbench terminates. The node window attaches to the running node: it connects
+to the service socket of the node and starts no process, and closing it, or
+opening another node, closes the connection and leaves the node running. An
+edit of the meta compiler DSL or of an input is saved after the idle time and
+transmitted to the node. The node tells its diagnostics, of its meta compiler
+DSL and of every input, whenever they change, whoever caused the change: an
+edit in the window, or a node upstream that produced one of the inputs anew.
+Each is marked in its editor by a wavy line under the faulty place — red for
+an error, orange for a warning, blue for information — whose tooltip shows the
+message, and all of them are listed on the last page of the outputs,
+'Diagnostics'. The output pages show what the node holds of its outputs, and
+follow it as it changes. After every change the node accepts without an error,
+the build system stores the outputs of every node, as long as no node of the
+network has an error; while one has, the store is held back until none has.
+Where the outputs could not be stored, the output pages carry an exclamation
+mark beside the file name, whose tooltip names the failure; the failure is
+listed on the page 'Diagnostics' as well, which is presented then. The mark is
+gone with the next store that succeeds. The diagnostics of the network file are
+marked in its editor the same way.
 
-An input that another node produces is editable all the same. As soon as it is
-edited, an exclamation mark appears beside its file name, whose tooltip names
-the producing node: the edit is temporary. When the node is shut down, the file
-is written back to what it held when the node was started, so that the
-producing node finds what it stored.
+An input that another node produces is not edited in the node window: its
+editor is read-only and shows what the node holds of it, which the producing
+node overwrites whenever it produces it anew.
+
+Where a node upstream has an error, the page 'Diagnostics' of every node
+downstream of it carries an exclamation mark for it, whose tooltip names the
+node the errors originate at; a click on it opens that node, where its
+diagnostics are shown in full.

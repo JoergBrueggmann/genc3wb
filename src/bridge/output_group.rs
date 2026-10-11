@@ -22,7 +22,7 @@ pub struct OutputGroup {
 
 // realises FR-027, FR-030, FR-032 to FR-036, FR-042, FR-044, FR-102, FR-107, FR-108, FR-110,
 // FR-111, FR-122, FR-125, FR-150 to FR-152, FR-154, FR-156 to FR-159, FR-163, FR-173, FR-175,
-// FR-211 to FR-213
+// FR-211 to FR-213, FR-234, FR-237
 #[qobject(NoQmlElement)]
 impl OutputGroup {
     qproperty!("pageIndex", Read = page_index, Notify = page_changed);
@@ -46,6 +46,7 @@ impl OutputGroup {
         Read = store_failure,
         Notify = content_changed
     );
+    qproperty!("origins", Read = origins, Notify = content_changed);
 
     // getters
     fn page_index(&self) -> i32 {
@@ -82,6 +83,11 @@ impl OutputGroup {
     // realises FR-212
     fn store_failure(&self) -> String {
         self.pages.store_failure().to_owned()
+    }
+
+    // realises FR-234
+    fn origins(&self) -> Vec<String> {
+        self.pages.origins().to_vec()
     }
 
     fn file_path(&self) -> String {
@@ -174,13 +180,46 @@ impl OutputGroup {
         self.announce_content();
     }
 
-    // realises FR-111, FR-151, FR-211
-    /// Reads every *output* again, after which the *output pages* are not *outdated*, and emits
-    /// `content_changed`, and `page_changed` first where the line of a failed *store request*
-    /// that is gone switched the presented page; scheduled by the *node editor*.
-    #[qslot(qml_name = "reload")]
-    fn reload(&mut self) {
-        if self.pages.reload() {
+    // realises FR-110, FR-111, FR-163
+    /// Replaces the content of the *output page* of index `index` by `octets`, the content the
+    /// *node* holds of that *output*, and emits `content_changed`; does nothing for an index
+    /// that names no *output page*; scheduled by the *node editor*.
+    #[qslot(qml_name = "setContent")]
+    fn set_content(&mut self, index: i32, octets: Vec<u8>) {
+        let taken = usize::try_from(index)
+            .ok()
+            .is_some_and(|index| self.pages.set_content(index, octets));
+        if taken {
+            self.announce_content();
+        }
+    }
+
+    // realises FR-151, FR-211
+    /// Takes the *outputs* as stored, after which the *output pages* are not *outdated*, and
+    /// emits `content_changed`, and `page_changed` first where the line of a failed
+    /// *store request* that is gone switched the presented page; scheduled by the
+    /// *node editor*.
+    #[qslot(qml_name = "stored")]
+    fn stored(&mut self) {
+        if !self.pages.is_outdated() {
+            return;
+        }
+        if self.pages.stored() {
+            self.announce_page();
+        }
+        self.announce_content();
+    }
+
+    // realises FR-150, FR-151, FR-234, FR-237
+    /// Replaces the *origins* the *diagnostics page* carries and emits `content_changed`, and
+    /// `page_changed` first where the *origins* that appeared or are gone switched the presented
+    /// page; scheduled by the *node editor*.
+    #[qslot(qml_name = "setOrigins")]
+    fn set_origins(&mut self, origins: Vec<String>) {
+        if origins == self.pages.origins() {
+            return;
+        }
+        if self.pages.set_origins(&origins) {
             self.announce_page();
         }
         self.announce_content();

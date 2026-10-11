@@ -4,8 +4,9 @@
 //! Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
 
 use crate::core::api_message::{
-    Diagnostic, MessageError, NodeDescription, Request, Response, decode_response,
-    delta_of_increment, encode_request, frames_of_message, octet_delta_between, read_message,
+    Diagnostic, DiagnosticGroup, MessageError, NetworkMode, NodeDescription, NodeState, Request,
+    Response, decode_response, delta_of_increment, encode_request, frames_of_message, has_error,
+    octet_delta_between, read_message,
 };
 use crate::core::executable;
 use crate::core::text_increment::TextIncrement;
@@ -15,16 +16,24 @@ use std::fmt;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::time::Duration;
 
 /// How often *product* tries to connect to the *service socket* of a process it started.
 const CONNECT_ATTEMPTS: u32 = 100;
+/// How often *product* tries to connect to the *service socket* of a *node* it attaches to,
+/// which the *build system* has started or is starting.
+const ATTACH_ATTEMPTS: u32 = 20;
 /// The pause between two such attempts.
 const CONNECT_PAUSE: Duration = Duration::from_millis(50);
 /// The time after which a *response* that did not arrive is a failure.
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
-/// The time *product* waits for a process to end after its *shutdown request*.
-const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
+/// The time *product* waits for the *build system* to end after its *shutdown request*, in
+/// which the *build system* stores and shuts down every *node* it runs (\[AD3\] IR-080 to
+/// IR-082); ending it before would leave its *nodes* running.
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The byte stream of the *service socket*: a Unix domain stream socket (C-005).
 #[cfg(unix)]
@@ -41,6 +50,69 @@ pub struct NetworkDescription {
     pub version: u64,
     /// the *node descriptions*, in the order of the *network file*
     pub nodes: Vec<NodeDescription>,
+}
+
+// realises FR-229, FR-231, FR-232, FR-233, FR-111, FR-239
+/// What a *state response* tells: the *node states*, and, where a *node* answers, the
+/// *diagnostic group* of each of its *inputs* and of its *meta compiler DSL* and the
+/// *document version* of each of its *inputs* and *outputs*, and, where the *build system*
+/// answers, its *network mode*.
+///
+/// * Every *state response* carries the whole of it anew, so that the latest is the state.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Watched {
+    /// the *node states*: the one of the *node*, or those of every *node* of the network in
+    /// the order of the *network file*
+    pub states: Vec<NodeState>,
+    /// the *diagnostic groups*, none where the *build system* answers
+    pub groups: Vec<DiagnosticGroup>,
+    /// the *document identifier* and the *document version* of every *input* and *output*,
+    /// none where the *build system* answers
+    pub versions: Vec<(String, u64)>,
+    /// the *network mode*, `None` where a *node* answers
+    pub mode: Option<NetworkMode>,
+}
+
+// realises FR-110, FR-111, FR-239
+/// What a content query request yields: the content the *node* holds of a document.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct DocumentContent {
+    /// the *document version* of the content
+    pub version: u64,
+    /// the octets of the document: those of the UTF-8 encoding of its text where it is a
+    /// *text document*
+    pub octets: Vec<u8>,
+    /// whether the document is a *binary document*
+    pub binary: bool,
+}
+
+// realises FR-229, FR-231, FR-112
+/// The receiver of what a watch tells: every *state response* as it arrives, and, once, why the
+/// connection of the watch was lost.
+///
+/// * It is called on the reader thread of the [`WatchedConnection`], so that it hands what it
+///   receives over to the thread that owns the state, and holds nothing of that thread.
+pub type StateSink = Box<dyn FnMut(Result<Watched, BuildError>) + Send>;
+
+// realises FR-107, FR-109, FR-225, FR-226, FR-227, FR-246, FR-248, FR-252
+/// What the change of a document yields: the *diagnostics* of that document, and those of the
+/// other documents the *diagnostic* response carried a *diagnostic group* for.
+///
+/// * `groups` holds the *diagnostic groups* that are taken alone: one that names the changed
+///   document itself, a document the conversation holds no *document version* of, or another
+///   *document version* than the one it holds, is left out (FR-226, FR-227).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct DiagnosticAnswer {
+    /// the *document version* the *node* answered for the changed document, which is the one
+    /// *product* holds of it from then on (FR-231, FR-232)
+    pub version: u64,
+    /// the *diagnostics* of the changed document, in the order of the response
+    pub diagnostics: Vec<Diagnostic>,
+    /// the *diagnostic groups* taken, in the order of the response
+    pub groups: Vec<DiagnosticGroup>,
+    /// whether a *diagnostic* of severity error is among those the response carried, those of
+    /// every *diagnostic group* included, the ones left out as well (FR-109)
+    pub erroneous: bool,
 }
 
 // realises FR-070, FR-073, FR-128
@@ -111,15 +183,193 @@ impl From<MessageError> for BuildError {
     }
 }
 
-// realises FR-070, FR-072, FR-073, FR-106, FR-109, IR-018, IR-019, IR-020, IR-027, IR-028
-/// The conversation with a process of the *build system* on a byte stream: the documents it
+// realises IR-018
+/// The connection a [`Conversation`] transmits its *requests* on and receives their *responses*
+/// from.
+///
+/// * It is a generic bound of the conversation: every byte stream is one, which reads the
+///   *responses* in the thread of the conversation, so that the conversation is tested on a
+///   stream in memory; the [`WatchedConnection`] is the one of a *service socket*, which a
+///   reader thread reads.
+pub trait Connection {
+    /// Transmits the *frames* of one *request*.
+    ///
+    /// # Errors
+    /// Returns [`BuildError::Connection`] where the connection fails.
+    fn send(&mut self, frames: &[u8]) -> Result<(), BuildError>;
+
+    /// Yields the next *response* with the *request identifier* it answers, waiting for it.
+    ///
+    /// # Errors
+    /// Returns [`BuildError::Connection`] where the connection fails or no *response* arrives
+    /// in time, and [`BuildError::Protocol`] where a *message* is not decoded.
+    fn receive(&mut self) -> Result<(u64, Response), BuildError>;
+}
+
+impl<S: Read + Write> Connection for S {
+    fn send(&mut self, frames: &[u8]) -> Result<(), BuildError> {
+        self.write_all(frames)
+            .and_then(|()| self.flush())
+            .map_err(|error| BuildError::Connection(error.to_string()))
+    }
+
+    fn receive(&mut self) -> Result<(u64, Response), BuildError> {
+        Ok(decode_response(&read_message(self)?)?)
+    }
+}
+
+// realises FR-228, FR-229, FR-230, FR-231, IR-018, IR-020, IR-028
+/// The connection to a *service socket* that is watched: a reader thread of its own receives
+/// every *response*, hands each *state response* to the [`StateSink`] as it arrives, asked for
+/// or not, and each other one to the conversation, which awaits it.
+///
+/// * The reader thread ends when the connection does: it then hands the reason to the
+///   conversation and to the sink, unless the connection was closed or silenced by *product*.
+/// * Dropping it closes the connection, which ends the watch (\[AD3\] § Message schema, rule
+///   'Watch') and the reader thread.
+#[derive(Debug)]
+pub struct WatchedConnection {
+    /// the half of the *service socket* the *requests* are written to
+    writer: ServiceStream,
+    /// the *responses* the reader thread received that are no *state responses*, or why the
+    /// connection ended
+    answers: Receiver<Result<(u64, Response), BuildError>>,
+    /// whether the sink is told nothing any more, the connection being closed by *product*
+    silenced: Arc<AtomicBool>,
+}
+
+impl WatchedConnection {
+    // realises FR-228, FR-230
+    /// Takes `stream`, the connection to a *service socket*, and starts the reader thread, which
+    /// hands what it is told to `sink`.
+    ///
+    /// # Errors
+    /// Returns [`BuildError::Connection`] where the stream cannot be read by a second thread.
+    #[cfg(unix)]
+    fn open(stream: ServiceStream, sink: StateSink) -> Result<WatchedConnection, BuildError> {
+        let connection = |error: std::io::Error| BuildError::Connection(error.to_string());
+        stream.set_read_timeout(None).map_err(connection)?;
+        let mut reader = stream.try_clone().map_err(connection)?;
+        let (received, answers) = channel();
+        let silenced = Arc::new(AtomicBool::new(false));
+        let silenced_for_reader = Arc::clone(&silenced);
+        std::thread::spawn(move || {
+            let mut sink = sink;
+            read_responses(&mut reader, &received, &mut |told| {
+                if !silenced_for_reader.load(Ordering::Acquire) {
+                    sink(told);
+                }
+            });
+        });
+        Ok(WatchedConnection {
+            writer: stream,
+            answers,
+            silenced,
+        })
+    }
+
+    /// Yields that the platform offers no Unix domain socket; `start` fails before it calls this.
+    #[cfg(not(unix))]
+    fn open(_stream: ServiceStream, _sink: StateSink) -> Result<WatchedConnection, BuildError> {
+        Err(BuildError::Unsupported)
+    }
+
+    /// Tells the sink nothing from now on: *product* is about to end the connection itself, so
+    /// that its end is no loss to report.
+    fn silence(&self) {
+        self.silenced.store(true, Ordering::Release);
+    }
+}
+
+impl Connection for WatchedConnection {
+    fn send(&mut self, frames: &[u8]) -> Result<(), BuildError> {
+        self.writer
+            .write_all(frames)
+            .and_then(|()| self.writer.flush())
+            .map_err(|error| BuildError::Connection(error.to_string()))
+    }
+
+    fn receive(&mut self) -> Result<(u64, Response), BuildError> {
+        match self.answers.recv_timeout(RESPONSE_TIMEOUT) {
+            Ok(answer) => answer,
+            Err(RecvTimeoutError::Timeout) => Err(BuildError::Connection(
+                "the response did not arrive in time".to_owned(),
+            )),
+            Err(RecvTimeoutError::Disconnected) => Err(BuildError::Connection(
+                "the connection is closed".to_owned(),
+            )),
+        }
+    }
+}
+
+impl Drop for WatchedConnection {
+    fn drop(&mut self) {
+        self.silence();
+        #[cfg(unix)]
+        let _ = self.writer.shutdown(std::net::Shutdown::Both);
+    }
+}
+
+// realises FR-229, FR-231, FR-112
+/// Reads the *responses* of `reader` until it ends: hands each *state response*, which is no
+/// *terminal response*, to `sink`, and each other one to `answers`, for the conversation that
+/// awaits it.
+///
+/// * Where the stream ends or fails, or a *message* is not decoded, the reason is handed to
+///   `answers` and to `sink`, and the reading ends.
+/// * The reading ends as well where the conversation is gone, `answers` taking nothing more.
+fn read_responses(
+    reader: &mut impl Read,
+    answers: &Sender<Result<(u64, Response), BuildError>>,
+    sink: &mut dyn FnMut(Result<Watched, BuildError>),
+) {
+    loop {
+        let received = read_message(reader)
+            .and_then(|message| decode_response(&message))
+            .map_err(BuildError::from);
+        match received {
+            Ok((
+                _,
+                Response::State {
+                    states,
+                    groups,
+                    versions,
+                    mode,
+                },
+            )) => sink(Ok(Watched {
+                states,
+                groups,
+                versions,
+                mode,
+            })),
+            Ok(answer) => {
+                if answers.send(Ok(answer)).is_err() {
+                    return;
+                }
+            }
+            Err(error) => {
+                let _ = answers.send(Err(error.clone()));
+                sink(Err(error));
+                return;
+            }
+        }
+    }
+}
+
+// realises FR-070, FR-072, FR-073, FR-106, FR-109, FR-225, FR-226, FR-227, FR-228, FR-230,
+// FR-239, IR-018, IR-019, IR-020, IR-027, IR-028
+/// The conversation with a process of the *build system* on a [`Connection`]: the documents it
 /// accepted an open request for, each with its *document version*.
 ///
-/// * The stream is a generic bound, so that the conversation is tested on a stream in memory.
+/// * The connection is a generic bound, so that the conversation is tested on a stream in
+///   memory.
+/// * A *response* that is no *terminal response*, a *state response*, answers no *request* the
+///   conversation awaits: on a byte stream it is passed over, and on a [`WatchedConnection`]
+///   the reader thread hands it to the sink before the conversation sees it.
 #[derive(Debug)]
-pub struct Conversation<S: Read + Write> {
-    /// the byte stream of the *service socket*
-    stream: S,
+pub struct Conversation<S: Connection> {
+    /// the connection to the *service socket*
+    connection: S,
     /// the *document version* the next edit request of each opened document applies to
     documents: BTreeMap<String, u64>,
     /// the opened documents that are *binary documents*, opened by their octets
@@ -128,18 +378,18 @@ pub struct Conversation<S: Read + Write> {
     next_request: u64,
 }
 
-impl<S: Read + Write> Conversation<S> {
-    /// Creates the conversation on `stream`; nothing is transmitted, no document is opened.
-    pub fn new(stream: S) -> Conversation<S> {
+impl<S: Connection> Conversation<S> {
+    /// Creates the conversation on `connection`; nothing is transmitted, no document is opened.
+    pub fn new(connection: S) -> Conversation<S> {
         Conversation {
-            stream,
+            connection,
             documents: BTreeMap::new(),
             binary_documents: BTreeSet::new(),
             next_request: 1,
         }
     }
 
-    // realises FR-070, FR-072, FR-106, FR-107, FR-112
+    // realises FR-070, FR-072, FR-106, FR-107, FR-112, FR-225
     /// Transmits the change of the document `document`.
     ///
     /// * Where the document is not opened, or is opened as a *binary document*, which takes no
@@ -148,7 +398,8 @@ impl<S: Read + Write> Conversation<S> {
     /// * A version mismatch response is answered by an open request carrying `provided_after`.
     /// * After an error response, the document counts as not opened, so that the next change
     ///   opens it again.
-    /// * Yields the *diagnostics* of the *terminal response*, none for an acknowledged response.
+    /// * Yields the *diagnostics* of the *terminal response* and its *diagnostic groups* that
+    ///   are taken ([`DiagnosticAnswer`]), none for an acknowledged response.
     ///
     /// # Arguments
     /// * `document` - the *document identifier*
@@ -166,7 +417,7 @@ impl<S: Read + Write> Conversation<S> {
         provided_before: &str,
         increment: &TextIncrement,
         provided_after: &str,
-    ) -> Result<Vec<Diagnostic>, BuildError> {
+    ) -> Result<DiagnosticAnswer, BuildError> {
         let version = match self.documents.get(document).copied() {
             Some(version) if !self.binary_documents.contains(document) => version,
             Some(_) | None => return self.open(document, provided_after),
@@ -180,18 +431,22 @@ impl<S: Read + Write> Conversation<S> {
             Response::Diagnostics {
                 version,
                 diagnostics,
+                groups,
             } => {
                 self.documents.insert(document.to_owned(), version);
-                Ok(diagnostics)
+                Ok(self.answer_of(document, diagnostics, groups))
             }
             Response::VersionMismatch { .. } => self.open(document, provided_after),
             Response::Error(text) => {
                 self.documents.remove(document);
                 Err(BuildError::Refused(text))
             }
-            Response::Acknowledged | Response::Network { .. } | Response::Other(_) => {
-                Err(unexpected("the edit request"))
-            }
+            Response::Acknowledged
+            | Response::Network { .. }
+            | Response::State { .. }
+            | Response::Content { .. }
+            | Response::Cancelled
+            | Response::Other(_) => Err(unexpected("the edit request")),
         }
     }
 
@@ -199,7 +454,8 @@ impl<S: Read + Write> Conversation<S> {
     /// Transmits the octets of the document `document` by an open request, the document being a
     /// *binary document* from then on (\[AD3\] IR-112).
     ///
-    /// * Yields the *diagnostics* of the *terminal response*, none for an acknowledged response.
+    /// * Yields the *diagnostics* of the *terminal response* and its *diagnostic groups* that
+    ///   are taken ([`DiagnosticAnswer`]), none for an acknowledged response.
     ///
     /// # Errors
     /// Returns what [`Conversation::transmit`] returns.
@@ -207,14 +463,14 @@ impl<S: Read + Write> Conversation<S> {
         &mut self,
         document: &str,
         octets: &[u8],
-    ) -> Result<Vec<Diagnostic>, BuildError> {
+    ) -> Result<DiagnosticAnswer, BuildError> {
         let open = Request::OpenOctets {
             document: document.to_owned(),
             octets: octets.to_vec(),
         };
-        let diagnostics = self.opened(document, &open)?;
+        let answer = self.opened(document, &open)?;
         self.binary_documents.insert(document.to_owned());
-        Ok(diagnostics)
+        Ok(answer)
     }
 
     // realises FR-210, FR-107, FR-112
@@ -227,7 +483,8 @@ impl<S: Read + Write> Conversation<S> {
     /// * A version mismatch response is answered by an open request carrying `octets_after`.
     /// * After an error response, the document counts as not opened, so that the next change
     ///   opens it again.
-    /// * Yields the *diagnostics* of the *terminal response*, none for an acknowledged response.
+    /// * Yields the *diagnostics* of the *terminal response* and its *diagnostic groups* that
+    ///   are taken ([`DiagnosticAnswer`]), none for an acknowledged response.
     ///
     /// # Errors
     /// Returns what [`Conversation::transmit`] returns.
@@ -236,7 +493,7 @@ impl<S: Read + Write> Conversation<S> {
         document: &str,
         octets_before: &[u8],
         octets_after: &[u8],
-    ) -> Result<Vec<Diagnostic>, BuildError> {
+    ) -> Result<DiagnosticAnswer, BuildError> {
         let version = match self.documents.get(document).copied() {
             Some(version) if self.binary_documents.contains(document) => version,
             Some(_) | None => return self.open_octets(document, octets_after),
@@ -250,9 +507,10 @@ impl<S: Read + Write> Conversation<S> {
             Response::Diagnostics {
                 version,
                 diagnostics,
+                groups,
             } => {
                 self.documents.insert(document.to_owned(), version);
-                Ok(diagnostics)
+                Ok(self.answer_of(document, diagnostics, groups))
             }
             Response::VersionMismatch { .. } => self.open_octets(document, octets_after),
             Response::Error(text) => {
@@ -260,9 +518,12 @@ impl<S: Read + Write> Conversation<S> {
                 self.binary_documents.remove(document);
                 Err(BuildError::Refused(text))
             }
-            Response::Acknowledged | Response::Network { .. } | Response::Other(_) => {
-                Err(unexpected("the edit request"))
-            }
+            Response::Acknowledged
+            | Response::Network { .. }
+            | Response::State { .. }
+            | Response::Content { .. }
+            | Response::Cancelled
+            | Response::Other(_) => Err(unexpected("the edit request")),
         }
     }
 
@@ -280,15 +541,18 @@ impl<S: Read + Write> Conversation<S> {
             Response::Acknowledged
             | Response::Diagnostics { .. }
             | Response::VersionMismatch { .. }
+            | Response::State { .. }
+            | Response::Content { .. }
+            | Response::Cancelled
             | Response::Other(_) => Err(unexpected("the network query request")),
         }
     }
 
-    // realises FR-109, FR-111, FR-112
+    // realises FR-109, FR-112, FR-211
     /// Transmits a *store request* and awaits its acknowledged response.
     ///
     /// # Errors
-    /// Returns [`BuildError::Refused`] where the *node* answers with an error response,
+    /// Returns [`BuildError::Refused`] where the *build system* answers with an error response,
     /// [`BuildError::Connection`] where the stream fails, and [`BuildError::Protocol`] where a
     /// *message* is not decoded or has an unexpected kind.
     pub fn store(&mut self) -> Result<(), BuildError> {
@@ -298,11 +562,85 @@ impl<S: Read + Write> Conversation<S> {
             Response::Diagnostics { .. }
             | Response::VersionMismatch { .. }
             | Response::Network { .. }
+            | Response::State { .. }
+            | Response::Content { .. }
+            | Response::Cancelled
             | Response::Other(_) => Err(unexpected("the store request")),
         }
     }
 
-    // realises FR-068, FR-105
+    // realises FR-260, FR-261
+    /// Transmits an *activate request* and awaits its acknowledged response, which the
+    /// *build system* transmits once every *node* of the network is an *active node*
+    /// (\[AD3\] IR-157 to IR-159).
+    ///
+    /// # Errors
+    /// Returns [`BuildError::Refused`] where the *build system* answers with an error response,
+    /// since the *network file* or the *configuration* of a *node* is invalid (\[AD3\] IR-161,
+    /// IR-162), [`BuildError::Connection`] where the stream fails, and [`BuildError::Protocol`]
+    /// where a *message* is not decoded or has an unexpected kind.
+    pub fn activate(&mut self) -> Result<(), BuildError> {
+        match self.exchange(&Request::Activate)? {
+            Response::Acknowledged => Ok(()),
+            Response::Error(text) => Err(BuildError::Refused(text)),
+            Response::Diagnostics { .. }
+            | Response::VersionMismatch { .. }
+            | Response::Network { .. }
+            | Response::State { .. }
+            | Response::Content { .. }
+            | Response::Cancelled
+            | Response::Other(_) => Err(unexpected("the activate request")),
+        }
+    }
+
+    // realises FR-228, FR-230
+    /// Transmits a *watch request* and awaits nothing: its *state responses* are no
+    /// *terminal responses*, the first follows at once and a further one whenever the state
+    /// changes (\[AD3\] IR-121, IR-122, IR-129, IR-130), and the [`WatchedConnection`] hands
+    /// each to its sink.
+    ///
+    /// # Errors
+    /// Returns [`BuildError::Connection`] where the stream fails.
+    pub fn watch(&mut self) -> Result<(), BuildError> {
+        self.request(&Request::Watch).map(|_| ())
+    }
+
+    // realises FR-110, FR-111, FR-239, FR-264
+    /// Transmits a content query request naming `document` and yields the content the process
+    /// holds of it (\[AD3\] IR-134, IR-135), or `None` where the process answers with a
+    /// cancelled response, an edit request of the *producer* having superseded the query
+    /// (\[AD3\] IR-029); the next *state response* has the content asked for anew.
+    ///
+    /// # Errors
+    /// Returns [`BuildError::Refused`] where the process holds no such document and answers
+    /// with an error response, [`BuildError::Connection`] where the stream fails, and
+    /// [`BuildError::Protocol`] where a *message* is not decoded or has an unexpected kind.
+    pub fn query_content(&mut self, document: &str) -> Result<Option<DocumentContent>, BuildError> {
+        let query = Request::QueryContent {
+            document: document.to_owned(),
+        };
+        match self.exchange(&query)? {
+            Response::Content {
+                version,
+                octets,
+                binary,
+            } => Ok(Some(DocumentContent {
+                version,
+                octets,
+                binary,
+            })),
+            Response::Cancelled => Ok(None),
+            Response::Error(text) => Err(BuildError::Refused(text)),
+            Response::Acknowledged
+            | Response::Diagnostics { .. }
+            | Response::VersionMismatch { .. }
+            | Response::Network { .. }
+            | Response::State { .. }
+            | Response::Other(_) => Err(unexpected("the content query request")),
+        }
+    }
+
+    // realises FR-068
     /// Transmits a *shutdown request* and awaits its *terminal response*.
     ///
     /// # Errors
@@ -314,57 +652,102 @@ impl<S: Read + Write> Conversation<S> {
     /// Transmits an open request carrying `text`, the document being a *text document* from
     /// then on; the *document version* becomes the one answered, and the *diagnostics* of the
     /// response are yielded.
-    fn open(&mut self, document: &str, text: &str) -> Result<Vec<Diagnostic>, BuildError> {
+    fn open(&mut self, document: &str, text: &str) -> Result<DiagnosticAnswer, BuildError> {
         let open = Request::Open {
             document: document.to_owned(),
             text: text.to_owned(),
         };
-        let diagnostics = self.opened(document, &open)?;
+        let answer = self.opened(document, &open)?;
         self.binary_documents.remove(document);
-        Ok(diagnostics)
+        Ok(answer)
     }
 
     /// Transmits the open request `open` of `document`; the *document version* becomes the one
     /// answered, and the *diagnostics* of the response are yielded.
-    fn opened(&mut self, document: &str, open: &Request) -> Result<Vec<Diagnostic>, BuildError> {
-        let (version, diagnostics) = match self.exchange(open)? {
-            Response::Acknowledged => (0, Vec::new()),
+    fn opened(&mut self, document: &str, open: &Request) -> Result<DiagnosticAnswer, BuildError> {
+        let (version, diagnostics, groups) = match self.exchange(open)? {
+            Response::Acknowledged => (0, Vec::new(), Vec::new()),
             Response::Diagnostics {
                 version,
                 diagnostics,
-            } => (version, diagnostics),
+                groups,
+            } => (version, diagnostics, groups),
             Response::Error(text) => {
                 self.documents.remove(document);
                 self.binary_documents.remove(document);
                 return Err(BuildError::Refused(text));
             }
-            Response::VersionMismatch { .. } | Response::Network { .. } | Response::Other(_) => {
+            Response::VersionMismatch { .. }
+            | Response::Network { .. }
+            | Response::State { .. }
+            | Response::Content { .. }
+            | Response::Cancelled
+            | Response::Other(_) => {
                 return Err(unexpected("the open request"));
             }
         };
         self.documents.insert(document.to_owned(), version);
-        Ok(diagnostics)
+        Ok(self.answer_of(document, diagnostics, groups))
     }
 
-    /// Transmits `request` and yields the *response* that carries its *request identifier*.
+    // realises FR-109, FR-225, FR-226, FR-227
+    /// Yields the answer to the change of `document`: its `diagnostics`, and those of `groups`
+    /// that are taken.
+    ///
+    /// * A *diagnostic group* is taken where it names another document than `document`, and
+    ///   the *document version* it states is the one the conversation holds of that document;
+    ///   one the conversation holds another *document version* of was computed from a state
+    ///   that is changed since, and the response to that change brings its *diagnostics*.
+    /// * An error in a *diagnostic group* that is left out counts as well, since it is an error
+    ///   of what the *node* holds.
+    fn answer_of(
+        &self,
+        document: &str,
+        diagnostics: Vec<Diagnostic>,
+        groups: Vec<DiagnosticGroup>,
+    ) -> DiagnosticAnswer {
+        let erroneous =
+            has_error(&diagnostics) || groups.iter().any(|group| has_error(&group.diagnostics));
+        DiagnosticAnswer {
+            version: self.documents.get(document).copied().unwrap_or(0),
+            diagnostics,
+            groups: groups
+                .into_iter()
+                .filter(|group| {
+                    group.document != document
+                        && self.documents.get(&group.document) == Some(&group.version)
+                })
+                .collect(),
+            erroneous,
+        }
+    }
+
+    /// Transmits `request` and yields the *terminal response* that carries its
+    /// *request identifier*.
+    ///
+    /// * A *response* to another *request*, and one that is no *terminal response*, is passed
+    ///   over.
     fn exchange(&mut self, request: &Request) -> Result<Response, BuildError> {
-        let identifier = self.next_request;
-        self.next_request += 1;
-        let frames = frames_of_message(&encode_request(identifier, request));
-        self.stream
-            .write_all(&frames)
-            .and_then(|()| self.stream.flush())
-            .map_err(|error| BuildError::Connection(error.to_string()))?;
+        let identifier = self.request(request)?;
         loop {
-            let (answered, response) = decode_response(&read_message(&mut self.stream)?)?;
-            if answered == identifier {
+            let (answered, response) = self.connection.receive()?;
+            if answered == identifier && response.is_terminal() {
                 return Ok(response);
             }
         }
     }
+
+    /// Transmits `request` under the next *request identifier*, and yields that identifier.
+    fn request(&mut self, request: &Request) -> Result<u64, BuildError> {
+        let identifier = self.next_request;
+        self.next_request += 1;
+        self.connection
+            .send(&frames_of_message(&encode_request(identifier, request)))?;
+        Ok(identifier)
+    }
 }
 
-// realises FR-068, FR-105, IR-017, IR-026
+// realises FR-068, IR-017
 /// A process of the *build system* and its socket file.
 ///
 /// * Dropping it ends the process where it still runs, and removes the socket file.
@@ -377,7 +760,7 @@ struct ServedProcess {
 }
 
 impl ServedProcess {
-    // realises FR-067, FR-104, IR-017, IR-026, C-005
+    // realises FR-067, IR-017, C-005
     /// Starts `executable` with `args` in `directory` and connects to `socket_path` once it
     /// listens.
     ///
@@ -405,7 +788,7 @@ impl ServedProcess {
             .stderr(Stdio::null())
             .spawn()
             .map_err(|error| BuildError::Process(error.to_string()))?;
-        match connected(&mut child, socket_path) {
+        match connected(Some(&mut child), socket_path, CONNECT_ATTEMPTS) {
             Ok(stream) => Ok((
                 ServedProcess {
                     child,
@@ -422,7 +805,7 @@ impl ServedProcess {
         }
     }
 
-    // realises FR-068, FR-105
+    // realises FR-068
     /// Waits for the process to end, for at most `SHUTDOWN_TIMEOUT`; `Drop` ends it where it does
     /// not.
     fn await_end(&mut self) {
@@ -445,15 +828,17 @@ impl Drop for ServedProcess {
     }
 }
 
-// realises FR-067, FR-068, IR-017, C-005
-/// A *build system* *product* started in its *network role*, with the conversation on its
-/// *service socket*.
+// realises FR-067, FR-068, FR-109, FR-228, FR-229, FR-244, FR-260, IR-017, C-005
+/// A *build system* *product* started in its *network role*, which activates the network and
+/// runs every *node* of the *network file* while the network is an *active network*, with the
+/// conversation on its *service socket* and the watch of its *node states* and its
+/// *network mode*.
 #[derive(Debug)]
 pub struct BuildSession {
     /// the process and its socket file
     process: ServedProcess,
-    /// the conversation on its *service socket*
-    conversation: Conversation<ServiceStream>,
+    /// the conversation on its *service socket*, which is watched
+    conversation: Conversation<WatchedConnection>,
     /// the *document identifier* of the *network file*: its file name (\[AD5\] IR-074)
     document: String,
 }
@@ -465,9 +850,12 @@ impl BuildSession {
         cfg!(unix)
     }
 
-    // realises FR-067, IR-017
-    /// Starts the *build system* `executable` on `network_path` in the *description mode*, in the
-    /// directory of the *network file*, and connects to `socket_path` once it listens.
+    // realises FR-067, FR-228, IR-017
+    /// Starts the *build system* `executable` on `network_path` in its *network role*, in the
+    /// directory of the *network file*, without `--startup-inactive`, so that it activates the
+    /// network at start-up where the *network file* is valid (\[AD3\] IR-156), connects to
+    /// `socket_path` once it listens, and transmits the one *watch request*, whose
+    /// *state responses* `sink` receives.
     ///
     /// # Errors
     /// Returns [`BuildError::Unsupported`] where the platform offers no Unix domain socket,
@@ -478,6 +866,7 @@ impl BuildSession {
         executable: &str,
         network_path: &str,
         socket_path: &Path,
+        sink: StateSink,
     ) -> Result<BuildSession, BuildError> {
         let network = Path::new(network_path);
         let document = network
@@ -491,14 +880,15 @@ impl BuildSession {
         let args = vec![
             "--network".to_owned(),
             document.clone(),
-            "--no-nodes".to_owned(),
             "--socket".to_owned(),
             socket_path.to_string_lossy().into_owned(),
         ];
         let (process, stream) = ServedProcess::start(executable, &directory, &args, socket_path)?;
+        let mut conversation = Conversation::new(WatchedConnection::open(stream, sink)?);
+        conversation.watch()?;
         Ok(BuildSession {
             process,
-            conversation: Conversation::new(stream),
+            conversation,
             document,
         })
     }
@@ -518,62 +908,81 @@ impl BuildSession {
         increment: &TextIncrement,
         provided_after: &str,
     ) -> Result<BuildResult, BuildError> {
-        let diagnostics = self.conversation.transmit(
+        let answer = self.conversation.transmit(
             &self.document,
             provided_before,
             increment,
             provided_after,
         )?;
         Ok(BuildResult {
-            diagnostics,
+            diagnostics: answer.diagnostics,
             network: self.conversation.query_network(),
         })
     }
 
+    // realises FR-109, FR-112, FR-211
+    /// Transmits a *store request* to the *build system*, which passes it on to every *node* in
+    /// the order of the *connections* (\[AD3\] IR-078), as [`Conversation::store`].
+    ///
+    /// # Errors
+    /// Returns what [`Conversation::store`] returns.
+    pub fn store(&mut self) -> Result<(), BuildError> {
+        self.conversation.store()
+    }
+
+    // realises FR-260, FR-261
+    /// Transmits an *activate request* to the *build system*, which starts, wires and activates
+    /// every *node* of the network (\[AD3\] IR-157, IR-158), as [`Conversation::activate`].
+    ///
+    /// # Errors
+    /// Returns what [`Conversation::activate`] returns.
+    pub fn activate(&mut self) -> Result<(), BuildError> {
+        self.conversation.activate()
+    }
+
     // realises FR-068
     /// Transmits a *shutdown request* and waits for the process to end; ends it where it does not.
+    ///
+    /// * The sink of the watch is told nothing of the end of the connection, which *product*
+    ///   brings about itself.
     pub fn shut_down(mut self) {
+        self.conversation.connection.silence();
         let _ = self.conversation.shut_down();
         self.process.await_end();
     }
 }
 
-// realises FR-104, FR-105, FR-106, FR-109, IR-026, IR-027, C-005
-/// A *node* *product* started, with the conversation on its *service socket*.
+// realises FR-104, FR-105, FR-106, FR-230, IR-026, IR-027, IR-038, C-005
+/// A *node* *product* is attached to: the conversation on the *service socket* of a *node* the
+/// *build system* runs, and the watch of that *node*.
+///
+/// * Dropping it closes the connection and leaves the *node* running (FR-105).
 #[derive(Debug)]
 pub struct NodeSession {
-    /// the process and its socket file
-    process: ServedProcess,
-    /// the conversation on its *service socket*
-    conversation: Conversation<ServiceStream>,
+    /// the conversation on its *service socket*, which is watched
+    conversation: Conversation<WatchedConnection>,
 }
 
 impl NodeSession {
-    // realises FR-104, IR-026
-    /// Starts the *build system* `executable` for one *node* in `directory`, the directory of the
-    /// *network file*, with `--socket`, `--meta-dsl` naming `meta_dsl`, `--input` once per
-    /// element of `inputs` and `--output` once per element of `outputs`, each path as given, and
-    /// connects to `socket_path` once it listens.
+    // realises FR-104, FR-230, IR-026, IR-038
+    /// Attaches to the *node* that listens on `socket_path`: connects to it, retrying while the
+    /// *build system* is starting the *node*, and transmits the *watch request*, whose
+    /// *state responses* `sink` receives. No process is started.
     ///
     /// # Errors
-    /// Returns what [`BuildSession::start`] returns.
-    pub fn start(
-        executable: &str,
-        directory: &Path,
-        meta_dsl: &str,
-        inputs: &[String],
-        outputs: &[String],
-        socket_path: &Path,
-    ) -> Result<NodeSession, BuildError> {
-        let args = node_args(meta_dsl, inputs, outputs, socket_path);
-        let (process, stream) = ServedProcess::start(executable, directory, &args, socket_path)?;
-        Ok(NodeSession {
-            process,
-            conversation: Conversation::new(stream),
-        })
+    /// Returns [`BuildError::Unsupported`] where the platform offers no Unix domain socket, and
+    /// [`BuildError::Connection`] where the *service socket* is not reached.
+    pub fn attach(socket_path: &Path, sink: StateSink) -> Result<NodeSession, BuildError> {
+        if !BuildSession::is_available() {
+            return Err(BuildError::Unsupported);
+        }
+        let stream = connected(None, socket_path, ATTACH_ATTEMPTS)?;
+        let mut conversation = Conversation::new(WatchedConnection::open(stream, sink)?);
+        conversation.watch()?;
+        Ok(NodeSession { conversation })
     }
 
-    // realises FR-106, FR-107, IR-027, IR-028
+    // realises FR-106, FR-107, FR-225, IR-027, IR-028
     /// Transmits the change of a document, as [`Conversation::transmit`].
     ///
     /// # Errors
@@ -584,7 +993,7 @@ impl NodeSession {
         provided_before: &str,
         increment: &TextIncrement,
         provided_after: &str,
-    ) -> Result<Vec<Diagnostic>, BuildError> {
+    ) -> Result<DiagnosticAnswer, BuildError> {
         self.conversation
             .transmit(document, provided_before, increment, provided_after)
     }
@@ -598,7 +1007,7 @@ impl NodeSession {
         &mut self,
         document: &str,
         octets: &[u8],
-    ) -> Result<Vec<Diagnostic>, BuildError> {
+    ) -> Result<DiagnosticAnswer, BuildError> {
         self.conversation.open_octets(document, octets)
     }
 
@@ -612,55 +1021,23 @@ impl NodeSession {
         document: &str,
         octets_before: &[u8],
         octets_after: &[u8],
-    ) -> Result<Vec<Diagnostic>, BuildError> {
+    ) -> Result<DiagnosticAnswer, BuildError> {
         self.conversation
             .edit_octets(document, octets_before, octets_after)
     }
 
-    // realises FR-109, FR-111
-    /// Transmits a *store request*, as [`Conversation::store`].
+    // realises FR-110, FR-111, FR-239, FR-264
+    /// Reads the content the *node* holds of a document, as [`Conversation::query_content`]:
+    /// `None` where the *node* cancelled the query.
     ///
     /// # Errors
-    /// Returns what [`Conversation::store`] returns.
-    pub fn store(&mut self) -> Result<(), BuildError> {
-        self.conversation.store()
-    }
-
-    // realises FR-105
-    /// Transmits a *shutdown request* and waits for the process to end; ends it where it does not.
-    pub fn shut_down(mut self) {
-        let _ = self.conversation.shut_down();
-        self.process.await_end();
+    /// Returns what [`Conversation::query_content`] returns.
+    pub fn query_content(&mut self, document: &str) -> Result<Option<DocumentContent>, BuildError> {
+        self.conversation.query_content(document)
     }
 }
 
-// realises FR-104, IR-026
-/// Yields the arguments a *node* is started with: `--socket`, `--meta-dsl`, `--input` once per
-/// *input* and `--output` once per *output*, each path as given.
-fn node_args(
-    meta_dsl: &str,
-    inputs: &[String],
-    outputs: &[String],
-    socket_path: &Path,
-) -> Vec<String> {
-    let mut args = vec![
-        "--socket".to_owned(),
-        socket_path.to_string_lossy().into_owned(),
-        "--meta-dsl".to_owned(),
-        meta_dsl.to_owned(),
-    ];
-    for input in inputs {
-        args.push("--input".to_owned());
-        args.push(input.clone());
-    }
-    for output in outputs {
-        args.push("--output".to_owned());
-        args.push(output.clone());
-    }
-    args
-}
-
-// realises FR-067, FR-094, FR-104, IR-017, IR-026
+// realises FR-067, FR-094, IR-017
 /// Yields the path by which a process of the *build system* is started: `executable` made
 /// absolute against the working directory of *product*.
 ///
@@ -682,11 +1059,17 @@ fn unexpected(request: &str) -> BuildError {
     BuildError::Protocol(format!("{request} was answered by an unexpected response"))
 }
 
-/// Connects to the *service socket* of `child`, retrying until it listens or the process ends.
+/// Connects to the *service socket* at `socket_path`, trying `attempts` times until it listens;
+/// where `child` is the process that is to listen there, until that process ends as well.
 #[cfg(unix)]
-fn connected(child: &mut Child, socket_path: &Path) -> Result<ServiceStream, BuildError> {
+fn connected(
+    child: Option<&mut Child>,
+    socket_path: &Path,
+    attempts: u32,
+) -> Result<ServiceStream, BuildError> {
+    let mut child = child;
     let mut reason = String::from("the service socket does not exist");
-    for _ in 0..CONNECT_ATTEMPTS {
+    for _ in 0..attempts {
         match ServiceStream::connect(socket_path) {
             Ok(stream) => {
                 stream
@@ -697,7 +1080,7 @@ fn connected(child: &mut Child, socket_path: &Path) -> Result<ServiceStream, Bui
             }
             Err(error) => reason = error.to_string(),
         }
-        if let Ok(Some(status)) = child.try_wait() {
+        if let Some(Ok(Some(status))) = child.as_mut().map(|child| child.try_wait()) {
             return Err(BuildError::Process(format!(
                 "the build system ended with {status} before it listened"
             )));
@@ -709,8 +1092,12 @@ fn connected(child: &mut Child, socket_path: &Path) -> Result<ServiceStream, Bui
 
 /// Yields that the platform offers no Unix domain socket; `start` fails before it calls this.
 #[cfg(not(unix))]
-fn connected(_child: &mut Child, _socket_path: &Path) -> Result<ServiceStream, BuildError> {
-    let _ = (CONNECT_ATTEMPTS, CONNECT_PAUSE, RESPONSE_TIMEOUT);
+fn connected(
+    _child: Option<&mut Child>,
+    _socket_path: &Path,
+    _attempts: u32,
+) -> Result<ServiceStream, BuildError> {
+    let _ = (CONNECT_PAUSE, RESPONSE_TIMEOUT);
     Err(BuildError::Unsupported)
 }
 
@@ -720,15 +1107,17 @@ fn connected(_child: &mut Child, _socket_path: &Path) -> Result<ServiceStream, B
 * edge cases       : ✅
 * conforms to doc  : ✅
 * covers bridge    : NetworkEditor::apply_increment, NetworkEditor::set_network_path,
+                     NetworkEditor::store, NetworkEditor::activate, NetworkEditor::report_arrived,
                      NetworkEditor::shut_down, NodeEditor::apply_increment, NodeEditor::report_arrived,
-                     NodeEditor::close; the processes and the sockets of `BuildSession` and
-                     `NodeSession` are covered by the ignored integration test 'tests/build_system.rs' */
+                     NodeEditor::close; the process, the sockets and the reader threads of
+                     `BuildSession` and `NodeSession` are covered by the ignored integration test
+                     'tests/build_system.rs' */
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use crate::core::api_message::{
-        NodeKind, OctetDelta, Position, ReadPosition, Severity, encode_response,
+        NodeKind, NodeMode, OctetDelta, Position, ReadPosition, Severity, encode_response,
     };
 
     use std::io::Cursor;
@@ -809,6 +1198,89 @@ mod tests {
         Response::Diagnostics {
             version,
             diagnostics: vec![],
+            groups: vec![],
+        }
+    }
+
+    /// The answer at the *document version* 0 that carries `diagnostics` and no
+    /// *diagnostic group*.
+    fn answer(diagnostics: Vec<Diagnostic>) -> DiagnosticAnswer {
+        answer_at(0, diagnostics)
+    }
+
+    /// The answer at the *document version* `version` that carries `diagnostics` and no
+    /// *diagnostic group*.
+    fn answer_at(version: u64, diagnostics: Vec<Diagnostic>) -> DiagnosticAnswer {
+        DiagnosticAnswer {
+            version,
+            erroneous: has_error(&diagnostics),
+            diagnostics,
+            groups: vec![],
+        }
+    }
+
+    fn state(name: &str, errors: u64, origins: &[&str]) -> NodeState {
+        NodeState {
+            name: name.to_owned(),
+            errors,
+            origins: origins.iter().map(|origin| (*origin).to_owned()).collect(),
+            mode: Some(NodeMode::Active),
+        }
+    }
+
+    /// What the *node* `b` tells while it counts `errors` errors in 'b.in' at version 2.
+    fn watched(errors: u64) -> Watched {
+        Watched {
+            states: vec![state("b", errors, &[])],
+            groups: vec![group("b.in", 2, (0..errors).map(|_| fault()).collect())],
+            versions: vec![("b.in".to_owned(), 2), ("y.txt".to_owned(), 5)],
+            mode: None,
+        }
+    }
+
+    fn state_response(watched: &Watched) -> Response {
+        Response::State {
+            states: watched.states.clone(),
+            groups: watched.groups.clone(),
+            versions: watched.versions.clone(),
+            mode: watched.mode,
+        }
+    }
+
+    /// The bytes of the *frames* of `responses`, as a process of the *build system* writes
+    /// them.
+    fn frames(responses: &[(u64, Response)]) -> Vec<u8> {
+        responses
+            .iter()
+            .flat_map(|(identifier, response)| {
+                frames_of_message(&encode_response(*identifier, response))
+            })
+            .collect()
+    }
+
+    /// What `read_responses` hands over while it reads `bytes`: to the conversation, and to
+    /// the sink.
+    #[allow(clippy::type_complexity)] // the two results of one reading, compared as one value
+    fn read(
+        bytes: Vec<u8>,
+    ) -> (
+        Vec<Result<(u64, Response), BuildError>>,
+        Vec<Result<Watched, BuildError>>,
+    ) {
+        let (answers, received) = channel();
+        let mut told = Vec::new();
+        read_responses(&mut Cursor::new(bytes), &answers, &mut |watched| {
+            told.push(watched);
+        });
+        drop(answers);
+        (received.iter().collect(), told)
+    }
+
+    fn group(document: &str, version: u64, diagnostics: Vec<Diagnostic>) -> DiagnosticGroup {
+        DiagnosticGroup {
+            document: document.to_owned(),
+            version,
+            diagnostics,
         }
     }
 
@@ -855,7 +1327,7 @@ mod tests {
             encode_request(2, &Request::QueryNetwork),
         ];
         assert_eq!(
-            (result, conversation.stream.requests()),
+            (result, conversation.connection.requests()),
             (
                 Ok(NetworkDescription {
                     version: 0,
@@ -891,7 +1363,7 @@ mod tests {
         );
         assert_eq!(
             (
-                conversation.stream.requests().get(2).cloned(),
+                conversation.connection.requests().get(2).cloned(),
                 conversation.documents.get("n.gc3n").copied()
             ),
             (Some(edit), Some(1))
@@ -920,7 +1392,7 @@ mod tests {
         assert_eq!(
             (
                 result.is_ok(),
-                conversation.stream.requests().get(3).cloned()
+                conversation.connection.requests().get(3).cloned()
             ),
             (true, Some(reopened))
         );
@@ -988,7 +1460,7 @@ mod tests {
             Conversation::new(Scripted::answering(&[(1, Response::Acknowledged)]));
         let result = conversation.shut_down();
         assert_eq!(
-            (result, conversation.stream.requests()),
+            (result, conversation.connection.requests()),
             (Ok(()), vec![encode_request(1, &Request::Shutdown)])
         );
     }
@@ -1008,7 +1480,7 @@ mod tests {
         let _ = conversation.transmit("in.txt", "y", &increment(1, 0, "z"), "yz");
         let _ = conversation.transmit("a.gc3", "x", &increment(1, 0, "w"), "xw");
         let kinds: Vec<u8> = conversation
-            .stream
+            .connection
             .requests()
             .iter()
             .map(|request| request[2])
@@ -1031,6 +1503,7 @@ mod tests {
             Response::Diagnostics {
                 version: 4,
                 diagnostics: vec![fault()],
+                groups: vec![],
             },
         )]);
         let mut conversation = Conversation::new(stream);
@@ -1038,12 +1511,12 @@ mod tests {
         assert_eq!(
             (
                 result,
-                conversation.stream.requests(),
+                conversation.connection.requests(),
                 conversation.documents.get("in.bin").copied(),
                 conversation.binary_documents.contains("in.bin")
             ),
             (
-                Ok(vec![fault()]),
+                Ok(answer_at(4, vec![fault()])),
                 vec![encode_request(
                     1,
                     &Request::OpenOctets {
@@ -1067,11 +1540,11 @@ mod tests {
         assert_eq!(
             (
                 result,
-                conversation.stream.requests().get(1).cloned(),
+                conversation.connection.requests().get(1).cloned(),
                 conversation.documents.get("in.bin").copied()
             ),
             (
-                Ok(vec![]),
+                Ok(answer_at(1, vec![])),
                 Some(encode_request(
                     2,
                     &Request::EditOctets {
@@ -1101,7 +1574,7 @@ mod tests {
         let _ = conversation.edit_octets("a.bin", &[1], &[2]);
         let _ = conversation.transmit("b.txt", "", &increment(0, 0, "x"), "x");
         let _ = conversation.edit_octets("b.txt", b"x", &[0xff]);
-        let requests = conversation.stream.requests();
+        let requests = conversation.connection.requests();
         assert_eq!(
             (requests.first().cloned(), requests.get(2).cloned()),
             (
@@ -1137,11 +1610,11 @@ mod tests {
         assert_eq!(
             (
                 result,
-                conversation.stream.requests().get(2).cloned(),
+                conversation.connection.requests().get(2).cloned(),
                 conversation.documents.get("in.bin").copied()
             ),
             (
-                Ok(vec![]),
+                Ok(answer_at(8, vec![])),
                 Some(encode_request(
                     3,
                     &Request::OpenOctets {
@@ -1186,7 +1659,7 @@ mod tests {
         let _ = conversation.open_octets("in.bin", &[0xff]);
         let _ = conversation.transmit("in.bin", "", &increment(0, 0, "x"), "x");
         let _ = conversation.transmit("in.bin", "x", &increment(1, 0, "y"), "xy");
-        let requests = conversation.stream.requests();
+        let requests = conversation.connection.requests();
         assert_eq!(
             (
                 requests.get(1).cloned(),
@@ -1227,12 +1700,150 @@ mod tests {
             Response::Diagnostics {
                 version: 0,
                 diagnostics: vec![fault()],
+                groups: vec![],
             },
         )]);
         let mut conversation = Conversation::new(stream);
         assert_eq!(
             conversation.transmit("a.gc3", "", &increment(0, 0, "x"), "x"),
-            Ok(vec![fault()])
+            Ok(answer(vec![fault()]))
+        );
+    }
+
+    #[test]
+    fn diagnostic_group_of_another_document_at_the_version_held_is_taken() {
+        // FR-225: the edit of 'a.in' brings the diagnostics of 'b.in', and none of 'c.in'
+        let stream = Scripted::answering(&[
+            (1, diagnostics(0)),
+            (2, diagnostics(3)),
+            (3, diagnostics(0)),
+            (
+                4,
+                Response::Diagnostics {
+                    version: 1,
+                    diagnostics: vec![],
+                    groups: vec![group("b.in", 3, vec![fault()]), group("c.in", 0, vec![])],
+                },
+            ),
+        ]);
+        let mut conversation = Conversation::new(stream);
+        let opened = conversation
+            .transmit("a.in", "", &increment(0, 0, "a"), "a")
+            .and(conversation.transmit("b.in", "", &increment(0, 0, "b"), "b"))
+            .and(conversation.transmit("c.in", "", &increment(0, 0, "c"), "c"));
+        let edited = conversation.transmit("a.in", "a", &increment(1, 0, "x"), "ax");
+        assert_eq!(
+            (opened, edited, conversation.documents.get("b.in").copied()),
+            (
+                Ok(answer(vec![])),
+                Ok(DiagnosticAnswer {
+                    version: 1,
+                    diagnostics: vec![],
+                    groups: vec![group("b.in", 3, vec![fault()]), group("c.in", 0, vec![])],
+                    erroneous: true,
+                }),
+                Some(3)
+            )
+        );
+    }
+
+    #[test]
+    fn diagnostic_group_at_another_version_than_the_one_held_is_left_out() {
+        // FR-227: 'b.in' is held at version 3; the error of the group counts all the same
+        let stream = Scripted::answering(&[
+            (1, diagnostics(3)),
+            (
+                2,
+                Response::Diagnostics {
+                    version: 0,
+                    diagnostics: vec![],
+                    groups: vec![group("b.in", 2, vec![fault()])],
+                },
+            ),
+        ]);
+        let mut conversation = Conversation::new(stream);
+        let opened = conversation.transmit("b.in", "", &increment(0, 0, "b"), "b");
+        let answered = conversation.transmit("a.in", "", &increment(0, 0, "a"), "a");
+        assert_eq!(
+            (opened, answered),
+            (
+                Ok(answer_at(3, vec![])),
+                Ok(DiagnosticAnswer {
+                    version: 0,
+                    diagnostics: vec![],
+                    groups: vec![],
+                    erroneous: true,
+                })
+            )
+        );
+    }
+
+    #[test]
+    fn diagnostic_group_of_a_document_not_opened_or_of_the_changed_one_is_left_out() {
+        // FR-226, FR-227: no version of 'b.in' is held; 'a.in' is the document of the request
+        let stream = Scripted::answering(&[(
+            1,
+            Response::Diagnostics {
+                version: 0,
+                diagnostics: vec![],
+                groups: vec![group("b.in", 0, vec![]), group("a.in", 0, vec![fault()])],
+            },
+        )]);
+        let mut conversation = Conversation::new(stream);
+        assert_eq!(
+            conversation.open_octets("a.in", &[0xff]),
+            Ok(DiagnosticAnswer {
+                version: 0,
+                diagnostics: vec![],
+                groups: vec![],
+                erroneous: true,
+            })
+        );
+    }
+
+    #[test]
+    fn diagnostic_group_of_the_response_to_octets_is_taken() {
+        // FR-225, FR-210: the open request and the edit request of a binary document
+        let stream = Scripted::answering(&[
+            (1, diagnostics(5)),
+            (
+                2,
+                Response::Diagnostics {
+                    version: 0,
+                    diagnostics: vec![],
+                    groups: vec![group("b.in", 5, vec![])],
+                },
+            ),
+            (
+                3,
+                Response::Diagnostics {
+                    version: 1,
+                    diagnostics: vec![fault()],
+                    groups: vec![group("b.in", 5, vec![fault()])],
+                },
+            ),
+        ]);
+        let mut conversation = Conversation::new(stream);
+        let opened = conversation.transmit("b.in", "", &increment(0, 0, "b"), "b");
+        let octets = conversation.open_octets("a.bin", &[0xff]);
+        let edited = conversation.edit_octets("a.bin", &[0xff], &[0xfe]);
+        assert_eq!(
+            (opened, octets, edited),
+            (
+                Ok(answer_at(5, vec![])),
+                Ok(DiagnosticAnswer {
+                    version: 0,
+                    diagnostics: vec![],
+                    groups: vec![group("b.in", 5, vec![])],
+                    erroneous: false,
+                }),
+                Ok(DiagnosticAnswer {
+                    version: 1,
+                    diagnostics: vec![fault()],
+                    groups: vec![group("b.in", 5, vec![fault()])],
+                    erroneous: true,
+                })
+            )
         );
     }
 
@@ -1244,7 +1855,7 @@ mod tests {
         let result = conversation.transmit("a.gc3", "", &increment(0, 0, "x"), "x");
         assert_eq!(
             (result, conversation.documents.get("a.gc3").copied()),
-            (Ok(vec![]), Some(0))
+            (Ok(answer(vec![])), Some(0))
         );
     }
 
@@ -1255,7 +1866,7 @@ mod tests {
             Conversation::new(Scripted::answering(&[(1, Response::Acknowledged)]));
         let result = conversation.store();
         assert_eq!(
-            (result, conversation.stream.requests()),
+            (result, conversation.connection.requests()),
             (Ok(()), vec![encode_request(1, &Request::Store)])
         );
     }
@@ -1280,27 +1891,362 @@ mod tests {
     }
 
     #[test]
-    fn node_is_started_with_its_socket_its_meta_dsl_its_inputs_and_its_outputs() {
-        // FR-104, IR-026
+    fn activate_transmits_the_activate_request_and_is_acknowledged() {
+        // FR-260, [AD3] IR-138, IR-157, IR-159
+        let mut conversation =
+            Conversation::new(Scripted::answering(&[(1, Response::Acknowledged)]));
+        let result = conversation.activate();
         assert_eq!(
-            node_args(
-                "a.gc3",
-                &["in1.txt".to_owned(), "in2.txt".to_owned()],
-                &["out.txt".to_owned()],
-                Path::new("/tmp/n1.sock")
+            (result, conversation.connection.requests()),
+            (Ok(()), vec![encode_request(1, &Request::Activate)])
+        );
+    }
+
+    #[test]
+    fn error_response_to_the_activate_request_is_the_failure_with_its_message_text() {
+        // FR-261, [AD3] IR-161, IR-162
+        let mut conversation = Conversation::new(Scripted::answering(&[(
+            1,
+            Response::Error("node b: the configuration is invalid".to_owned()),
+        )]));
+        assert_eq!(
+            conversation.activate(),
+            Err(BuildError::Refused(
+                "node b: the configuration is invalid".to_owned()
+            ))
+        );
+    }
+
+    #[test]
+    fn unexpected_response_to_the_activate_request_is_a_protocol_error() {
+        let mut conversation = Conversation::new(Scripted::answering(&[(1, network(0))]));
+        assert!(matches!(
+            conversation.activate(),
+            Err(BuildError::Protocol(_))
+        ));
+    }
+
+    #[test]
+    fn answer_carries_the_document_version_the_node_answered() {
+        // FR-231, FR-232: the version the product holds of the document from then on
+        let stream = Scripted::answering(&[(1, diagnostics(0)), (2, diagnostics(6))]);
+        let mut conversation = Conversation::new(stream);
+        let opened = conversation.transmit("a.in", "", &increment(0, 0, "a"), "a");
+        let edited = conversation.transmit("a.in", "a", &increment(1, 0, "b"), "ab");
+        assert_eq!(
+            (opened, edited),
+            (Ok(answer_at(0, vec![])), Ok(answer_at(6, vec![])))
+        );
+    }
+
+    #[test]
+    fn empty_document_is_registered_by_an_open_request_with_an_empty_text() {
+        // FR-242: an increment that changes nothing opens a document not opened yet, so that
+        // its document version is held and its diagnostics are answered
+        let stream = Scripted::answering(&[(
+            1,
+            Response::Diagnostics {
+                version: 0,
+                diagnostics: vec![fault()],
+                groups: vec![],
+            },
+        )]);
+        let mut conversation = Conversation::new(stream);
+        let registered = conversation.transmit("a.in", "", &TextIncrement::default(), "");
+        assert_eq!(
+            (
+                registered,
+                conversation.connection.requests(),
+                conversation.documents.get("a.in").copied()
             ),
-            vec![
-                "--socket",
-                "/tmp/n1.sock",
-                "--meta-dsl",
-                "a.gc3",
-                "--input",
-                "in1.txt",
-                "--input",
-                "in2.txt",
-                "--output",
-                "out.txt"
-            ]
+            (
+                Ok(answer(vec![fault()])),
+                vec![encode_request(
+                    1,
+                    &Request::Open {
+                        document: "a.in".to_owned(),
+                        text: String::new(),
+                    }
+                )],
+                Some(0)
+            )
+        );
+    }
+
+    #[test]
+    fn watch_transmits_the_watch_request_and_awaits_no_response() {
+        // FR-228, FR-230: the stream holds no response
+        let mut conversation = Conversation::new(Scripted::answering(&[]));
+        let result = conversation.watch();
+        assert_eq!(
+            (result, conversation.connection.requests()),
+            (Ok(()), vec![encode_request(1, &Request::Watch)])
+        );
+    }
+
+    #[test]
+    fn state_response_is_passed_over_by_the_request_that_awaits_its_terminal_response() {
+        // [AD3] rule 'Watch': the watch is request 1, the store request 2; a state response
+        // is no terminal response, whatever request identifier it carries
+        let stream = Scripted::answering(&[
+            (1, state_response(&watched(1))),
+            (2, state_response(&watched(0))),
+            (2, Response::Acknowledged),
+        ]);
+        let mut conversation = Conversation::new(stream);
+        let watching = conversation.watch();
+        assert_eq!((watching, conversation.store()), (Ok(()), Ok(())));
+    }
+
+    #[test]
+    fn content_query_yields_the_content_and_its_document_version() {
+        // FR-110, FR-111, FR-239
+        let stream = Scripted::answering(&[
+            (
+                1,
+                Response::Content {
+                    version: 5,
+                    octets: b"generated".to_vec(),
+                    binary: false,
+                },
+            ),
+            (
+                2,
+                Response::Content {
+                    version: 0,
+                    octets: vec![0xff],
+                    binary: true,
+                },
+            ),
+        ]);
+        let mut conversation = Conversation::new(stream);
+        let text = conversation.query_content("y.txt");
+        let octets = conversation.query_content("x.bin");
+        assert_eq!(
+            (text, octets, conversation.connection.requests()),
+            (
+                Ok(Some(DocumentContent {
+                    version: 5,
+                    octets: b"generated".to_vec(),
+                    binary: false,
+                })),
+                Ok(Some(DocumentContent {
+                    version: 0,
+                    octets: vec![0xff],
+                    binary: true,
+                })),
+                vec![
+                    encode_request(
+                        1,
+                        &Request::QueryContent {
+                            document: "y.txt".to_owned(),
+                        }
+                    ),
+                    encode_request(
+                        2,
+                        &Request::QueryContent {
+                            document: "x.bin".to_owned(),
+                        }
+                    )
+                ]
+            )
+        );
+    }
+
+    #[test]
+    fn content_query_of_a_document_the_node_does_not_hold_is_the_failure_with_its_text() {
+        // FR-112, [AD3] IR-135
+        let stream = Scripted::answering(&[(1, Response::Error("no such document".to_owned()))]);
+        let mut conversation = Conversation::new(stream);
+        assert_eq!(
+            conversation.query_content("z.txt"),
+            Err(BuildError::Refused("no such document".to_owned()))
+        );
+    }
+
+    #[test]
+    fn cancelled_response_to_the_content_query_yields_no_content() {
+        // FR-264, [AD3] IR-029: an edit request of the producer superseded the query
+        let stream = Scripted::answering(&[(1, Response::Cancelled)]);
+        let mut conversation = Conversation::new(stream);
+        assert_eq!(conversation.query_content("x.txt"), Ok(None));
+    }
+
+    #[test]
+    fn unexpected_response_to_the_content_query_is_a_protocol_error() {
+        let stream = Scripted::answering(&[(1, Response::Acknowledged)]);
+        let mut conversation = Conversation::new(stream);
+        assert!(matches!(
+            conversation.query_content("y.txt"),
+            Err(BuildError::Protocol(_))
+        ));
+    }
+
+    #[test]
+    fn reader_hands_state_responses_to_the_sink_and_the_others_to_the_conversation() {
+        // FR-229, FR-231: a state response before, between and after the answers, unasked
+        let (answers, told) = read(frames(&[
+            (1, state_response(&watched(0))),
+            (2, diagnostics(3)),
+            (1, state_response(&watched(1))),
+            (3, Response::Acknowledged),
+            (1, state_response(&watched(0))),
+        ]));
+        assert_eq!(
+            (
+                answers.iter().take(2).cloned().collect::<Vec<_>>(),
+                answers.len(),
+                told.iter().take(3).cloned().collect::<Vec<_>>(),
+                told.len()
+            ),
+            (
+                vec![Ok((2, diagnostics(3))), Ok((3, Response::Acknowledged))],
+                3,
+                vec![Ok(watched(0)), Ok(watched(1)), Ok(watched(0))],
+                4
+            )
+        );
+    }
+
+    #[test]
+    fn reader_hands_the_network_mode_of_a_state_response_to_the_sink() {
+        // FR-229: the build system tells its network mode under key 21
+        let of_network = Watched {
+            states: vec![state("a", 0, &[]), state("b", 0, &[])],
+            groups: vec![],
+            versions: vec![],
+            mode: Some(NetworkMode::Active),
+        };
+        let (_, told) = read(frames(&[(1, state_response(&of_network))]));
+        assert_eq!(told.first().cloned(), Some(Ok(of_network)));
+    }
+
+    #[test]
+    fn reader_tells_the_end_of_the_stream_to_the_conversation_and_to_the_sink() {
+        // FR-112: the stream ends
+        let (answers, told) = read(frames(&[(1, state_response(&watched(0)))]));
+        assert!(
+            matches!(answers.as_slice(), [Err(BuildError::Connection(_))])
+                && matches!(told.as_slice(), [Ok(_), Err(BuildError::Connection(_))])
+        );
+    }
+
+    #[test]
+    fn reader_tells_a_message_that_is_not_decoded_and_reads_no_further() {
+        // a frame of one octet that is no map, then a state response that is not read
+        let mut bytes = frames_of_message(&[0x01]);
+        bytes.extend(frames(&[(1, state_response(&watched(0)))]));
+        let (answers, told) = read(bytes);
+        assert!(
+            matches!(answers.as_slice(), [Err(BuildError::Protocol(_))])
+                && matches!(told.as_slice(), [Err(BuildError::Protocol(_))])
+        );
+    }
+
+    #[test]
+    fn reader_ends_where_the_conversation_is_gone() {
+        // the answers are taken by nobody: the state response behind the answer is not told
+        let (answers, received) = channel();
+        drop(received);
+        let mut told = Vec::new();
+        let bytes = frames(&[
+            (2, Response::Acknowledged),
+            (1, state_response(&watched(0))),
+        ]);
+        read_responses(&mut Cursor::new(bytes), &answers, &mut |watched| {
+            told.push(watched);
+        });
+        assert_eq!(told, vec![]);
+    }
+
+    /// A *service socket* in the process: the end *product* connects to, and the end a
+    /// process of the *build system* would hold.
+    #[cfg(unix)]
+    fn socket_pair() -> (ServiceStream, ServiceStream) {
+        ServiceStream::pair().expect("a pair of connected sockets can be created")
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn watched_connection_receives_a_state_response_unasked_while_a_request_is_made() {
+        // FR-229, FR-231: the peer tells a state before and after it answers the store request
+        let (stream, mut peer) = socket_pair();
+        let (states, told) = channel();
+        let sink: StateSink = Box::new(move |watched| {
+            let _ = states.send(watched);
+        });
+        let mut conversation = Conversation::new(
+            WatchedConnection::open(stream, sink).expect("the socket can be read by a thread"),
+        );
+        let watching = conversation.watch();
+        let served = std::thread::spawn(move || {
+            let watch = read_message(&mut peer).expect("the watch request arrives");
+            let _ = peer.write_all(&frames(&[(1, state_response(&watched(1)))]));
+            let store = read_message(&mut peer).expect("the store request arrives");
+            let _ = peer.write_all(&frames(&[
+                (1, state_response(&watched(0))),
+                (2, Response::Acknowledged),
+                (1, state_response(&watched(2))),
+            ]));
+            (watch, store, peer)
+        });
+        let first = told.recv_timeout(RESPONSE_TIMEOUT);
+        let stored = conversation.store();
+        let second = told.recv_timeout(RESPONSE_TIMEOUT);
+        let third = told.recv_timeout(RESPONSE_TIMEOUT);
+        let (watch, store, _peer) = served.join().expect("the peer ends");
+        assert_eq!(
+            (watching, first, stored, second, third, watch, store),
+            (
+                Ok(()),
+                Ok(Ok(watched(1))),
+                Ok(()),
+                Ok(Ok(watched(0))),
+                Ok(Ok(watched(2))),
+                encode_request(1, &Request::Watch),
+                encode_request(2, &Request::Store)
+            )
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn connection_the_peer_closes_is_told_to_the_sink_and_fails_the_next_request() {
+        // FR-112: the node ended
+        let (stream, peer) = socket_pair();
+        let (states, told) = channel();
+        let sink: StateSink = Box::new(move |watched| {
+            let _ = states.send(watched);
+        });
+        let mut conversation = Conversation::new(
+            WatchedConnection::open(stream, sink).expect("the socket can be read by a thread"),
+        );
+        drop(peer);
+        let lost = told.recv_timeout(RESPONSE_TIMEOUT);
+        assert!(
+            matches!(lost, Ok(Err(BuildError::Connection(_))))
+                && matches!(conversation.store(), Err(BuildError::Connection(_)))
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn connection_the_product_closes_tells_the_sink_nothing_and_ends_for_the_peer() {
+        // FR-105: closing the connection ends the watch, and is no loss to report
+        let (stream, mut peer) = socket_pair();
+        let (states, told) = channel();
+        let sink: StateSink = Box::new(move |watched| {
+            let _ = states.send(watched);
+        });
+        let connection =
+            WatchedConnection::open(stream, sink).expect("the socket can be read by a thread");
+        drop(connection);
+        let mut rest = Vec::new();
+        let ended = peer.read_to_end(&mut rest);
+        // the sink is dropped with the reader thread, having been told nothing
+        assert_eq!(
+            (ended.ok(), told.recv_timeout(RESPONSE_TIMEOUT).ok()),
+            (Some(0), None)
         );
     }
 
@@ -1333,6 +2279,7 @@ mod tests {
             "/nonexistent/genc3d",
             "/tmp/n.gc3n",
             Path::new("/tmp/unused.sock"),
+            Box::new(|_| {}),
         );
         let expected = if BuildSession::is_available() {
             BuildError::NotExecutable("/nonexistent/genc3d".to_owned())
@@ -1342,22 +2289,83 @@ mod tests {
         assert_eq!(result.err(), Some(expected));
     }
 
+    #[cfg(unix)]
     #[test]
-    fn node_of_a_build_system_that_is_not_executable_is_not_started() {
-        // FR-104, FR-112
-        let result = NodeSession::start(
-            "/nonexistent/genc3d",
-            Path::new("/tmp"),
-            "a.gc3",
-            &[],
-            &[],
-            Path::new("/tmp/unused-node.sock"),
+    fn node_is_attached_to_by_its_service_socket_watched_and_left_running() {
+        // FR-104, FR-105, FR-230, IR-026,
+        // IR-038: a listener stands for the node the build system runs
+        let directory = std::env::temp_dir().join(format!("genc3wb-attach-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).expect("the directory of the case can be created");
+        let socket_path = directory.join("b.gc3.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket_path)
+            .expect("the socket of the case can be bound");
+        let node = std::thread::spawn(move || {
+            let (mut peer, _) = listener.accept().expect("the product connects");
+            let watch = read_message(&mut peer).expect("the watch request arrives");
+            let _ = peer.write_all(&frames(&[(1, state_response(&watched(1)))]));
+            let query = read_message(&mut peer).expect("the content query request arrives");
+            let _ = peer.write_all(&frames(&[(
+                2,
+                Response::Content {
+                    version: 5,
+                    octets: b"out".to_vec(),
+                    binary: false,
+                },
+            )]));
+            let mut rest = Vec::new();
+            let ended = peer.read_to_end(&mut rest);
+            (watch, query, ended.ok(), rest)
+        });
+        let (states, told) = channel();
+        let attached = NodeSession::attach(
+            &socket_path,
+            Box::new(move |watched| {
+                let _ = states.send(watched);
+            }),
         );
-        let expected = if BuildSession::is_available() {
-            BuildError::NotExecutable("/nonexistent/genc3d".to_owned())
-        } else {
-            BuildError::Unsupported
-        };
-        assert_eq!(result.err(), Some(expected));
+        let first = told.recv_timeout(RESPONSE_TIMEOUT);
+        let content = attached
+            .map_err(|error| error.to_string())
+            .and_then(|mut session| {
+                session
+                    .query_content("y.txt")
+                    .map_err(|error| error.to_string())
+            });
+        let (watch, query, ended, rest) = node.join().expect("the node of the case ends");
+        let _ = std::fs::remove_dir_all(&directory);
+        assert_eq!(
+            (first, content, watch, query, ended, rest),
+            (
+                Ok(Ok(watched(1))),
+                Ok(Some(DocumentContent {
+                    version: 5,
+                    octets: b"out".to_vec(),
+                    binary: false,
+                })),
+                encode_request(1, &Request::Watch),
+                encode_request(
+                    2,
+                    &Request::QueryContent {
+                        document: "y.txt".to_owned(),
+                    }
+                ),
+                Some(0),
+                vec![]
+            )
+        );
+    }
+
+    #[test]
+    fn node_whose_service_socket_is_not_reached_is_not_attached_to() {
+        // FR-104, FR-112
+        let result = NodeSession::attach(
+            Path::new("/nonexistent/genc3wb/a.gc3.sock"),
+            Box::new(|_| {}),
+        );
+        assert!(matches!(
+            result,
+            Err(BuildError::Connection(_) | BuildError::Unsupported)
+        ));
     }
 }

@@ -5,33 +5,34 @@
 
 use crate::core::octet_view::text_of_octets;
 
-use std::fs;
-
 // realises FR-030, FR-102, FR-110, FR-111, FR-163
 /// One *output* as its *output page* presents it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutputFile {
     /// the path of the *output*, resolved against the directory of the *network file*
     pub path: String,
-    /// the octets of the file, none where it could not be read
+    /// the octets the *node* holds of the *output*, none before its content was read
     pub octets: Vec<u8>,
     /// the octets read as UTF-8 (FR-157), as txt presents them
     pub content: String,
 }
 
 impl OutputFile {
-    // realises FR-110, FR-111, FR-163, IR-009
-    /// Reads the *output* at `path`.
-    ///
-    /// * The *node* may not have stored the file yet, so that an absent file is no error: it has
-    ///   no octets.
+    // realises FR-102, FR-110
+    /// Creates the *output* at `path`, whose content is not read yet: it has no octets.
     pub fn of_path(path: &str) -> OutputFile {
-        let octets = fs::read(path).unwrap_or_default();
         OutputFile {
             path: path.to_owned(),
-            content: text_of_octets(&octets),
-            octets,
+            octets: Vec::new(),
+            content: String::new(),
         }
+    }
+
+    // realises FR-110, FR-111, FR-163
+    /// Replaces the content by `octets`, as the *node* holds them.
+    pub fn set_octets(&mut self, octets: Vec<u8>) {
+        self.content = text_of_octets(&octets);
+        self.octets = octets;
     }
 }
 
@@ -48,7 +49,7 @@ pub struct Presentation {
 }
 
 // realises FR-027, FR-032, FR-033, FR-034, FR-035, FR-036, FR-122, FR-125, FR-150, FR-151,
-// FR-152, FR-211, FR-213
+// FR-152, FR-211, FR-213, FR-234, FR-237
 /// The pages of the output group: the *output pages* of the opened *node*, then the
 /// *diagnostics page*, and which of them is presented.
 ///
@@ -56,9 +57,11 @@ pub struct Presentation {
 ///   before a *node* is opened, and the *diagnostics page* is the one page then.
 /// * The presented page follows the *diagnostics* as [`presentation_after`] yields it, and is
 ///   changed by hand through [`OutputPages::next`] and [`OutputPages::previous`] at any time.
-/// * The *output pages* are *outdated* from a failed *store request* until the *outputs* are
-///   read again; the *diagnostics page* then lists the failure before the *diagnostics*, and
+/// * The *output pages* are *outdated* from a failed *store request* until one is
+///   acknowledged; the *diagnostics page* then lists the failure before the *diagnostics*, and
 ///   the failure counts as a *diagnostic* for the presented page.
+/// * The *diagnostics page* carries the *origins* of the opened *node*, each of which counts
+///   as a *diagnostic* for the presented page as well.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct OutputPages {
     /// the *outputs*, in the order of the *node description*
@@ -68,6 +71,8 @@ pub struct OutputPages {
     /// the text of FR-112 of the failed *store request* while the *output pages* are
     /// *outdated* (FR-211), `None` otherwise
     store_failure: Option<String>,
+    /// the *origins* of the opened *node*, in the order of its *node state* (FR-234)
+    origins: Vec<String>,
     /// the index of the presented page
     current: usize,
     /// the *output page* to return to when the *diagnostics* are gone (FR-151)
@@ -75,19 +80,48 @@ pub struct OutputPages {
 }
 
 impl OutputPages {
-    // realises FR-102, FR-110, FR-122, IR-009
-    /// Creates the pages of the *outputs* at `paths`, in that order, each read; the first is
-    /// presented.
+    // realises FR-102, FR-110, FR-122
+    /// Creates the pages of the *outputs* at `paths`, in that order; the first is presented.
     ///
-    /// * The content of a file that cannot be read is empty.
+    /// * The content of every *output* is empty until [`OutputPages::set_content`] brings what
+    ///   the *node* holds of it.
     pub fn of_paths(paths: &[String]) -> OutputPages {
         OutputPages {
             files: paths.iter().map(|path| OutputFile::of_path(path)).collect(),
             diagnostics: String::new(),
             store_failure: None,
+            origins: Vec::new(),
             current: 0,
             return_page: None,
         }
+    }
+
+    // realises FR-110, FR-111, FR-163
+    /// Replaces the content of the *output page* of index `index` by `octets`, as the *node*
+    /// holds them; yields whether there is such a page.
+    pub fn set_content(&mut self, index: usize, octets: Vec<u8>) -> bool {
+        match self.files.get_mut(index) {
+            Some(file) => {
+                file.set_octets(octets);
+                true
+            }
+            None => false,
+        }
+    }
+
+    // realises FR-150, FR-151, FR-234, FR-237
+    /// Replaces the *origins* the *diagnostics page* carries, and presents the page that
+    /// [`presentation_after`] yields for the change; yields whether the presented page changed.
+    pub fn set_origins(&mut self, origins: &[String]) -> bool {
+        let listed = self.lists();
+        self.origins = origins.to_vec();
+        self.present_after(listed)
+    }
+
+    // realises FR-234
+    /// Yields the *origins* the *diagnostics page* carries, in the order of the *node state*.
+    pub fn origins(&self) -> &[String] {
+        &self.origins
     }
 
     // realises FR-107, FR-108, FR-125, FR-150, FR-151, FR-152
@@ -135,9 +169,9 @@ impl OutputPages {
         }
     }
 
-    /// Yields whether the *diagnostics page* lists a line.
+    /// Yields whether the *diagnostics page* lists a line or carries an *origin*.
     fn lists(&self) -> bool {
-        self.store_failure.is_some() || !self.diagnostics.is_empty()
+        self.store_failure.is_some() || !self.diagnostics.is_empty() || !self.origins.is_empty()
     }
 
     /// Presents the page that [`presentation_after`] yields where the *diagnostics page* listed
@@ -170,14 +204,11 @@ impl OutputPages {
         self.current >= self.files.len()
     }
 
-    // realises FR-111, FR-151, FR-211, IR-009
-    /// Reads the file of every *output* again, after which the *output pages* are not
-    /// *outdated*; yields whether the presented page changed, the line of a failed
-    /// *store request* being gone.
-    pub fn reload(&mut self) -> bool {
-        for file in &mut self.files {
-            *file = OutputFile::of_path(&file.path);
-        }
+    // realises FR-151, FR-211
+    /// Takes the *outputs* as stored, a *store request* being acknowledged, after which the
+    /// *output pages* are not *outdated*; yields whether the presented page changed, the line
+    /// of a failed *store request* being gone.
+    pub fn stored(&mut self) -> bool {
         let listed = self.lists();
         self.store_failure = None;
         self.present_after(listed)
@@ -277,19 +308,11 @@ pub fn presentation_after(
  * edge cases       : ✅
  * conforms to doc  : ✅
  * covers bridge    : OutputGroup::next, OutputGroup::previous, OutputGroup::set_paths,
- *                    OutputGroup::reload, OutputGroup::set_diagnostics,
- *                    OutputGroup::set_store_failure */
+ *                    OutputGroup::set_content, OutputGroup::stored, OutputGroup::set_diagnostics,
+ *                    OutputGroup::set_origins, OutputGroup::set_store_failure */
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn case_dir(name: &str) -> std::path::PathBuf {
-        let dir =
-            std::env::temp_dir().join(format!("genc3wb-output-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).expect("the temporary directory of the test can be created");
-        dir
-    }
 
     fn paths(names: &[&str]) -> Vec<String> {
         names.iter().map(|name| (*name).to_owned()).collect()
@@ -368,50 +391,78 @@ mod tests {
     }
 
     #[test]
-    fn a_file_that_cannot_be_read_has_an_empty_content() {
-        // FR-110, IR-009
-        let dir = case_dir("absent");
-        let path = dir.join("absent.txt").to_string_lossy().into_owned();
-        let pages = OutputPages::of_paths(&[path]);
-        let _ = fs::remove_dir_all(&dir);
+    fn an_output_whose_content_is_not_read_yet_has_an_empty_content() {
+        // FR-110
+        let pages = OutputPages::of_paths(&paths(&["out.txt"]));
         assert_eq!(
-            pages.current_file().map(|file| file.content.as_str()),
-            Some("")
+            pages
+                .current_file()
+                .map(|file| (file.octets.as_slice(), file.content.as_str())),
+            Some((&[][..], ""))
         );
     }
 
     #[test]
-    fn reloading_reads_what_the_node_wrote() {
-        // FR-111, IR-009
-        let dir = case_dir("reload");
-        let path = dir.join("out.txt");
-        let path_text = path.to_string_lossy().into_owned();
-        let mut pages = OutputPages::of_paths(&[path_text]);
-        let before = pages.current_file().map(|file| file.content.clone());
-        fs::write(&path, "generated").expect("the file can be written");
-        pages.reload();
-        let after = pages.current_file().map(|file| file.content.clone());
-        let _ = fs::remove_dir_all(&dir);
+    fn the_content_of_an_output_page_is_what_the_node_holds() {
+        // FR-110, FR-111: the second output is replaced, the first stays
+        let mut pages = OutputPages::of_paths(&paths(&["a.txt", "b.txt"]));
+        let first = pages.set_content(1, b"generated".to_vec());
+        let second = pages.set_content(1, b"generated anew".to_vec());
+        let contents: Vec<String> = [0, 1]
+            .iter()
+            .map(|index| pages.files[*index].content.clone())
+            .collect();
         assert_eq!(
-            (before, after),
-            (Some(String::new()), Some("generated".to_owned()))
+            (first, second, contents),
+            (true, true, vec![String::new(), "generated anew".to_owned()])
         );
     }
 
     #[test]
-    fn a_file_that_is_not_utf8_is_held_as_its_octets_and_read_with_replacement_characters() {
-        // FR-157, FR-163, IR-009
-        let dir = case_dir("encoding");
-        let path = dir.join("bin.txt");
-        fs::write(&path, [b'a', 0xff, b'b']).expect("the file can be written");
-        let pages = OutputPages::of_paths(&[path.to_string_lossy().into_owned()]);
-        let _ = fs::remove_dir_all(&dir);
+    fn the_content_of_a_page_that_does_not_exist_is_not_taken() {
+        // FR-111
+        let mut pages = OutputPages::of_paths(&paths(&["a.txt"]));
+        assert!(!pages.set_content(1, b"x".to_vec()));
+    }
+
+    #[test]
+    fn a_content_that_is_not_utf8_is_held_as_its_octets_and_read_with_replacement_characters() {
+        // FR-157, FR-163
+        let mut pages = OutputPages::of_paths(&paths(&["bin.txt"]));
+        pages.set_content(0, vec![b'a', 0xff, b'b']);
         assert_eq!(
             pages
                 .current_file()
                 .map(|file| (file.octets.as_slice(), file.content.as_str())),
             Some((&[b'a', 0xff, b'b'][..], "a\u{fffd}b"))
         );
+    }
+
+    #[test]
+    fn origins_that_appear_present_the_diagnostics_page_and_origins_that_go_return() {
+        // FR-234, FR-237
+        let mut pages = OutputPages::of_paths(&paths(&["a", "b"]));
+        pages.next();
+        let appeared = (
+            pages.set_origins(&paths(&["join", "a"])),
+            pages.current(),
+            pages.origins().to_vec(),
+            pages.listing(),
+        );
+        let gone = (pages.set_origins(&[]), pages.current());
+        assert_eq!(
+            (appeared, gone),
+            ((true, 2, paths(&["join", "a"]), String::new()), (true, 1))
+        );
+    }
+
+    #[test]
+    fn origins_that_go_keep_the_diagnostics_page_while_diagnostics_are_listed() {
+        // FR-151, FR-237
+        let mut pages = OutputPages::of_paths(&paths(&["a"]));
+        pages.set_origins(&paths(&["join"]));
+        pages.set_diagnostics("a.gc3: error 1:1-1:2: fault");
+        assert_eq!((pages.set_origins(&[]), pages.current()), (false, 1));
     }
 
     fn presentation(page: usize, return_page: Option<usize>) -> Presentation {
@@ -509,18 +560,14 @@ mod tests {
     #[test]
     fn a_failed_store_leaves_the_content_and_takes_the_pages_as_outdated() {
         // FR-211, FR-212
-        let dir = case_dir("outdated");
-        let path = dir.join("out.txt");
-        fs::write(&path, "stored").expect("the file can be written");
-        let mut pages = OutputPages::of_paths(&[path.to_string_lossy().into_owned()]);
-        fs::write(&path, "written by another").expect("the file can be written");
+        let mut pages = OutputPages::of_paths(&paths(&["out.txt"]));
+        pages.set_content(0, b"held".to_vec());
         pages.set_store_failure("out.txt: does not exist");
         pages.previous();
         let content = pages.current_file().map(|file| file.content.clone());
-        let _ = fs::remove_dir_all(&dir);
         assert_eq!(
             (pages.is_outdated(), pages.store_failure(), content),
-            (true, "out.txt: does not exist", Some("stored".to_owned()))
+            (true, "out.txt: does not exist", Some("held".to_owned()))
         );
     }
 
@@ -557,28 +604,28 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_store_presents_the_diagnostics_page_and_a_reload_returns() {
+    fn a_failed_store_presents_the_diagnostics_page_and_an_acknowledged_one_returns() {
         // FR-150, FR-151, FR-211, FR-213
         let mut pages = OutputPages::of_paths(&paths(&["a", "b"]));
         pages.next();
         let failed = (pages.set_store_failure("fault"), pages.current());
         let failed_again = (pages.set_store_failure("other fault"), pages.current());
-        let reloaded = (pages.reload(), pages.current(), pages.is_outdated());
+        let stored = (pages.stored(), pages.current(), pages.is_outdated());
         assert_eq!(
-            (failed, failed_again, reloaded),
+            (failed, failed_again, stored),
             ((true, 2), (false, 2), (true, 1, false))
         );
     }
 
     #[test]
-    fn a_reload_keeps_the_diagnostics_page_while_diagnostics_are_listed() {
+    fn an_acknowledged_store_keeps_the_diagnostics_page_while_diagnostics_are_listed() {
         // FR-151, FR-213
         let mut pages = OutputPages::of_paths(&paths(&["a"]));
         pages.set_diagnostics("a.gc3: warning 1:1-1:2: fault");
         pages.set_store_failure("fault");
-        let reloaded = (pages.reload(), pages.current(), pages.listing());
+        let stored = (pages.stored(), pages.current(), pages.listing());
         assert_eq!(
-            reloaded,
+            stored,
             (false, 1, "a.gc3: warning 1:1-1:2: fault".to_owned())
         );
     }
@@ -594,7 +641,7 @@ mod tests {
     }
 
     #[test]
-    fn the_pages_of_a_node_started_anew_are_not_outdated() {
+    fn the_pages_of_a_node_opened_anew_are_not_outdated() {
         // FR-211
         let mut pages = OutputPages::of_paths(&paths(&["a"]));
         pages.set_store_failure("fault");
