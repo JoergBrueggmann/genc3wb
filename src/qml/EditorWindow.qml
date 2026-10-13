@@ -24,9 +24,12 @@ Window {
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 6
+        anchors.margins: 8
+        spacing: 5
 
         RowLayout {
+            spacing: 5
+
             TextField {
                 id: pathField
 

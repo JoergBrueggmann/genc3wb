@@ -22,45 +22,65 @@ ApplicationWindow {
     visible: true
     title: "genc³wb"
 
-    // the refusal of the settings file and of the network file, empty where there is none
-    // (FR-219, FR-220)
-    readonly property string settingsRefusal: Workbench.settingsRefusedFile.length > 0
-                                              ? qsTr("The settings are not stored: %1")
-                                                .arg(heldText(Workbench.settingsRefusedFile,
-                                                              Workbench.settingsHolderPid,
-                                                              Workbench.settingsHolderHost,
-                                                              Workbench.settingsHolderSince))
+    // the holder of the settings file and of the network file, as a phrase, empty where there
+    // is no refusal (FR-219, FR-220)
+    readonly property string settingsHeld: Workbench.settingsRefusedFile.length > 0
+                                           ? heldText(Workbench.settingsRefusedFile,
+                                                      Workbench.settingsHolderPid,
+                                                      Workbench.settingsHolderHost,
+                                                      Workbench.settingsHolderSince)
+                                           : ""
+    readonly property string networkHeld: Workbench.networkInput.refusedFile.length > 0
+                                          ? heldText(Workbench.networkInput.refusedFile,
+                                                     Workbench.networkInput.holderPid,
+                                                     Workbench.networkInput.holderHost,
+                                                     Workbench.networkInput.holderSince)
+                                          : ""
+    // the refusals for the status bar: short phrases (FR-220)
+    readonly property string settingsRefusal: mainWindow.settingsHeld.length > 0
+                                              ? qsTr("Settings not stored: %1").arg(mainWindow.settingsHeld)
                                               : ""
-    readonly property string networkRefusal: Workbench.networkInput.refusedFile.length > 0
-                                             ? qsTr("The network is not opened: %1")
-                                               .arg(heldText(Workbench.networkInput.refusedFile,
-                                                             Workbench.networkInput.holderPid,
-                                                             Workbench.networkInput.holderHost,
-                                                             Workbench.networkInput.holderSince))
+    readonly property string networkRefusal: mainWindow.networkHeld.length > 0
+                                             ? qsTr("Network not opened: %1").arg(mainWindow.networkHeld)
                                              : ""
 
-    // Yields that `file` is held by the holder of its lock file, the time in the local time of
-    // the user (FR-219); a process number of 0 names no holder.
+    // Yields that `file` is held by the holder of its lock file, as a phrase without a period,
+    // the time in the local time of the user (FR-219); a process number of 0 names no holder.
     function heldText(file: string, pid: int, host: string, since: string): string {
         if (pid <= 0) {
-            return qsTr("%1 is held by another genc³wb.").arg(file);
+            return qsTr("%1 held by another genc³wb").arg(file);
         }
         const time = new Date(since).toLocaleString(Qt.locale(), Locale.ShortFormat);
         return host.length > 0
-               ? qsTr("%1 is held by genc³wb, process %2 on %3, since %4.").arg(file).arg(pid).arg(host).arg(time)
-               : qsTr("%1 is held by genc³wb, process %2, since %3.").arg(file).arg(pid).arg(time);
+               ? qsTr("%1 held by genc³wb, process %2 on %3, since %4").arg(file).arg(pid).arg(host).arg(time)
+               : qsTr("%1 held by genc³wb, process %2, since %3").arg(file).arg(pid).arg(time);
     }
 
-    // Yields the text of the network mode `mode` for the status bar, as the message schema
-    // numbers it: 1 invalid, 2 valid, 3 active; empty for 0, where none is kept (FR-258)
+    // Yields the sentences of the dialog of FR-219 for the refusals, empty where there is none.
+    function refusalSentences(): list<string> {
+        return [mainWindow.settingsHeld.length > 0
+                ? qsTr("The settings are not stored: %1.").arg(mainWindow.settingsHeld) : "",
+                mainWindow.networkHeld.length > 0
+                ? qsTr("The network is not opened: %1.").arg(mainWindow.networkHeld) : ""];
+    }
+
+    // Yields the phrase of the status bar for the network mode `mode`, as the message schema
+    // numbers it, 0 where none is kept (FR-258); while an activate request or a deactivate
+    // request is pending, that the network is being activated or deactivated (FR-269, FR-270).
     function networkModeText(mode: int): string {
+        if (Workbench.network.activating) {
+            return qsTr("Activating network");
+        }
+        if (Workbench.network.deactivating) {
+            return qsTr("Deactivating network");
+        }
         switch (mode) {
         case 1:
-            return qsTr("The network is invalid: no node runs.");
+            return qsTr("Network invalid: no node runs");
         case 2:
-            return qsTr("The network is valid and not active: no node runs, activate the network to open a node.");
+            return qsTr("Network valid, not active: activate to open a node");
         case 3:
-            return qsTr("The network is active.");
+            return qsTr("Network active");
         default:
             return "";
         }
@@ -75,7 +95,7 @@ ApplicationWindow {
         }
     }
 
-    Component.onCompleted: tellRefusals([settingsRefusal, networkRefusal])
+    Component.onCompleted: tellRefusals(refusalSentences())
     onClosing: {
         Workbench.network.shutDown();
         Workbench.node.shutDown();
@@ -135,18 +155,22 @@ ApplicationWindow {
     footer: RowLayout {
         id: footerRow
 
+        spacing: 5
+
         Label {
             id: statusBar
 
             Layout.fillWidth: true
-            padding: 4
+            padding: 3
+            leftPadding: 8
             // the refusals while they last (FR-220), then the state of the build system and
-            // the network mode (FR-258)
+            // the network mode (FR-258), or that the network is being activated or deactivated
+            // (FR-269, FR-270)
             text: [mainWindow.settingsRefusal,
                    mainWindow.networkRefusal,
                    !Workbench.network.available
-                   ? qsTr("The build system is not available on this platform.")
-                   : Workbench.network.building ? qsTr("The build system is building.") : "",
+                   ? qsTr("Build system not available on this platform")
+                   : Workbench.network.building ? qsTr("Building") : "",
                    mainWindow.networkModeText(Workbench.network.networkMode)]
                   .filter(part => part.length > 0).join("  ·  ")
         }
@@ -154,7 +178,8 @@ ApplicationWindow {
         TypingModeLabel {
             id: typingModeLabel
 
-            padding: 4
+            padding: 3
+            rightPadding: 8
         }
     }
 
@@ -162,8 +187,11 @@ ApplicationWindow {
         id: splitView
 
         anchors.fill: parent
-        anchors.margins: 6
+        anchors.margins: 8
         orientation: Qt.Horizontal
+        handle: SplitterHandle {
+            orientation: splitView.orientation
+        }
         // the splitter between the network file and its graph (FR-148); its position is stored
         // when it is released and restored at start-up (FR-149)
         onResizingChanged: {

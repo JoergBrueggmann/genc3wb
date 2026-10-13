@@ -19,6 +19,7 @@ Dialog {
 
     title: qsTr("Settings")
     modal: true
+    padding: 8
     anchors.centerIn: Overlay.overlay
     // the dialog is left by its two buttons alone: OK stores where the constraints hold, Cancel
     // discards (FR-100, FR-135, FR-141, FR-257)
@@ -59,10 +60,15 @@ Dialog {
     }
 
     ColumnLayout {
+        spacing: 5
+
         GridLayout {
             id: layout
 
             columns: 3
+            // a label, its field and the text beside it belong together
+            columnSpacing: 3
+            rowSpacing: 5
 
             Label {
                 id: idleTimeLabel
@@ -86,7 +92,7 @@ Dialog {
             Label {
                 id: idleTimeUnit
 
-                text: qsTr("seconds until the text is saved and transmitted")
+                text: qsTr("Seconds until the text is saved and transmitted")
             }
 
             Label {
@@ -111,7 +117,7 @@ Dialog {
             Label {
                 id: longIdleTimeUnit
 
-                text: qsTr("seconds until the error message of a failed build is shown")
+                text: qsTr("Seconds until the error message of a failed build is shown")
             }
 
             Label {
@@ -134,7 +140,7 @@ Dialog {
             Label {
                 id: tabSizeUnit
 
-                text: qsTr("characters per tab, from 1 to 16")
+                text: qsTr("Characters per tab, from 1 to 16")
             }
         }
 

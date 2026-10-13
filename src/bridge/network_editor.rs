@@ -43,6 +43,8 @@ enum Command {
     Store { deferred: bool },
     /// transmit an *activate request* to the *build system* (FR-260)
     Activate,
+    /// transmit a *deactivate request* to the *build system* (FR-267)
+    Deactivate,
     /// shut the *build system* down and end the thread (FR-068)
     Stop,
 }
@@ -62,6 +64,8 @@ enum Report {
     },
     /// the outcome of an *activate request*, the *error message* of FR-261 where it failed
     Activated(Result<(), String>),
+    /// the outcome of a *deactivate request*, the *error message* of FR-268 where it failed
+    Deactivated(Result<(), String>),
     /// the *node states* and the *network mode* of a *state response* of the *build system*,
     /// as the reader thread received it (FR-229)
     Watched(Vec<NodeState>, Option<NetworkMode>),
@@ -71,7 +75,8 @@ enum Report {
     Stopped,
 }
 
-// realises FR-064, FR-109, FR-229, FR-241, FR-252, FR-258, FR-259
+// realises FR-064, FR-109, FR-229, FR-241, FR-252, FR-258, FR-259, FR-269, FR-270, FR-273,
+// FR-274
 /// The group for the *network graph* as the *front end* binds to it.
 #[derive(Default)]
 pub struct NetworkEditor {
@@ -83,8 +88,12 @@ pub struct NetworkEditor {
     network_path: String,
     /// the *provided text* of the code editor of the *network file*, as a receiver holds it
     provided: String,
-    /// the URL of the image of the *network graph*, empty before the first successful *build*
-    graph_source: String,
+    /// the URL of the image of the *network graph* of an *active network*, empty before the
+    /// first successful *build* (FR-274)
+    active_graph_source: String,
+    /// the URL of the image of the *network graph* of a network that is not active, empty before
+    /// the first successful *build* (FR-273)
+    inactive_graph_source: String,
     /// the layout of that image
     layout: GraphLayout,
     /// the *nodes* of that image
@@ -104,8 +113,11 @@ pub struct NetworkEditor {
     /// network is active (FR-109, FR-241, FR-252)
     gate: StoreGate,
     /// the number of *activate requests* handed to the build thread and not yet reported
-    /// (FR-259)
+    /// (FR-259, FR-269)
     activations_pending: u32,
+    /// the number of *deactivate requests* handed to the build thread and not yet reported
+    /// (FR-259, FR-270)
+    deactivations_pending: u32,
     /// the commands to the build thread, `None` before the first one and after `shut_down`
     commands: Option<Sender<Command>>,
     /// the reports of the build thread
@@ -120,7 +132,8 @@ pub struct NetworkEditor {
 }
 
 // realises FR-064 to FR-069, FR-078 to FR-083, FR-085 to FR-088, FR-091, FR-092, FR-102 to FR-104,
-// FR-109, FR-128, FR-228, FR-229, FR-235, FR-241, FR-245, FR-252, FR-258 to FR-263
+// FR-109, FR-128, FR-228, FR-229, FR-235, FR-241, FR-245, FR-252, FR-258 to FR-263, FR-267 to
+// FR-270, FR-273 to FR-275
 #[qobject(NoQmlElement)]
 impl NetworkEditor {
     qproperty!(
@@ -150,7 +163,9 @@ impl NetworkEditor {
     );
     qproperty!("building", Read = building, Notify = building_changed);
     qproperty!("networkMode", Read = network_mode, Notify = mode_changed);
-    qproperty!("activatable", Read = activatable, Notify = mode_changed);
+    qproperty!("switchable", Read = switchable, Notify = mode_changed);
+    qproperty!("activating", Read = activating, Notify = mode_changed);
+    qproperty!("deactivating", Read = deactivating, Notify = mode_changed);
 
     // getters
     fn build_system_path(&self) -> String {
@@ -166,8 +181,15 @@ impl NetworkEditor {
         BuildSession::is_available()
     }
 
+    // realises FR-078, FR-273, FR-274, FR-275
+    // The image of the network mode kept: the one of an active network while the network is
+    // active, the grey one otherwise.
     fn graph_source(&self) -> String {
-        self.graph_source.clone()
+        if self.states.is_active() {
+            self.active_graph_source.clone()
+        } else {
+            self.inactive_graph_source.clone()
+        }
     }
 
     fn error_message(&self) -> String {
@@ -185,7 +207,7 @@ impl NetworkEditor {
 
     // realises FR-081
     fn graph_button_visible(&self) -> bool {
-        self.showing_error && !self.graph_source.is_empty()
+        self.showing_error && !self.active_graph_source.is_empty()
     }
 
     fn building(&self) -> bool {
@@ -201,8 +223,20 @@ impl NetworkEditor {
     }
 
     // realises FR-259
-    fn activatable(&self) -> bool {
-        self.states.is_activatable() && self.activations_pending == 0
+    // The activation switch is enabled while a network mode is kept and no activate request and
+    // no deactivate request awaits its response.
+    fn switchable(&self) -> bool {
+        self.states.has_mode() && self.activations_pending == 0 && self.deactivations_pending == 0
+    }
+
+    // realises FR-269
+    fn activating(&self) -> bool {
+        self.activations_pending > 0
+    }
+
+    // realises FR-270
+    fn deactivating(&self) -> bool {
+        self.deactivations_pending > 0
     }
 
     // setters
@@ -311,15 +345,31 @@ impl NetworkEditor {
 
     // realises FR-259, FR-260
     /// Transmits an *activate request* to the *build system*: hands it to the build thread while
-    /// the *network mode* is *valid network* and no *activate request* awaits its *response*;
-    /// does nothing otherwise, the button being disabled then.
+    /// a *network mode* is kept, the network is not an *active network* and no *request* of the
+    /// switch awaits its *response*; does nothing otherwise, the switch being disabled or `act`
+    /// highlighted then. In an *invalid network* the *build system* refuses the *request*, and
+    /// its error response becomes the *error message*.
     #[qslot(qml_name = "activate")]
     fn activate(&mut self) {
-        if !self.activatable() {
+        if !self.switchable() || self.states.is_active() {
             return;
         }
         self.activations_pending += 1;
         self.send(Command::Activate);
+        self.mode_changed();
+    }
+
+    // realises FR-259, FR-267
+    /// Transmits a *deactivate request* to the *build system*: hands it to the build thread while
+    /// the network is an *active network* and no *request* of the switch awaits its *response*;
+    /// does nothing otherwise, the switch being disabled or `ina` highlighted then.
+    #[qslot(qml_name = "deactivate")]
+    fn deactivate(&mut self) {
+        if !self.switchable() || !self.states.is_active() {
+            return;
+        }
+        self.deactivations_pending += 1;
+        self.send(Command::Deactivate);
         self.mode_changed();
     }
 
@@ -406,7 +456,7 @@ impl NetworkEditor {
     }
 
     // realises FR-078, FR-079, FR-109, FR-128, FR-229, FR-241, FR-245, FR-252, FR-258, FR-259,
-    // FR-261, FR-263
+    // FR-261, FR-263, FR-268
     /// Takes the reports of the build thread and of the reader thread of the connection to the
     /// *build system*; scheduled by those threads on the main thread.
     ///
@@ -417,7 +467,8 @@ impl NetworkEditor {
     ///   where they count no error and the network is active; where the network ceases to be
     ///   active, `network_deactivated` is emitted, on which the *front end* closes the
     ///   *node window*.
-    /// * The error response to an *activate request* becomes the *error message*.
+    /// * The error response to an *activate request* or to a *deactivate request*, or the
+    ///   failure of its connection, becomes the *error message*.
     /// * The answer to a *store request* is scheduled as `storeAnswered` of the *node editor*.
     #[qslot(qml_name = "reportArrived")]
     fn report_arrived(&mut self) {
@@ -468,6 +519,13 @@ impl NetworkEditor {
                         self.take_outcome(Err(message));
                     }
                 }
+                Report::Deactivated(outcome) => {
+                    self.deactivations_pending = self.deactivations_pending.saturating_sub(1);
+                    self.mode_changed();
+                    if let Err(message) = outcome {
+                        self.take_outcome(Err(message));
+                    }
+                }
                 Report::Watched(states, mode) => {
                     let was_active = self.states.is_active();
                     self.states.take(states, mode);
@@ -475,6 +533,10 @@ impl NetworkEditor {
                         self.send(Command::Store { deferred: true });
                     }
                     self.mode_changed();
+                    if was_active != self.states.is_active() {
+                        // the image of the other mode is presented (FR-275)
+                        self.view_changed();
+                    }
                     if was_active && !self.states.is_active() {
                         self.network_deactivated();
                     }
@@ -555,6 +617,7 @@ impl NetworkEditor {
                 directory,
                 socket,
                 files.meta_dsl.identifier.clone(),
+                !files.meta_dsl.producer.is_empty(),
                 identifiers(&files.inputs),
                 produced,
                 identifiers(&files.outputs)
@@ -569,7 +632,9 @@ impl NetworkEditor {
     fn take_outcome(&mut self, outcome: Result<BuiltGraph, String>) {
         match outcome {
             Ok(graph) => {
-                self.graph_source = format!("file://{}", graph.image_path.display());
+                self.active_graph_source = format!("file://{}", graph.active_image_path.display());
+                self.inactive_graph_source =
+                    format!("file://{}", graph.inactive_image_path.display());
                 self.layout = graph.layout;
                 self.nodes = graph.nodes;
                 self.error_message.clear();
@@ -580,16 +645,18 @@ impl NetworkEditor {
         self.view_changed();
     }
 
-    // realises FR-067, FR-229, FR-263
+    // realises FR-067, FR-229, FR-263, FR-275
     /// Forgets the *node states* and the *network mode*, the *build system* that told them
-    /// running no more, and gives up the *store request* held back; emits `mode_changed`, and
-    /// `network_deactivated` where the network was active.
+    /// running no more, and gives up the *store request* held back; emits `mode_changed`, and,
+    /// where the network was active, `view_changed`, the grey image being presented, and
+    /// `network_deactivated`.
     fn forget_states(&mut self) {
         let was_active = self.states.is_active();
         self.states.clear();
         self.gate.cancel();
         self.mode_changed();
         if was_active {
+            self.view_changed();
             self.network_deactivated();
         }
     }
@@ -710,6 +777,7 @@ fn build_thread(commands: Receiver<Command>, reports: Sender<Report>, invoker: Q
                 deferred,
             }),
             Command::Activate => Some(Report::Activated(builder.activate())),
+            Command::Deactivate => Some(Report::Deactivated(builder.deactivate())),
             Command::Stop => break,
         };
         if let Some(report) = report {

@@ -23,6 +23,7 @@ Dialog {
 
     modal: true
     title: qsTr("Insert key")
+    padding: 8
     anchors.centerIn: parent
     closePolicy: Popup.NoAutoClose
     onOpened: {
@@ -32,6 +33,8 @@ Dialog {
 
     ColumnLayout {
         id: content
+
+        spacing: 5
 
         Label {
             id: explanation
@@ -83,6 +86,8 @@ Dialog {
 
         RowLayout {
             id: buttons
+
+            spacing: 5
 
             Button {
                 id: defaultButton

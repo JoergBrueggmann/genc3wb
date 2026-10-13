@@ -11,6 +11,76 @@ and this project adheres to a four-part version number.
 
 At the moment, nothing unreleased here.
 
+## [0.24.0.0] - 2026-10-13
+
+**_Meta_compiler_DSL_entering_the_node_from_below_**
+
+Leading work item: guidelines 0.12.0.0 (AIAgentQtRust)
+
+- Let the edge of an *input* enter the box of its *node* at the left side, the edge of the *meta compiler DSL* at the bottom side, and the edge of an *output* leave it at the right side, by the ports of `dot`; place the vertex of a *meta compiler DSL* no *node* produces below the box of its *node*, in the same rank, below the first consumer where several share it, and leave that of a produced *meta compiler DSL* in the flow between its *producer* and its *node* (`dot_of_network`, FR-276).
+- Test the sides and the rank in the unit tests of `dot_of_network`.
+- Describe the direction of the graph in 'README.md'; raise the version in 'Cargo.toml' to 0.24.0.
+- A new capability: a minor bump.
+
+## [0.23.0.0] - 2026-10-13
+
+**_Meta_compiler_DSL_as_a_connection_and_the_activation_order_**
+
+Leading work item: genc3api 0.18.0.0
+
+- Decode the *node mode* *waiting node* (`NodeMode::Waiting`, 4) and show it in the status line of 'NodeWindow.qml' as `Node waiting for its meta compiler DSL`.
+- Treat the *meta compiler DSL* of the opened *node* that another *node* produces as an *input* of a *producer*: read-only, with the content the *node* holds, watched by its *document version*, neither transmitted nor read nor written (`files_of_node`, `NodeEditor::open_node`, `InputGroup.produced` of the *meta compiler DSL*).
+- Test the *producer* of the *meta compiler DSL* in `files_of_node`, the decoding of the mode, and, in the ignored integration tests of 'tests/build_system.rs' against genc3d of genc³ 0.31.0.0, a network whose first *node* produces the *meta compiler DSL* of the second: the *factory* activates both in order, the second holds the produced *meta compiler DSL*, and the store writes its *output* and that file; the *state response* of a *node* now tells the *document version* of its *meta compiler DSL* as well, which the test of the content of an *input* of a *producer* expects.
+- Name genc³api 0.18.0.0 and genc³ 0.31.0.0 in 'README.md'; raise the version in 'Cargo.toml' to 0.23.0.
+- A new capability against an extended interface: a minor bump.
+
+## [0.22.0.0] - 2026-10-12
+
+**_Meta_compiler_DSL_as_an_input_vertex_of_the_network_graph_**
+
+Leading work item: definition 0.18.0.0
+
+- Draw the *meta compiler DSL* of a *meta compiler-compiler* as a vertex of the *network graph* with an edge to its *node*, as an *input* of it, a note or, where another *node* produces its path, an ellipse; carry the name of the *node* alone in the label of a *meta compiler-compiler*, and draw a *proxy node* as a box with its tool chain below its name, in its own fill, in `crate::core::network_graph`.
+- Test the vertex and the edge of the *meta compiler DSL*, the label without the path and the box of the *proxy node* in the DOT text, and count the vertex in the ignored integration test of the graph of 'tests/build_system.rs'.
+- Name the vertex of the *meta compiler DSL* in 'README.md'; raise the version in 'Cargo.toml' to 0.22.0.
+- A new capability against the same interface: a minor bump.
+
+## [0.21.0.0] - 2026-10-12
+
+**_Texts_and_distances_of_the_user_interface_**
+
+Leading work item: guidelines 0.11.0.0 (AIAgentQtRust)
+
+- Shorten the messages of the status bar of 'Main.qml' and of the status line of 'NodeWindow.qml' to phrases without a period, `Network active`, `Activating network`, `Node served`, `Node active`, and capitalise the headlines `Input %1 of %2` and `Output %1 of %2`, the title of the output window and the texts beside the fields of the settings dialog.
+- Set the distances of every window, dialog and group as the design states them: 3, 5, 8 and 13 pixels, by the spacing of the layouts, the margins of the windows, the padding of the dialogs and of the groups and the handles of the split views, in place of the defaults of the style; the refusals of the status bar become phrases as well, the dialog keeping its sentences.
+- Draw the handle of every split view by the new component 'SplitterHandle.qml', 13 pixels wide with the line of the splitter in its middle; raise the version in 'Cargo.toml' to 0.21.0.
+- Changes the texts and the distances the user sees, compatibly: a minor bump.
+
+## [0.20.0.0] - 2026-10-12
+
+**_Network_graph_nodes_grey_unless_active_**
+
+Leading work item: guidelines 0.10.0.0 (AIAgentQtRust)
+
+- Derive the DOT text per *network mode* (`dot_of_network` with `active`, `html_escaped`): a *meta compiler-compiler* light blue and a *proxy node* wheat in an *active network*, both light grey otherwise, the files as before; the vertex of a *meta compiler-compiler* carries the text `double click here` in a smaller font in its top left corner, drawn in the colour of the fill where the network is not active, so that both layouts are identical; in `crate::core::network_graph`.
+- Render both images of a *build* by two runs of `dot` (`BuiltGraph.active_image_path`, `inactive_image_path`, `last_images`) in `crate::core::network_builder`, and present the one of the *network mode* kept (`graphSource` of `NetworkEditor`, `view_changed` on a change between active and not).
+- Test the fills and the text per mode and the HTML escaping of a name in the DOT text, and that a *build* writes both images in the ignored integration test of the graph of 'tests/build_system.rs'.
+- Name the grey nodes and the text in 'README.md'; raise the version in 'Cargo.toml' to 0.20.0.
+- A new capability against the same interface: a minor bump.
+
+## [0.19.0.0] - 2026-10-12
+
+**_Activation_switch_and_tooltips_of_the_position_switches_**
+
+Leading work item: definition 0.15.0.0
+
+- Encode the *deactivate request*, kind 16 (`Request::Deactivate`, `Conversation::deactivate`, `BuildSession::deactivate`, `NetworkBuilder::deactivate`), in `crate::core::api_message`, `crate::core::build_system` and `crate::core::network_builder`; replace `NodeStates::is_activatable` by `has_mode` in `crate::core::node_state`.
+- Replace the activate button of 'NetworkGraphGroup.qml' by the *activation switch*, an instance of the new component 'PositionSwitch.qml' with the positions `ina` and `act`, which also draws the *mode switch* of 'ModeSwitch.qml': the highlighted position follows the *network mode*, the switch is enabled while a *network mode* is kept and no *activate request* and no *deactivate request* is pending, `act` transmits an *activate request* and `ina` a *deactivate request* (`Command::Deactivate`, `Report::Deactivated`, `deactivations_pending`, the properties `switchable`, `activating` and `deactivating` in place of `activatable`, and the slot `deactivate` of `NetworkEditor`); each *position switch* carries its tooltip.
+- Show in the status bar of 'Main.qml' that the network is being activated or deactivated while the *request* is pending, in place of the *network mode* (`networkModeText`).
+- Test the encoding of the *deactivate request*, `Conversation::deactivate` against a scripted connection, `NetworkBuilder::deactivate` without a *build system*, `NodeStates::has_mode`, and the deactivation of an active network by genc3d of genc³ 0.30.2.1 in the ignored integration test of the activation of 'tests/build_system.rs'; test the *position switch* with the QML test runner, in 'tests/qml/tst_position_switch.qml' run by 'tests/code_editor.rs': a tap on a position emits its index, a disabled switch emits nothing, the highlighted position follows its owner and not the tap, and the tooltip text is the one given.
+- Name the *activation switch* and the tooltips in 'README.md'; raise the version in 'Cargo.toml' to 0.19.0.
+- A new capability against the same interface: a minor bump.
+
 ## [0.18.0.0] - 2026-10-11
 
 **_Adopt_genc³api_0.17.0.0_and_genc³_0.30.2.1_**

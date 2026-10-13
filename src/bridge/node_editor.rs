@@ -316,6 +316,8 @@ impl NodeEditor {
     /// * `directory` - the directory of the *network file*
     /// * `socket` - the path of the *service socket*, as the *node description* carries it
     /// * `meta_dsl`, `inputs`, `outputs` - the paths as the *node description* carries them
+    /// * `meta_dsl_produced` - whether the *meta compiler DSL* has a *producer*, on which it is
+    ///   treated as an *input* of a *producer* (FR-238 to FR-240)
     /// * `produced` - whether each *input* has a *producer*
     #[qslot(qml_name = "openNode")]
     #[allow(clippy::too_many_arguments)] // the description of a node, as the bridge carries it
@@ -325,6 +327,7 @@ impl NodeEditor {
         directory: String,
         socket: String,
         meta_dsl: String,
+        meta_dsl_produced: bool,
         inputs: Vec<String>,
         produced: Vec<bool>,
         outputs: Vec<String>,
@@ -342,7 +345,10 @@ impl NodeEditor {
         self.documents = std::iter::once(meta_dsl.clone())
             .chain(inputs.iter().cloned())
             .collect();
-        self.produced = produced_inputs(&inputs, &produced);
+        self.produced = std::iter::once(meta_dsl.clone())
+            .filter(|_| meta_dsl_produced)
+            .chain(produced_inputs(&inputs, &produced))
+            .collect();
         self.watched = WatchedDocuments::of(
             self.produced
                 .iter()
@@ -351,7 +357,7 @@ impl NodeEditor {
                 .collect(),
         );
         self.input_page = 0;
-        self.name_document(&self.meta_dsl.1, &meta_dsl, &directory, false);
+        self.name_document(&self.meta_dsl.1, &meta_dsl, &directory, meta_dsl_produced);
         while self.inputs.len() < inputs.len() {
             let group = InputGroup::default_with_attached_qobject();
             let receiver = self.get_qml_method_invoker();

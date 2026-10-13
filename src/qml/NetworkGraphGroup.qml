@@ -1,4 +1,4 @@
-// The group for the network graph: the build system with its activate button, the graph, the error message,
+// The group for the network graph: the build system with its activation switch, the graph, the error message,
 // and the two buttons.
 //
 // Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
@@ -10,6 +10,10 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Dialogs
 import QtQuick.Layouts
+// The types of the module genc3wb are registered by the bridge crate at run time, which writes no type
+// description for qmllint; the import is therefore not linted.
+// qmllint disable import
+import genc3wb
 
 GroupBox {
     id: root
@@ -17,24 +21,36 @@ GroupBox {
     required property var network
 
     title: qsTr("Compiler network")
+    padding: 8
 
     ColumnLayout {
         anchors.fill: parent
+        spacing: 5
 
         RowLayout {
-            Label {
-                id: buildSystemLabel
+            spacing: 5
 
-                text: qsTr("Build system")
-            }
-
-            TextField {
-                id: buildSystemField
+            // the label and its field, 3 pixels apart
+            RowLayout {
+                id: buildSystemRow
 
                 Layout.fillWidth: true
-                text: root.network.buildSystemPath
-                onTextEdited: root.network.tryBuildSystemPath(buildSystemField.text)
-                onEditingFinished: root.network.buildSystemPath = buildSystemField.text
+                spacing: 3
+
+                Label {
+                    id: buildSystemLabel
+
+                    text: qsTr("Build system")
+                }
+
+                TextField {
+                    id: buildSystemField
+
+                    Layout.fillWidth: true
+                    text: root.network.buildSystemPath
+                    onTextEdited: root.network.tryBuildSystemPath(buildSystemField.text)
+                    onEditingFinished: root.network.buildSystemPath = buildSystemField.text
+                }
             }
 
             ToolButton {
@@ -44,14 +60,25 @@ GroupBox {
                 onClicked: fileDialog.open()
             }
 
-            // the activate button: enabled while the network is a valid network and no activate
-            // request awaits its response, greyed otherwise (FR-259, FR-260)
-            ToolButton {
-                id: activateButton
+            // the activation switch: `act` highlighted while the network is active (FR-266), enabled
+            // while a network mode is kept and no request of the switch awaits its response
+            // (FR-259); `act` transmits an activate request, `ina` a deactivate request (FR-260,
+            // FR-267)
+            PositionSwitch {
+                id: activationSwitch
 
-                text: qsTr("Activate")
-                enabled: root.network.activatable
-                onClicked: root.network.activate()
+                labels: ["ina", "act"]
+                selected: root.network.networkMode === 3 ? 1 : 0
+                enabled: root.network.switchable
+                // FR-272
+                tooltip: qsTr("Inactive / Active - to deactivate or activate the network")
+                onPositionTapped: index => {
+                    if (index === 1) {
+                        root.network.activate();
+                    } else {
+                        root.network.deactivate();
+                    }
+                }
             }
 
             Image {

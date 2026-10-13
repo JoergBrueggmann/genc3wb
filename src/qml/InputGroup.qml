@@ -27,11 +27,15 @@ GroupBox {
     // an input group whose group is gone, as while the node window rebuilds its input groups for a node
     // of another number of inputs, presents nothing: its bindings read the group through `?.`
     title: root.group?.caption ?? ""
+    padding: 8
 
     ColumnLayout {
         anchors.fill: parent
+        spacing: 5
 
         RowLayout {
+            spacing: 5
+
             TextField {
                 id: pathField
 

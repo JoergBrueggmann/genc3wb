@@ -27,11 +27,13 @@ Window {
     function nodeModeText(mode: int): string {
         switch (mode) {
         case 1:
-            return qsTr("The node is an invalid node.");
+            return qsTr("Node invalid");
         case 2:
-            return qsTr("The node is a valid node, not active.");
+            return qsTr("Node valid, not active");
         case 3:
-            return qsTr("The node is an active node.");
+            return qsTr("Node active");
+        case 4:
+            return qsTr("Node waiting for its meta compiler DSL");
         default:
             return "";
         }
@@ -51,7 +53,8 @@ Window {
         id: layout
 
         anchors.fill: parent
-        anchors.margins: 6
+        anchors.margins: 8
+        spacing: 5
 
         // the splitter between the left part, the inputs above the meta compiler DSL, and the right
         // part, the machine and the outputs (FR-146); its position is stored when it is released
@@ -62,6 +65,9 @@ Window {
             Layout.fillWidth: true
             Layout.fillHeight: true
             orientation: Qt.Horizontal
+            handle: SplitterHandle {
+                orientation: leftRightSplit.orientation
+            }
             onResizingChanged: {
                 if (!leftRightSplit.resizing) {
                     Workbench.setNodeLeftWidth(Math.round(leftPart.width));
@@ -76,6 +82,9 @@ Window {
                 orientation: Qt.Vertical
                 SplitView.preferredWidth: Workbench.nodeLeftWidth
                 SplitView.minimumWidth: 240
+                handle: SplitterHandle {
+                    orientation: leftPart.orientation
+                }
                 onResizingChanged: {
                     if (!leftPart.resizing) {
                         Workbench.setNodeUpperHeight(Math.round(inputsGroup.height));
@@ -86,13 +95,17 @@ Window {
                     id: inputsGroup
 
                     title: qsTr("Inputs")
+                    padding: 8
                     SplitView.preferredHeight: Workbench.nodeUpperHeight
                     SplitView.minimumHeight: 120
 
                     ColumnLayout {
                         anchors.fill: parent
+                        spacing: 5
 
                         RowLayout {
+                            spacing: 5
+
                             Button {
                                 id: previousInputButton
 
@@ -104,7 +117,7 @@ Window {
                             Label {
                                 id: inputLabel
 
-                                text: qsTr("input %1 of %2").arg(Workbench.node.inputPage + 1).arg(Workbench.node.inputCount)
+                                text: qsTr("Input %1 of %2").arg(Workbench.node.inputPage + 1).arg(Workbench.node.inputCount)
                             }
 
                             Button {
@@ -153,6 +166,7 @@ Window {
 
                 SplitView.fillWidth: true
                 SplitView.minimumWidth: 240
+                spacing: 5
 
                 // the machine beside the outputs: the arrow from the inputs to the logo and the one
                 // from the logo to the outputs level with the inputs, and the arrow from the meta
@@ -173,6 +187,7 @@ Window {
                             id: machineRow
 
                             anchors.centerIn: parent
+                            spacing: 5
 
                             Label {
                                 id: inputArrow
@@ -225,17 +240,19 @@ Window {
         RowLayout {
             id: statusRow
 
+            spacing: 5
+
             Label {
                 id: statusLine
 
                 Layout.fillWidth: true
                 // the text of FR-112, or whether the node is served and processing, then its
-                // node mode (FR-123)
+                // node mode (FR-123), as short phrases
                 text: [Workbench.node.status.length > 0
                        ? Workbench.node.status
                        : !Workbench.node.served
-                         ? qsTr("The node is not served.")
-                         : Workbench.node.busy ? qsTr("The node is processing.") : qsTr("The node is served."),
+                         ? qsTr("Node not served")
+                         : Workbench.node.busy ? qsTr("Node processing") : qsTr("Node served"),
                        nodeWindow.nodeModeText(Workbench.node.nodeMode)]
                       .filter(part => part.length > 0).join("  ·  ")
             }

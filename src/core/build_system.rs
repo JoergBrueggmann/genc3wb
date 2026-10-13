@@ -593,6 +593,30 @@ impl<S: Connection> Conversation<S> {
         }
     }
 
+    // realises FR-267, FR-268
+    /// Transmits a *deactivate request* and awaits its acknowledged response, which the
+    /// *build system* transmits once the last *node* has terminated after the
+    /// *network deactivation*, or at once where the network is not active
+    /// (\[AD3\] IR-164 to IR-166).
+    ///
+    /// # Errors
+    /// Returns [`BuildError::Refused`] where the *build system* answers with an error response,
+    /// [`BuildError::Connection`] where the stream fails, and [`BuildError::Protocol`] where a
+    /// *message* is not decoded or has an unexpected kind.
+    pub fn deactivate(&mut self) -> Result<(), BuildError> {
+        match self.exchange(&Request::Deactivate)? {
+            Response::Acknowledged => Ok(()),
+            Response::Error(text) => Err(BuildError::Refused(text)),
+            Response::Diagnostics { .. }
+            | Response::VersionMismatch { .. }
+            | Response::Network { .. }
+            | Response::State { .. }
+            | Response::Content { .. }
+            | Response::Cancelled
+            | Response::Other(_) => Err(unexpected("the deactivate request")),
+        }
+    }
+
     // realises FR-228, FR-230
     /// Transmits a *watch request* and awaits nothing: its *state responses* are no
     /// *terminal responses*, the first follows at once and a further one whenever the state
@@ -828,7 +852,7 @@ impl Drop for ServedProcess {
     }
 }
 
-// realises FR-067, FR-068, FR-109, FR-228, FR-229, FR-244, FR-260, IR-017, C-005
+// realises FR-067, FR-068, FR-109, FR-228, FR-229, FR-244, FR-260, FR-267, IR-017, C-005
 /// A *build system* *product* started in its *network role*, which activates the network and
 /// runs every *node* of the *network file* while the network is an *active network*, with the
 /// conversation on its *service socket* and the watch of its *node states* and its
@@ -938,6 +962,16 @@ impl BuildSession {
     /// Returns what [`Conversation::activate`] returns.
     pub fn activate(&mut self) -> Result<(), BuildError> {
         self.conversation.activate()
+    }
+
+    // realises FR-267, FR-268
+    /// Transmits a *deactivate request* to the *build system*, which carries out the
+    /// *network deactivation* (\[AD3\] IR-164), as [`Conversation::deactivate`].
+    ///
+    /// # Errors
+    /// Returns what [`Conversation::deactivate`] returns.
+    pub fn deactivate(&mut self) -> Result<(), BuildError> {
+        self.conversation.deactivate()
     }
 
     // realises FR-068
@@ -1107,7 +1141,8 @@ fn connected(
 * edge cases       : ✅
 * conforms to doc  : ✅
 * covers bridge    : NetworkEditor::apply_increment, NetworkEditor::set_network_path,
-                     NetworkEditor::store, NetworkEditor::activate, NetworkEditor::report_arrived,
+                     NetworkEditor::store, NetworkEditor::activate, NetworkEditor::deactivate,
+                     NetworkEditor::report_arrived,
                      NetworkEditor::shut_down, NodeEditor::apply_increment, NodeEditor::report_arrived,
                      NodeEditor::close; the process, the sockets and the reader threads of
                      `BuildSession` and `NodeSession` are covered by the ignored integration test
@@ -1900,6 +1935,43 @@ mod tests {
             (result, conversation.connection.requests()),
             (Ok(()), vec![encode_request(1, &Request::Activate)])
         );
+    }
+
+    #[test]
+    fn deactivate_transmits_the_deactivate_request_and_is_acknowledged() {
+        // FR-267, [AD3] IR-139, IR-164, IR-165
+        let mut conversation =
+            Conversation::new(Scripted::answering(&[(1, Response::Acknowledged)]));
+        let result = conversation.deactivate();
+        assert_eq!(
+            (result, conversation.connection.requests()),
+            (Ok(()), vec![encode_request(1, &Request::Deactivate)])
+        );
+    }
+
+    #[test]
+    fn error_response_to_the_deactivate_request_is_the_failure_with_its_message_text() {
+        // FR-268
+        let mut conversation = Conversation::new(Scripted::answering(&[(
+            1,
+            Response::Error("the network could not be deactivated".to_owned()),
+        )]));
+        assert_eq!(
+            conversation.deactivate(),
+            Err(BuildError::Refused(
+                "the network could not be deactivated".to_owned()
+            ))
+        );
+    }
+
+    #[test]
+    fn unexpected_response_to_the_deactivate_request_is_a_protocol_error() {
+        // FR-268
+        let mut conversation = Conversation::new(Scripted::answering(&[(1, network(0))]));
+        assert!(matches!(
+            conversation.deactivate(),
+            Err(BuildError::Protocol(_))
+        ));
     }
 
     #[test]

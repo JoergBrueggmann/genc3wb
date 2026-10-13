@@ -24,11 +24,15 @@ GroupBox {
     signal detachRequested()
 
     title: qsTr("Outputs")
+    padding: 8
 
     ColumnLayout {
         anchors.fill: parent
+        spacing: 5
 
         RowLayout {
+            spacing: 5
+
             Button {
                 id: previousButton
 
@@ -42,7 +46,7 @@ GroupBox {
 
                 text: root.output.diagnosticsPage
                       ? qsTr("Diagnostics (page %1 of %2)").arg(root.output.pageIndex + 1).arg(root.output.pageCount)
-                      : qsTr("output %1 of %2").arg(root.output.pageIndex + 1).arg(root.output.pageCount)
+                      : qsTr("Output %1 of %2").arg(root.output.pageIndex + 1).arg(root.output.pageCount)
             }
 
             Button {
@@ -77,7 +81,11 @@ GroupBox {
             currentIndex: root.output.diagnosticsPage ? 1 : 0
 
             ColumnLayout {
+                spacing: 5
+
                 RowLayout {
+                    spacing: 5
+
                     TextField {
                         id: filePathField
 
@@ -122,12 +130,15 @@ GroupBox {
             }
 
             ColumnLayout {
+                spacing: 5
+
                 // one icon per origin of the opened node, a node upstream that counts an error:
                 // its tooltip names that node, and activating it opens that node (FR-234, FR-235)
                 RowLayout {
                     id: originsRow
 
                     visible: root.output.origins.length > 0
+                    spacing: 5
 
                     Repeater {
                         id: originRepeater

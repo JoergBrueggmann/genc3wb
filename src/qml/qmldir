@@ -5,6 +5,8 @@ InputGroup 1.0 InputGroup.qml
 CodeEditor 1.0 CodeEditor.qml
 DiagnosticMark 1.0 DiagnosticMark.qml
 WavyLine 1.0 WavyLine.qml
+PositionSwitch 1.0 PositionSwitch.qml
+SplitterHandle 1.0 SplitterHandle.qml
 ModeSwitch 1.0 ModeSwitch.qml
 OctetView 1.0 OctetView.qml
 TypingModeLabel 1.0 TypingModeLabel.qml

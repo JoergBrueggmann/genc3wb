@@ -73,6 +73,18 @@ fn awaited(told: &Receiver<Told>, expected: impl Fn(&Watched) -> bool) -> Option
     None
 }
 
+/// Yields whether `told` tells the loss of its connection within [`PATIENCE`], which it does
+/// once the *node* attached to has terminated.
+fn awaited_loss(told: &Receiver<Told>) -> bool {
+    let end = Instant::now() + PATIENCE;
+    while let Ok(told) = told.recv_timeout(end.saturating_duration_since(Instant::now())) {
+        if told.is_err() {
+            return true;
+        }
+    }
+    false
+}
+
 /// Starts the *build system* on the *network file* of `directory`, so that it runs every *node*
 /// of it, with `sinks` for its watch.
 fn started(directory: &Path, sinks: StateSinks) -> (NetworkBuilder, Result<(), BuildError>) {
@@ -142,7 +154,7 @@ fn build_yields_the_nodes_and_the_laid_out_graph() {
                 .map(|node| (node.name.clone(), node.kind))
                 .collect::<Vec<_>>(),
             graph.layout.vertices.len(),
-            graph.image_path.is_file(),
+            graph.active_image_path.is_file() && graph.inactive_image_path.is_file(),
         )
     });
     drop(builder);
@@ -156,7 +168,8 @@ fn build_yields_the_nodes_and_the_laid_out_graph() {
                     ("a".to_owned(), NodeKind::MetaCompilerCompiler),
                     ("b".to_owned(), NodeKind::ProxyNode)
                 ],
-                5,
+                // a, b, a.gc3, a.in, x.txt, y.txt: the meta compiler DSL of a is a vertex (FR-075)
+                6,
                 true
             ))
         )
@@ -202,6 +215,27 @@ fn faulty_edit_fails_with_the_fault_and_its_correction_succeeds_again() {
 /// A *network file* of one *node*.
 const ONE_NODE: &str = "meta compiler-compiler network n.gc3n\n\
     node a\n  inputs\n    a.in\n  outputs\n    x.txt\n";
+
+/// A *network file* of two *nodes* in which the *output* of `a` is the *meta compiler DSL* of
+/// `b`: `b` is started with `--meta-dsl-produced`, waits for `a` and is activated after it.
+const PRODUCED_META_DSL: &str = "meta compiler-compiler network n.gc3n\n\
+    node a\n  inputs\n    a.in\n  outputs\n    b.gc3\n\
+    node b\n  inputs\n    b.in\n  outputs\n    out.txt\n";
+
+/// A *meta compiler DSL* of `a` whose *output* is the *meta compiler DSL* of `b`: a generator
+/// emitting the text of [`copy_meta_dsl`] for `b.in` and `out.txt` as a literal, so that `b`
+/// copies its *input* to its *output*.
+fn producing_meta_dsl() -> String {
+    let produced = copy_meta_dsl("b.in", "out.txt")
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n");
+    format!(
+        "syntax\n    root = chars, EOS\n    chars = ch, {{ ch }}\n    \
+         ch = 'h' | 'e' | 'l' | 'o' | 'w' | 'r' | 'd' | ' '\n\
+         generator gen input \"a.in\" output \"b.gc3\"\n    root -> \"{produced}\"\n"
+    )
+}
 
 /// A *network file* of a chain of three *nodes*: the *output* of `a` is the *input* of `b`, and
 /// the *output* of `b` the *input* of `c`.
@@ -608,6 +642,17 @@ fn activation_fails_while_a_node_is_invalid_and_succeeds_once_it_is_corrected() 
                 .is_some_and(|state| state.mode == Some(NodeMode::Active))
     });
     let again = builder.activate();
+    // the deactivate request ends every node: the network is a valid network again, no node
+    // runs, and the attachment to the node is lost (FR-267, [AD3] IR-164, IR-165)
+    let deactivated = builder.deactivate();
+    let deactivated_network = awaited(&network_states, |watched| {
+        watched.mode == Some(NetworkMode::Valid)
+            && watched.states.iter().all(|state| state.mode.is_none())
+    });
+    let node_lost = awaited_loss(&node_states);
+    // a deactivate request while the network is not active is acknowledged and changes nothing
+    // ([AD3] IR-166)
+    let deactivated_again = builder.deactivate();
     drop(runner);
     drop(builder);
     let _ = fs::remove_dir_all(&directory);
@@ -634,6 +679,15 @@ fn activation_fails_while_a_node_is_invalid_and_succeeds_once_it_is_corrected() 
             true,
             Ok(())
         )
+    );
+    assert_eq!(
+        (
+            deactivated,
+            deactivated_network.is_some(),
+            node_lost,
+            deactivated_again
+        ),
+        (Ok(()), true, true, Ok(()))
     );
 }
 
@@ -718,7 +772,7 @@ fn error_in_the_second_input_is_told_in_its_group_when_the_first_input_is_edited
 }
 
 // FR-110, FR-111, FR-239, IR-027, IR-028
-// needs the service executable genc3d of genc³ 0.30.2.1 or later, named by the environment
+// needs the service executable genc3d of genc³ 0.31.0.0 or later, named by the environment
 // variable GENC3D
 #[test]
 #[ignore]
@@ -727,8 +781,9 @@ fn content_of_an_input_of_a_producer_and_of_an_output_is_what_the_node_holds() {
     let (builder, started) = started(&directory, no_sinks());
     let (told, states) = channel();
     let (mut runner, attached) = attached(&directory, "b", &["x.txt"], &told);
-    // the state of b states the document version of its input and of its output
-    let versions = awaited(&states, |watched| watched.versions.len() == 2).map(|watched| {
+    // the state of b states the document version of its input, of its meta compiler DSL and
+    // of its output ([AD3] IR-121)
+    let versions = awaited(&states, |watched| watched.versions.len() == 3).map(|watched| {
         watched
             .versions
             .iter()
@@ -745,7 +800,11 @@ fn content_of_an_input_of_a_producer_and_of_an_output_is_what_the_node_holds() {
         ((started, attached), versions, input, output, unknown),
         (
             (Ok(()), Ok(())),
-            Some(vec!["x.txt".to_owned(), "y.txt".to_owned()]),
+            Some(vec![
+                "x.txt".to_owned(),
+                "b.gc3".to_owned(),
+                "y.txt".to_owned()
+            ]),
             Some(b"hello".to_vec()),
             Some(b"hello".to_vec()),
             true
@@ -795,6 +854,95 @@ fn store_through_the_build_system_writes_the_output_of_every_node() {
             Some(b"hello world".to_vec()),
             Ok(()),
             vec![Some("hello world".to_owned()); 3]
+        )
+    );
+}
+
+// FR-238 to FR-240, FR-123, [AD3] IR-077, IR-158, IR-189, IR-191, IR-192
+// needs the service executable genc3d of genc³ 0.31.0.0 or later, named by the environment
+// variable GENC3D
+#[test]
+#[ignore]
+fn meta_compiler_dsl_produced_by_another_node_is_received_and_the_network_activates_in_order() {
+    let directory = case_directory("produced", PRODUCED_META_DSL);
+    write(&directory, "a.gc3", &producing_meta_dsl());
+    write(&directory, "a.in", "hello");
+    write(&directory, "b.in", "world");
+    let (network_told, network_states) = channel();
+    let (mut builder, started) = started(&directory, sinks_to(network_told));
+    // the factory activates a first and then b, which waits for its meta compiler DSL and tells
+    // valid node once a has transmitted it; the network is active once both are
+    let active = awaited(&network_states, |watched| {
+        watched.mode == Some(NetworkMode::Active)
+            && watched.states.len() == 2
+            && watched
+                .states
+                .iter()
+                .all(|state| state.mode == Some(NodeMode::Active))
+    });
+    // the graph shows the meta compiler DSL of b with a as its producer
+    let graph = builder
+        .build(
+            "",
+            &increment_between("", PRODUCED_META_DSL),
+            PRODUCED_META_DSL,
+        )
+        .graph;
+    let producer = graph.as_ref().ok().and_then(|graph| {
+        genc3wb::core::network_graph::files_of_node(&graph.nodes[1], &graph.nodes)
+            .map(|files| files.meta_dsl.producer)
+    });
+    // the node b holds the meta compiler DSL a produced, which the workbench reads as the
+    // content of an input of a producer; b.gc3 is not read from a file
+    let (node_told, node_states) = channel();
+    let (mut runner, attached) = attached(&directory, "b", &["b.in"], &node_told);
+    // b tells its own mode active node and the document version of its meta compiler DSL
+    // ([AD3] IR-121), by which the workbench fetches the content
+    let b_active = awaited(&node_states, |watched| {
+        watched
+            .states
+            .first()
+            .is_some_and(|state| state.mode == Some(NodeMode::Active))
+            && watched
+                .versions
+                .iter()
+                .any(|(document, _)| document == "b.gc3")
+    });
+    let meta_dsl = content_awaited(
+        &mut runner,
+        "b.gc3",
+        copy_meta_dsl("b.in", "out.txt").as_bytes(),
+    );
+    // the store writes the output of b, copied from its input by the produced meta compiler
+    // DSL, and the meta compiler DSL file of b, written by a
+    let stored = builder.store();
+    let out = fs::read_to_string(directory.join("out.txt"));
+    let gc3 = fs::read_to_string(directory.join("b.gc3"));
+    drop(runner);
+    drop(builder);
+    let _ = fs::remove_dir_all(&directory);
+    assert_eq!(
+        (
+            started,
+            active.is_some(),
+            producer,
+            attached,
+            b_active.is_some(),
+            meta_dsl.is_some(),
+            stored,
+            out.ok(),
+            gc3.ok()
+        ),
+        (
+            Ok(()),
+            true,
+            Some("a".to_owned()),
+            Ok(()),
+            true,
+            true,
+            Ok(()),
+            Some("world".to_owned()),
+            Some(copy_meta_dsl("b.in", "out.txt"))
         )
     );
 }

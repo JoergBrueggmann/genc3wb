@@ -17,6 +17,8 @@ fn main() {
     include_bytes_qml!("qml/CodeEditor.qml", "genc3wb");
     include_bytes_qml!("qml/DiagnosticMark.qml", "genc3wb");
     include_bytes_qml!("qml/WavyLine.qml", "genc3wb");
+    include_bytes_qml!("qml/PositionSwitch.qml", "genc3wb");
+    include_bytes_qml!("qml/SplitterHandle.qml", "genc3wb");
     include_bytes_qml!("qml/ModeSwitch.qml", "genc3wb");
     include_bytes_qml!("qml/OctetView.qml", "genc3wb");
     include_bytes_qml!("qml/TypingModeLabel.qml", "genc3wb");

@@ -16,6 +16,7 @@ Dialog {
 
     modal: true
     title: "genc³wb"
+    padding: 8
     standardButtons: Dialog.Ok
     anchors.centerIn: parent
 

@@ -53,10 +53,10 @@ impl NodeStates {
     }
 
     // realises FR-259
-    /// Yields whether the *network mode* kept is *valid network*, in which an *activate request*
-    /// activates the network.
-    pub fn is_activatable(&self) -> bool {
-        self.mode == Some(NetworkMode::Valid)
+    /// Yields whether a *network mode* is kept: the *build system* runs and has transmitted a
+    /// *state response*, so that the *activation switch* is enabled.
+    pub fn has_mode(&self) -> bool {
+        self.mode.is_some()
     }
 
     // realises FR-229
@@ -129,6 +129,7 @@ fn admits(states: &NodeStates) -> bool {
  * edge cases       : ✅
  * conforms to doc  : ✅
  * covers bridge    : NetworkEditor::store, NetworkEditor::cancel_store, NetworkEditor::activate,
+ *                    NetworkEditor::deactivate,
  *                    NetworkEditor::open_node_at, NetworkEditor::open_node_named,
  *                    NetworkEditor::report_arrived */
 #[cfg(test)]
@@ -199,7 +200,7 @@ mod tests {
     }
 
     #[test]
-    fn network_mode_decides_active_and_activatable() {
+    fn network_mode_decides_active_and_whether_a_mode_is_kept() {
         // FR-259, FR-263
         let modes = [
             None,
@@ -211,12 +212,12 @@ mod tests {
             .iter()
             .map(|mode| {
                 let states = states_in(&[], *mode);
-                (states.is_active(), states.is_activatable())
+                (states.is_active(), states.has_mode())
             })
             .collect();
         assert_eq!(
             judged,
-            vec![(false, false), (false, false), (false, true), (true, false)]
+            vec![(false, false), (false, true), (false, true), (true, true)]
         );
     }
 

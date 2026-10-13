@@ -14,13 +14,13 @@ Window {
 
     width: 700
     height: 500
-    title: qsTr("genc³wb - output")
+    title: qsTr("genc³wb - Output")
 
     OutputGroup {
         id: outputGroup
 
         anchors.fill: parent
-        anchors.margins: 6
+        anchors.margins: 8
         output: Workbench.output
         detachable: false
     }

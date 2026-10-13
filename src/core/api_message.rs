@@ -40,6 +40,7 @@ const KIND_QUERY_NETWORK: u64 = 11;
 const KIND_WATCH: u64 = 12;
 const KIND_QUERY_CONTENT: u64 = 14;
 const KIND_ACTIVATE: u64 = 15;
+const KIND_DEACTIVATE: u64 = 16;
 const KIND_ACKNOWLEDGED: u64 = 32;
 const KIND_DIAGNOSTICS: u64 = 33;
 const KIND_ROOT: u64 = 34;
@@ -261,6 +262,9 @@ pub enum Request {
     /// an *activate request*, transmitted to the *build system* alone, which starts, wires and
     /// activates every *node* of the network (\[AD3\] IR-138, IR-157)
     Activate,
+    /// a *deactivate request*, transmitted to the *build system* alone, which carries out the
+    /// *network deactivation* (\[AD3\] IR-139, IR-164)
+    Deactivate,
     /// a *shutdown request*
     Shutdown,
 }
@@ -289,16 +293,20 @@ pub enum NodeMode {
     Valid,
     /// an *active node*: it transforms its *inputs* into its *outputs*
     Active,
+    /// a *waiting node*: its *meta compiler DSL* is produced by another *node* and has not
+    /// arrived yet (\[AD3\] IR-191)
+    Waiting,
 }
 
 impl NodeMode {
     // realises FR-123
-    /// Yields the *node mode* as the message schema numbers it: 1, 2 and 3.
+    /// Yields the *node mode* as the message schema numbers it: 1 to 4.
     pub fn number(self) -> u64 {
         match self {
             NodeMode::Invalid => 1,
             NodeMode::Valid => 2,
             NodeMode::Active => 3,
+            NodeMode::Waiting => 4,
         }
     }
 
@@ -309,6 +317,7 @@ impl NodeMode {
             1 => Some(NodeMode::Invalid),
             2 => Some(NodeMode::Valid),
             3 => Some(NodeMode::Active),
+            4 => Some(NodeMode::Waiting),
             _ => None,
         }
     }
@@ -673,6 +682,7 @@ pub fn encode_request(identifier: u64, request: &Request) -> Vec<u8> {
             pairs.push((KEY_DOCUMENT, Value::Text(document.clone())));
         }
         Request::Activate => pairs.push((KEY_KIND, unsigned(KIND_ACTIVATE))),
+        Request::Deactivate => pairs.push((KEY_KIND, unsigned(KIND_DEACTIVATE))),
         Request::Shutdown => pairs.push((KEY_KIND, unsigned(KIND_SHUTDOWN))),
     }
     bytes_of_pairs(pairs)
@@ -1952,13 +1962,27 @@ mod tests {
     }
 
     #[test]
-    fn node_mode_outside_one_to_three_is_an_invalid_value() {
-        // { 0: 40, 1: 3, 10: false, 18: [["a", 0, [], 4]] }
+    fn node_mode_outside_one_to_four_is_an_invalid_value() {
+        // { 0: 40, 1: 3, 10: false, 18: [["a", 0, [], 5]] }
+        let bytes = [
+            0xa4, 0x00, 0x18, 0x28, 0x01, 0x03, 0x0a, 0xf4, 0x12, 0x81, 0x84, 0x61, b'a', 0x00,
+            0x80, 0x05,
+        ];
+        assert_eq!(decode_response(&bytes), Err(MessageError::InvalidValue(18)));
+    }
+
+    #[test]
+    fn node_mode_four_is_the_waiting_node() {
+        // FR-123, [AD3] IR-191: { 0: 40, 1: 3, 10: false, 18: [["a", 0, [], 4]] }
         let bytes = [
             0xa4, 0x00, 0x18, 0x28, 0x01, 0x03, 0x0a, 0xf4, 0x12, 0x81, 0x84, 0x61, b'a', 0x00,
             0x80, 0x04,
         ];
-        assert_eq!(decode_response(&bytes), Err(MessageError::InvalidValue(18)));
+        let decoded = decode_response(&bytes).map(|(_, response)| match response {
+            Response::State { states, .. } => states.first().and_then(|state| state.mode),
+            _ => None,
+        });
+        assert_eq!(decoded, Ok(Some(NodeMode::Waiting)));
     }
 
     #[test]
@@ -1976,6 +2000,15 @@ mod tests {
         assert_eq!(
             encode_request(4, &Request::Activate),
             vec![0xa2, 0x00, 0x0f, 0x01, 0x04]
+        );
+    }
+
+    #[test]
+    fn deactivate_request_is_the_canonical_map() {
+        // FR-267, [AD3] IR-139: { 0: 16, 1: 5 }
+        assert_eq!(
+            encode_request(5, &Request::Deactivate),
+            vec![0xa2, 0x00, 0x10, 0x01, 0x05]
         );
     }
 

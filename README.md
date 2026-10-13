@@ -17,11 +17,28 @@ invalid while the network file cannot be read as a network, valid while it can
 and no node runs, and active while every node runs. The build system activates
 a valid network when it starts; where a node's meta compiler DSL is invalid, the
 activation fails, the network stays valid and the error names the node. The
-button `Activate` beside the build system, enabled in a valid network alone,
-activates it again, once the files are corrected. A node is opened while the
-network is active alone, and the node window closes when the network ceases to
-be active, for example when a meta compiler DSL is made invalid. The status
-line of the node window names the mode of the node: invalid, valid or active.
+switch `ina | act` beside the build system shows whether the network is active
+and switches it: `act` activates it, once the files are corrected, and the
+build system refuses while the network is invalid; `ina` deactivates it, which
+stores the outputs and ends every node. The switch is greyed while no mode is
+known and while a request is under way, which the status bar tells. A node is
+opened while the network is active alone, and the node window closes when the
+network ceases to be active, for example when a meta compiler DSL is made
+invalid or the network is deactivated. The status line of the node window
+names the mode of the node: invalid, waiting for its meta compiler DSL,
+valid or active. A meta compiler DSL that another node produces is shown
+read-only with the content the node holds, as an input of a producer is. The switch `ina | act`
+and the switch `txt | hex | bin` of the editors carry a tooltip that spells
+their positions out. The graph tells the mode as well: the nodes are grey
+while the network is not active, and in an active network a meta
+compiler-compiler is light blue, a proxy node wheat, and every meta
+compiler-compiler carries the small text `double click here` in its top left
+corner. The meta compiler DSL of a meta compiler-compiler is a vertex of its
+own, an input of the node, so that a node carries its name alone; a proxy node
+carries its tool chain below its name. The graph runs from left to right: the
+inputs enter a node at its left side, the outputs leave it at its right side,
+and the meta compiler DSL enters it from below, standing below its node unless
+another node produces it.
 
 An input and an output are held as their octets, whatever they are. The code
 editor of each has a switch of three positions: `txt` shows the octets read as
@@ -74,8 +91,8 @@ bridging code against Qt.
   `/usr/local/bin` and `/usr/bin`. The graph is rendered as a PNG image, so
   that the module `qtsvg` of Qt is not needed.
 
-- A build system that conforms to genc³api 0.17.0.0, which is `genc3d` of
-  genc³ 0.30.2.1 or later: genc³wb has it activate the network and run every
+- A build system that conforms to genc³api 0.18.0.0, which is `genc3d` of
+  genc³ 0.31.0.0 or later: genc³wb has it activate the network and run every
   node of it, watches the modes and the states of the nodes, and reads what a
   node holds of its inputs and outputs. It is named in the compiler network editor; without it a network
   file is edited, but no graph is shown. genc³wb reaches it and its nodes
