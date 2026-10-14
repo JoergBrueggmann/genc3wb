@@ -3,10 +3,9 @@
 //! Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 //! Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
 
+use crate::bridge::document_registry::DocumentRegistry;
 use crate::bridge::input_group::InputGroup;
 use crate::bridge::network_editor::NetworkEditor;
-use crate::bridge::node_editor::NodeEditor;
-use crate::bridge::output_group::OutputGroup;
 use crate::core::file_lock::Holder;
 use crate::core::input_file::InputKind;
 use crate::core::key_stroke::KeyStroke;
@@ -19,15 +18,13 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 // realises FR-001, FR-063, FR-090, FR-095, FR-099, FR-140, FR-141, FR-149, FR-192, FR-215,
-// FR-218, FR-254
+// FR-218, FR-254, FR-277
 /// The *workbench object*.
 pub struct Workbench {
     /// the settings with the *settings file* and its *lock file*, shared with the groups
     settings: Rc<RefCell<SettingsStore>>,
-    /// the output group
-    output: Rc<RefCell<OutputGroup>>,
-    /// the *node editor*
-    node: Rc<RefCell<NodeEditor>>,
+    /// the *document registry*, shared with every *input group* of a *node window* (FR-277)
+    documents: Rc<RefCell<DocumentRegistry>>,
     /// the *input group* of the *network file*
     network_input: Rc<RefCell<InputGroup>>,
     /// the group for the *network graph*
@@ -38,35 +35,31 @@ pub struct Workbench {
 
 impl Default for Workbench {
     /// Takes the *lock file* of the *settings file* and restores the settings, creates the
-    /// groups, and wires them: the *node editor* with the output group and the network editor,
-    /// the network editor with the *node editor* and the *input group* of the *network file*,
-    /// and that *input group* with the network editor, the two last with their paths.
+    /// *document registry*, the network editor and the *input group* of the *network file*, and
+    /// wires them: the network editor with the settings, the *document registry* and that
+    /// *input group*, and that *input group* with the network editor, both with their paths; the
+    /// network editor creates the *node editors*.
     fn default() -> Self {
         let settings = Rc::new(RefCell::new(SettingsStore::open(&Settings::default_path())));
-        let output = OutputGroup::default_with_attached_qobject();
-        let node = NodeEditor::default_with_attached_qobject();
+        let documents = Rc::new(RefCell::new(DocumentRegistry::new()));
         let network = NetworkEditor::default_with_attached_qobject();
         let network_input = InputGroup::default_with_attached_qobject();
-        node.borrow_mut().configure(
-            output.borrow().get_qml_method_invoker(),
-            network.borrow().get_qml_method_invoker(),
-        );
         network.borrow_mut().configure(
             Rc::clone(&settings),
-            node.borrow().get_qml_method_invoker(),
+            Rc::clone(&documents),
             network_input.borrow().get_qml_method_invoker(),
         );
         network_input.borrow_mut().configure(
             InputKind::Network,
             Some(Rc::clone(&settings)),
             Some(network.borrow().get_qml_method_invoker()),
+            None,
         );
         network.borrow_mut().load_initial();
         network_input.borrow_mut().load_initial();
         Workbench {
             settings,
-            output,
-            node,
+            documents,
             network_input,
             network,
             insert_mode: true,
@@ -78,8 +71,6 @@ impl Default for Workbench {
 // FR-192 to FR-194, FR-198 to FR-200, FR-214, FR-215, FR-218 to FR-221, FR-224, FR-254 to FR-257
 #[qobject(Singleton)]
 impl Workbench {
-    qproperty!("output", Read = output, Constant);
-    qproperty!("node", Read = node, Constant);
     qproperty!("networkInput", Read = network_input, Constant);
     qproperty!("network", Read = network, Constant);
     qproperty!("idleTime", Read = idle_time, Notify = times_changed);
@@ -135,14 +126,6 @@ impl Workbench {
     );
     // the version of the product in its four parts (FR-224)
     qproperty!("version", Read = version, Constant);
-
-    fn output(&self) -> Rc<RefCell<OutputGroup>> {
-        Rc::clone(&self.output)
-    }
-
-    fn node(&self) -> Rc<RefCell<NodeEditor>> {
-        Rc::clone(&self.node)
-    }
 
     fn network_input(&self) -> Rc<RefCell<InputGroup>> {
         Rc::clone(&self.network_input)
@@ -467,6 +450,12 @@ impl Workbench {
     /// Yields the settings the groups share.
     pub fn settings(&self) -> Rc<RefCell<SettingsStore>> {
         Rc::clone(&self.settings)
+    }
+
+    // realises FR-277
+    /// Yields the *document registry* the *input groups* of the *node windows* share.
+    pub fn documents(&self) -> Rc<RefCell<DocumentRegistry>> {
+        Rc::clone(&self.documents)
     }
 }
 

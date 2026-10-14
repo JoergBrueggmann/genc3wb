@@ -3,7 +3,9 @@
 //! Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 //! Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
 
+use crate::bridge::document_registry::DocumentRegistry;
 use crate::bridge::input_group::InputGroup;
+use crate::bridge::output_group::OutputGroup;
 use crate::core::api_message::{
     Diagnostic, NodeMode, bit_marks_of_diagnostics, marks_of_diagnostics, rendering_of_documents,
 };
@@ -14,6 +16,7 @@ use crate::core::input_file::InputKind;
 use crate::core::network_graph::path_of_identifier;
 use crate::core::node_runner::{NodeAttach, NodeRunner, WatchedDocuments, groups_of_state};
 use crate::core::octet_view::text_of_octets;
+use crate::core::output::file_octets;
 use crate::core::text_increment::TextIncrement;
 
 use qtbridge::{QObjectHolder, QmlMethodInvoker, invoke_method, qobject};
@@ -83,14 +86,24 @@ enum NodeReport {
 /// An *input group* of the *node window* with its invoker, by which the *node editor* reaches it.
 type Group = (Rc<RefCell<InputGroup>>, QmlMethodInvoker);
 
+/// The output group of the *node window* with its invoker, by which the *node editor* reaches it.
+type Group2 = (Rc<RefCell<OutputGroup>>, QmlMethodInvoker);
+
 /// The invoker of the *node editor* as the *node thread* and the reader threads share it.
 type SharedInvoker = Arc<Mutex<QmlMethodInvoker>>;
 
-// realises FR-001, FR-103, FR-104, FR-117, FR-123, FR-230 to FR-234, FR-239
-/// The *node editor*.
+// realises FR-001, FR-103, FR-104, FR-117, FR-123, FR-230 to FR-234, FR-239, FR-288
+/// A *node editor*: one per *node window*, owned by the network editor.
 pub struct NodeEditor {
     /// the name of the opened *node*, empty before the first one
     name: String,
+    /// the directory of the *network file*, against which the paths of the files are resolved
+    directory: PathBuf,
+    /// the output group of the *node window*, with its invoker
+    output: Group2,
+    /// the *document registry* the *input groups* acquire their *shared documents* from; wired
+    /// by the network editor
+    documents: Option<Rc<RefCell<DocumentRegistry>>>,
     /// the *input group* of the *meta compiler DSL*, with its invoker
     meta_dsl: Group,
     /// the *input groups* of the *inputs*, with their invokers; those beyond the *inputs* of the
@@ -98,7 +111,7 @@ pub struct NodeEditor {
     inputs: Vec<Group>,
     /// the *document identifiers* of the *meta compiler DSL* and of the *inputs* of the opened
     /// *node*, in that order
-    documents: Vec<String>,
+    document_identifiers: Vec<String>,
     /// the *document identifiers* of the *inputs* that have a *producer*, which *product* does
     /// not edit (FR-238)
     produced: Vec<String>,
@@ -147,24 +160,28 @@ pub struct NodeEditor {
     /// the reports of the *node thread* and of the reader threads, each with the number of its
     /// attachment
     reports: Option<Receiver<(u32, NodeReport)>>,
-    /// the invoker of the output group; wired by the *workbench object*
-    output: Option<QmlMethodInvoker>,
     /// the invoker of the network editor, which transmits the *store request* to the
-    /// *build system* (FR-109); wired by the *workbench object*
+    /// *build system* (FR-109); wired by the network editor
     network: Option<QmlMethodInvoker>,
 }
 
 impl Default for NodeEditor {
-    /// Creates the *node editor* with the *input group* of the *meta compiler DSL*, which the
-    /// *front end* binds to by a constant property; the group is wired by `configure`.
+    /// Creates the *node editor* with the *input group* of the *meta compiler DSL* and the output
+    /// group, which the *front end* binds to by constant properties; the group of the
+    /// *meta compiler DSL* is wired by `configure`.
     fn default() -> Self {
         let meta_dsl = InputGroup::default_with_attached_qobject();
         let invoker = meta_dsl.borrow().get_qml_method_invoker();
+        let output = OutputGroup::default_with_attached_qobject();
+        let output_invoker = output.borrow().get_qml_method_invoker();
         NodeEditor {
             name: String::new(),
+            directory: PathBuf::new(),
+            output: (output, output_invoker),
+            documents: None,
             meta_dsl: (meta_dsl, invoker),
             inputs: Vec::new(),
-            documents: Vec::new(),
+            document_identifiers: Vec::new(),
             produced: Vec::new(),
             outputs: Vec::new(),
             input_page: 0,
@@ -184,17 +201,17 @@ impl Default for NodeEditor {
             stores_started: VecDeque::new(),
             commands: None,
             reports: None,
-            output: None,
             network: None,
         }
     }
 }
 
 // realises FR-001, FR-086, FR-087, FR-102 to FR-112, FR-117 to FR-123, FR-125, FR-126, FR-225,
-// FR-230 to FR-234, FR-238, FR-239, FR-246 to FR-250, FR-252
+// FR-230 to FR-234, FR-238, FR-239, FR-246 to FR-250, FR-252, FR-280, FR-288
 #[qobject(NoQmlElement)]
 impl NodeEditor {
     qproperty!("name", Read = name, Notify = node_changed);
+    qproperty!("output", Read = output, Constant);
     qproperty!("metaDsl", Read = meta_dsl, Constant);
     qproperty!("inputCount", Read = input_count, Notify = node_changed);
     qproperty!("inputPage", Read = input_page, Notify = input_page_changed);
@@ -216,6 +233,11 @@ impl NodeEditor {
     // getters
     fn name(&self) -> String {
         self.name.clone()
+    }
+
+    // realises FR-001, FR-027
+    fn output(&self) -> Rc<RefCell<OutputGroup>> {
+        Rc::clone(&self.output.0)
     }
 
     fn meta_dsl(&self) -> Rc<RefCell<InputGroup>> {
@@ -305,11 +327,13 @@ impl NodeEditor {
         }
     }
 
-    // realises FR-086, FR-087, FR-102, FR-103, FR-104, FR-105, FR-110, FR-122, FR-230, FR-238
+    // realises FR-086, FR-087, FR-102, FR-103, FR-104, FR-105, FR-110, FR-122, FR-230, FR-238,
+    // FR-288
     /// Opens a *node*: forgets what is held of the *node* before, names the documents in the
-    /// *input groups* and the paths in the output group, presents the first *input*, and hands
-    /// the attachment to the *node thread*, which closes the connection to the *node* before;
-    /// scheduled by the network editor.
+    /// *input groups* and the paths in the output group, shows the files of the *outputs* on
+    /// the *output pages* until the *node* serves what it holds, presents the first *input*,
+    /// and hands the attachment to the *node thread*, which closes the connection to the *node*
+    /// before; scheduled by the network editor.
     ///
     /// # Arguments
     /// * `name` - the name of the *node*
@@ -333,6 +357,7 @@ impl NodeEditor {
         outputs: Vec<String>,
     ) {
         let directory = PathBuf::from(directory);
+        self.directory.clone_from(&directory);
         self.provided.clear();
         self.provided_octets.clear();
         self.versions.clear();
@@ -342,7 +367,7 @@ impl NodeEditor {
         self.changes_started.clear();
         self.stores_started.clear();
         self.name = name;
-        self.documents = std::iter::once(meta_dsl.clone())
+        self.document_identifiers = std::iter::once(meta_dsl.clone())
             .chain(inputs.iter().cloned())
             .collect();
         self.produced = std::iter::once(meta_dsl.clone())
@@ -361,9 +386,12 @@ impl NodeEditor {
         while self.inputs.len() < inputs.len() {
             let group = InputGroup::default_with_attached_qobject();
             let receiver = self.get_qml_method_invoker();
-            group
-                .borrow_mut()
-                .configure(InputKind::Input, None, Some(receiver));
+            group.borrow_mut().configure(
+                InputKind::Input,
+                None,
+                Some(receiver),
+                self.documents.clone(),
+            );
             let invoker = group.borrow().get_qml_method_invoker();
             self.inputs.push((group, invoker));
         }
@@ -371,7 +399,8 @@ impl NodeEditor {
             let produced = self.produced.contains(identifier);
             self.name_document(&self.inputs[index].1, identifier, &directory, produced);
         }
-        if let Some(output) = &self.output {
+        {
+            let output = &self.output.1;
             let paths: Vec<String> = outputs
                 .iter()
                 .map(|identifier| path_of_identifier(&directory, identifier))
@@ -381,6 +410,7 @@ impl NodeEditor {
             invoke_method!(output, "setOrigins", Vec::<String>::new());
         }
         self.outputs = outputs;
+        self.show_files_of_outputs();
         self.served = false;
         self.mode = None;
         self.status.clear();
@@ -455,16 +485,48 @@ impl NodeEditor {
         self.count_request();
     }
 
-    // realises FR-105
+    // realises FR-105, FR-280, FR-291
     /// Closes the connection to the *node* without ending the *node thread*, the *node*
-    /// running on: hands the detachment over; called when the *node window* closes.
+    /// running on: hands the detachment over, releases the *shared documents* of the
+    /// *input groups*, so that a file no other *node window* presents is dropped from the
+    /// *document registry*, and tells the network editor that the *outputs* are served no more;
+    /// scheduled by the network editor when the *node window* closes.
     #[qslot(qml_name = "close")]
     fn close(&mut self) {
         self.session = self.session.wrapping_add(1);
         if self.commands.is_some() {
             self.send(NodeCommand::Detach { end: false });
         }
+        self.meta_dsl.0.borrow_mut().release_document();
+        for (group, _) in &self.inputs {
+            group.borrow_mut().release_document();
+        }
         self.set_served(false, String::new());
+        self.tell_outputs_unserved();
+    }
+
+    // realises FR-291
+    /// Schedules `outputServed` of the network editor with the path and the octets of every
+    /// *output* whose content is held, so that an *editor window* opened on a *sink output* of
+    /// the served *node* shows what the *node* holds; scheduled by the network editor.
+    #[qslot(qml_name = "resendOutputs")]
+    fn resend_outputs(&mut self) {
+        if !self.served {
+            return;
+        }
+        let Some(network) = &self.network else {
+            return;
+        };
+        for (index, identifier) in self.outputs.iter().enumerate() {
+            if let Some(octets) = self.output.0.borrow().octets_of(index) {
+                invoke_method!(
+                    network,
+                    "outputServed",
+                    path_of_identifier(&self.directory, identifier),
+                    octets
+                );
+            }
+        }
     }
 
     // realises FR-105
@@ -499,14 +561,11 @@ impl NodeEditor {
             let started = self.stores_started.pop_front();
             self.measure(started);
         }
+        let output = &self.output.1;
         if stored {
-            if let Some(output) = &self.output {
-                invoke_method!(output, "stored");
-            }
+            invoke_method!(output, "stored");
         } else {
-            if let Some(output) = &self.output {
-                invoke_method!(output, "setStoreFailure", message.clone());
-            }
+            invoke_method!(output, "setStoreFailure", message.clone());
             self.set_status(message);
         }
     }
@@ -522,12 +581,14 @@ impl NodeEditor {
     }
 
     // realises FR-107, FR-108, FR-109, FR-110, FR-111, FR-112, FR-125, FR-126, FR-225,
-    // FR-231 to FR-234, FR-239, FR-246 to FR-250, FR-252
+    // FR-231 to FR-234, FR-239, FR-246 to FR-250, FR-252, FR-288
     /// Takes every report of the *node thread* and of the reader thread of the connection to
     /// the *node*; scheduled by those threads on the main thread.
     ///
     /// * A report of an attachment before the present one is passed over, but for the
     ///   counting of its *request*.
+    /// * Where the *node* is not attached to, or its connection is lost, the files of the
+    ///   *outputs* are shown on the *output pages* (FR-288).
     #[qslot(qml_name = "reportArrived")]
     fn report_arrived(&mut self) {
         let reports: Vec<(u32, NodeReport)> = self
@@ -540,7 +601,11 @@ impl NodeEditor {
             match report {
                 NodeReport::Attached(outcome) => match outcome {
                     Ok(()) if present => self.set_served(true, String::new()),
-                    Err(message) if present => self.set_served(false, message),
+                    Err(message) if present => {
+                        self.set_served(false, message);
+                        self.show_files_of_outputs();
+                        self.tell_outputs_unserved();
+                    }
                     Ok(()) | Err(_) => {}
                 },
                 NodeReport::Transmitted { document, outcome } => {
@@ -564,6 +629,8 @@ impl NodeEditor {
                 NodeReport::Lost(message) => {
                     if present {
                         self.set_served(false, message);
+                        self.show_files_of_outputs();
+                        self.tell_outputs_unserved();
                     }
                 }
                 NodeReport::Detached { .. } => {}
@@ -573,19 +640,64 @@ impl NodeEditor {
 }
 
 impl NodeEditor {
-    /// Wires the *node editor*: the invoker of the output group, the invoker of the network
-    /// editor, and the receiver of the *input group* of the *meta compiler DSL*, which is the
-    /// *node editor* itself.
+    /// Wires the *node editor*: the invoker of the network editor, the *document registry* its
+    /// *input groups* acquire their *shared documents* from, and the receiver of the
+    /// *input group* of the *meta compiler DSL*, which is the *node editor* itself.
     ///
-    /// * Called by the *workbench object* once, before the *front end* binds to the editor.
-    pub fn configure(&mut self, output: QmlMethodInvoker, network: QmlMethodInvoker) {
-        self.output = Some(output);
+    /// * Called by the network editor once, before the *front end* binds to the editor.
+    pub fn configure(
+        &mut self,
+        network: QmlMethodInvoker,
+        documents: Rc<RefCell<DocumentRegistry>>,
+    ) {
         self.network = Some(network);
+        self.documents = Some(Rc::clone(&documents));
         let receiver = self.get_qml_method_invoker();
-        self.meta_dsl
-            .0
-            .borrow_mut()
-            .configure(InputKind::MetaDsl, None, Some(receiver));
+        self.meta_dsl.0.borrow_mut().configure(
+            InputKind::MetaDsl,
+            None,
+            Some(receiver),
+            Some(documents),
+        );
+    }
+
+    // realises FR-105
+    /// Hands the detachment to the *node thread* and waits for its end, as the slot `shutDown`
+    /// does; called by the network editor when *product* terminates.
+    pub fn end(&mut self) {
+        self.shut_down();
+    }
+
+    // realises FR-291
+    /// Schedules `outputUnserved` of the network editor with the path of every *output*: the
+    /// *node* is served no more, so that an *editor window* on a *sink output* shows the file.
+    fn tell_outputs_unserved(&self) {
+        if let Some(network) = &self.network {
+            for identifier in &self.outputs {
+                invoke_method!(
+                    network,
+                    "outputUnserved",
+                    path_of_identifier(&self.directory, identifier)
+                );
+            }
+        }
+    }
+
+    // realises FR-288
+    /// Schedules `setContent` of the output group with the octets of the file of every *output*,
+    /// shown while the *node* is not served: when the *node* is opened, and when it ceases to be
+    /// served.
+    fn show_files_of_outputs(&self) {
+        let output = &self.output.1;
+        for (index, identifier) in self.outputs.iter().enumerate() {
+            let octets = file_octets(&path_of_identifier(&self.directory, identifier));
+            invoke_method!(
+                output,
+                "setContent",
+                i32::try_from(index).unwrap_or(i32::MAX),
+                octets
+            );
+        }
     }
 
     // realises FR-086, FR-087, FR-238
@@ -630,11 +742,11 @@ impl NodeEditor {
                 if answer.erroneous {
                     self.measure(started);
                     if let Some(network) = &self.network {
-                        invoke_method!(network, "cancelStore");
+                        invoke_method!(network, "cancelStore", self.name.clone());
                     }
                 } else {
                     if let Some(network) = &self.network {
-                        invoke_method!(network, "store");
+                        invoke_method!(network, "store", self.name.clone());
                     }
                     self.count_request();
                     if let Some(started) = started {
@@ -670,9 +782,7 @@ impl NodeEditor {
             self.mode = mode;
             self.status_changed();
         }
-        if let Some(output) = &self.output {
-            invoke_method!(output, "setOrigins", origins);
-        }
+        invoke_method!(&self.output.1, "setOrigins", origins);
         for group in groups_of_state(watched.groups, &self.versions, &self.produced) {
             if self.produced.contains(&group.document) {
                 self.diagnostics
@@ -717,15 +827,22 @@ impl NodeEditor {
             }
             self.contents.insert(document.to_owned(), content.octets);
             self.mark_produced(document);
-        } else if let Some(index) = self.outputs.iter().position(|output| output == document)
-            && let Some(output) = &self.output
-        {
+        } else if let Some(index) = self.outputs.iter().position(|output| output == document) {
             invoke_method!(
-                output,
+                &self.output.1,
                 "setContent",
                 i32::try_from(index).unwrap_or(i32::MAX),
-                content.octets
+                content.octets.clone()
             );
+            // an editor window on the output shows what the node holds (FR-291)
+            if let Some(network) = &self.network {
+                invoke_method!(
+                    network,
+                    "outputServed",
+                    path_of_identifier(&self.directory, document),
+                    content.octets
+                );
+            }
         }
     }
 
@@ -804,34 +921,36 @@ impl NodeEditor {
     /// response and per *state response*, after those of its documents are recorded, so that
     /// the *diagnostics page* changes once.
     fn list_diagnostics(&self) {
-        if let Some(output) = &self.output {
-            let documents: Vec<(String, Vec<Diagnostic>)> = self
-                .documents
-                .iter()
-                .map(|identifier| {
-                    (
-                        identifier.clone(),
-                        self.diagnostics
-                            .get(identifier)
-                            .cloned()
-                            .unwrap_or_default(),
-                    )
-                })
-                .collect();
-            invoke_method!(output, "setDiagnostics", rendering_of_documents(&documents));
-        }
+        let documents: Vec<(String, Vec<Diagnostic>)> = self
+            .document_identifiers
+            .iter()
+            .map(|identifier| {
+                (
+                    identifier.clone(),
+                    self.diagnostics
+                        .get(identifier)
+                        .cloned()
+                        .unwrap_or_default(),
+                )
+            })
+            .collect();
+        invoke_method!(
+            &self.output.1,
+            "setDiagnostics",
+            rendering_of_documents(&documents)
+        );
     }
 
     /// Yields the number of *inputs* of the opened *node*.
     fn input_count_of_node(&self) -> usize {
-        self.documents.len().saturating_sub(1)
+        self.document_identifiers.len().saturating_sub(1)
     }
 
     /// Yields the invoker of the *input group* whose document is `identifier`, `None` where the
     /// opened *node* has no such document.
     fn group_of(&self, identifier: &str) -> Option<&QmlMethodInvoker> {
         let index = self
-            .documents
+            .document_identifiers
             .iter()
             .position(|document| document == identifier)?;
         match index {
@@ -844,7 +963,7 @@ impl NodeEditor {
     /// opened *node* has no such *input*.
     fn input_of(&self, identifier: &str) -> Option<&Rc<RefCell<InputGroup>>> {
         let index = self
-            .documents
+            .document_identifiers
             .iter()
             .position(|document| document == identifier)?;
         self.inputs

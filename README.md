@@ -3,9 +3,10 @@
 The language workbench of the meta compiler-compiler genc³. Its main window is the compiler
 network editor: it edits a compiler network file (gc3n-file), lets a build system
 such as `genc3d` evaluate it while it is edited, and shows the network it states
-as a graph. A double-click on a node of the graph opens the node window, which
-shows the node as the network file states it: its meta compiler DSL, its inputs
-and its outputs. The build system runs the whole network live while its files
+as a graph. A double-click on a node of the graph opens a node window, one per
+node and several at once, which shows the node as the network file states it:
+its meta compiler DSL, its inputs and its outputs. The build system runs the
+whole network live while its files
 are edited: every change is transmitted to the node, the diagnostics of the
 node are shown at the editor they concern, whoever caused them, its outputs are
 presented as the node holds them, and the outputs of every node are stored
@@ -22,18 +23,29 @@ and switches it: `act` activates it, once the files are corrected, and the
 build system refuses while the network is invalid; `ina` deactivates it, which
 stores the outputs and ends every node. The switch is greyed while no mode is
 known and while a request is under way, which the status bar tells. A node is
-opened while the network is active alone, and the node window closes when the
-network ceases to be active, for example when a meta compiler DSL is made
-invalid or the network is deactivated. The status line of the node window
-names the mode of the node: invalid, waiting for its meta compiler DSL,
-valid or active. A meta compiler DSL that another node produces is shown
+opened while the network is valid or active: the workbench holds the node, so
+that the build system starts and serves it in a valid network, and the nodes of
+the open node windows run on when the network is deactivated; closing a node
+window releases its node, which ends where no other client holds it. Every
+node window closes when the network becomes invalid, for example when the
+network file is broken, since no node runs then. The status line of the node
+window names the mode of the node: invalid, waiting for its meta compiler DSL,
+valid or active. A file that several node windows present is held once: an edit
+in one window shows in the others and reaches every node that has the file. A meta compiler DSL that another node produces is shown
 read-only with the content the node holds, as an input of a producer is. The switch `ina | act`
 and the switch `txt | hex | bin` of the editors carry a tooltip that spells
-their positions out. The graph tells the mode as well: the nodes are grey
-while the network is not active, and in an active network a meta
-compiler-compiler is light blue, a proxy node wheat, and every meta
-compiler-compiler carries the small text `double click here` in its top left
-corner. The meta compiler DSL of a meta compiler-compiler is a vertex of its
+their positions out. The graph tells the mode as well: while the network is
+valid or active, a meta compiler-compiler is a subdued blue, a proxy node a
+subdued yellow, an input that no node produces a subdued orange, an output
+that no node consumes a subdued green, and the file of a connection white;
+while the network is invalid, or no mode is known, the same hues are nearly
+grey and dimmed. Every meta compiler-compiler of a valid or active network,
+and every such input and output in every mode, carries the small text
+`double click here` in its top left corner: a double-click on an input opens
+an editor window on the file, which edits it as the node windows do and
+reaches every node that has it, and a double-click on an output opens a
+read-only editor window showing what the producing node holds while a node
+window serves it, and the file otherwise. The meta compiler DSL of a meta compiler-compiler is a vertex of its
 own, an input of the node, so that a node carries its name alone; a proxy node
 carries its tool chain below its name. The graph runs from left to right: the
 inputs enter a node at its left side, the outputs leave it at its right side,
@@ -91,10 +103,11 @@ bridging code against Qt.
   `/usr/local/bin` and `/usr/bin`. The graph is rendered as a PNG image, so
   that the module `qtsvg` of Qt is not needed.
 
-- A build system that conforms to genc³api 0.18.0.0, which is `genc3d` of
-  genc³ 0.31.0.0 or later: genc³wb has it activate the network and run every
-  node of it, watches the modes and the states of the nodes, and reads what a
-  node holds of its inputs and outputs. It is named in the compiler network editor; without it a network
+- A build system that conforms to genc³api 0.19.0.0, which is `genc3d` of
+  genc³ 0.32.1.0 or later: genc³wb has it activate the network and run every
+  node of it, holds and releases the nodes of the node windows, watches the
+  modes and the states of the nodes, and reads what a node holds of its inputs
+  and outputs. It is named in the compiler network editor; without it a network
   file is edited, but no graph is shown. genc³wb reaches it and its nodes
   through Unix domain sockets, so that in this version the graph is shown on
   Linux and macOS alone.
@@ -287,18 +300,24 @@ crash blocks nothing. In this version the locks are made for MacOS on a local
 disk, and they bind genc³wb alone: a `genc3d` started in a terminal or a text
 editor is not kept from the files.
 
-### The node window
+### The node windows
 
-A double-click on a meta compiler-compiler in the graph opens it. The window
-shows the node as a machine: the inputs on the left, the outputs on the right,
-the gear in the middle, and the meta compiler DSL below as its control. The
-build system named in the compiler network editor runs every node of the
-network file, from the moment both are named until they change or the
-workbench terminates. The node window attaches to the running node: it connects
-to the service socket of the node and starts no process, and closing it, or
-opening another node, closes the connection and leaves the node running. An
-edit of the meta compiler DSL or of an input is saved after the idle time and
-transmitted to the node. The node tells its diagnostics, of its meta compiler
+A double-click on a meta compiler-compiler in the graph opens it in a node
+window of its own; a second double-click raises that window. The window shows
+the node as a machine: the inputs on the left, the outputs on the right, the
+gear in the middle, and the meta compiler DSL below as its control. The build
+system named in the compiler network editor runs every node of the network
+file while the network is active, and the nodes of the open node windows while
+it is valid: opening a node holds it, so that the build system starts it where
+it does not run, and keeps it running through a deactivation. The node window
+attaches to the running node: it connects to the service socket of the node
+and starts no process; closing the window closes the connection and releases
+the node, which the build system ends in a valid network where no other
+client holds it, and leaves running in an active network. While the node is
+not served, the output pages show the files of the outputs. An edit of the
+meta compiler DSL or of an input is saved after the idle time and transmitted
+to the node, and to every other node served that has the file, which the
+windows of those nodes show as one document. The node tells its diagnostics, of its meta compiler
 DSL and of every input, whenever they change, whoever caused the change: an
 edit in the window, or a node upstream that produced one of the inputs anew.
 Each is marked in its editor by a wavy line under the faulty place — red for

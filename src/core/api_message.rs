@@ -30,6 +30,7 @@ const KEY_GROUPS: u64 = 17;
 const KEY_STATES: u64 = 18;
 const KEY_VERSIONS: u64 = 20;
 const KEY_MODE: u64 = 21;
+const KEY_NODE_NAME: u64 = 23;
 
 /// The kinds of the *messages* *product* encodes and decodes.
 const KIND_OPEN: u64 = 1;
@@ -41,6 +42,8 @@ const KIND_WATCH: u64 = 12;
 const KIND_QUERY_CONTENT: u64 = 14;
 const KIND_ACTIVATE: u64 = 15;
 const KIND_DEACTIVATE: u64 = 16;
+const KIND_HOLD: u64 = 18;
+const KIND_RELEASE: u64 = 19;
 const KIND_ACKNOWLEDGED: u64 = 32;
 const KIND_DIAGNOSTICS: u64 = 33;
 const KIND_ROOT: u64 = 34;
@@ -265,6 +268,13 @@ pub enum Request {
     /// a *deactivate request*, transmitted to the *build system* alone, which carries out the
     /// *network deactivation* (\[AD3\] IR-139, IR-164)
     Deactivate,
+    /// a *hold request*, transmitted to the *build system* alone, naming the *node* it holds
+    /// under key 23, so that the *node* runs and is served while the network is a
+    /// *valid network* (\[AD3\] IR-194, IR-196 to IR-200)
+    Hold { node: String },
+    /// a *release request*, transmitted to the *build system* alone, naming the *node* it
+    /// releases under key 23 (\[AD3\] IR-195, IR-201, IR-202)
+    Release { node: String },
     /// a *shutdown request*
     Shutdown,
 }
@@ -683,6 +693,14 @@ pub fn encode_request(identifier: u64, request: &Request) -> Vec<u8> {
         }
         Request::Activate => pairs.push((KEY_KIND, unsigned(KIND_ACTIVATE))),
         Request::Deactivate => pairs.push((KEY_KIND, unsigned(KIND_DEACTIVATE))),
+        Request::Hold { node } => {
+            pairs.push((KEY_KIND, unsigned(KIND_HOLD)));
+            pairs.push((KEY_NODE_NAME, Value::Text(node.clone())));
+        }
+        Request::Release { node } => {
+            pairs.push((KEY_KIND, unsigned(KIND_RELEASE)));
+            pairs.push((KEY_NODE_NAME, Value::Text(node.clone())));
+        }
         Request::Shutdown => pairs.push((KEY_KIND, unsigned(KIND_SHUTDOWN))),
     }
     bytes_of_pairs(pairs)
@@ -2009,6 +2027,34 @@ mod tests {
         assert_eq!(
             encode_request(5, &Request::Deactivate),
             vec![0xa2, 0x00, 0x10, 0x01, 0x05]
+        );
+    }
+
+    #[test]
+    fn hold_request_names_its_node_under_key_23() {
+        // FR-281, [AD3] IR-194: { 0: 18, 1: 1, 23: "a" }
+        assert_eq!(
+            encode_request(
+                1,
+                &Request::Hold {
+                    node: "a".to_owned()
+                }
+            ),
+            vec![0xa3, 0x00, 0x12, 0x01, 0x01, 0x17, 0x61, 0x61]
+        );
+    }
+
+    #[test]
+    fn release_request_names_its_node_under_key_23() {
+        // FR-282, [AD3] IR-195: { 0: 19, 1: 2, 23: "ab" }
+        assert_eq!(
+            encode_request(
+                2,
+                &Request::Release {
+                    node: "ab".to_owned()
+                }
+            ),
+            vec![0xa3, 0x00, 0x13, 0x01, 0x02, 0x17, 0x62, 0x61, 0x62]
         );
     }
 

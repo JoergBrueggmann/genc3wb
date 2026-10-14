@@ -1,5 +1,6 @@
-// The main window, the compiler network editor: menu bar, status bar, the network file and its graph, and the
-// dialog telling a refusal of the network file or of the settings file.
+// The main window, the compiler network editor: menu bar, status bar, the network file and its graph, the
+// dialog telling a refusal of the network file or of the settings file, and the node windows, one per node
+// opened.
 //
 // Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 // Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -66,7 +67,8 @@ ApplicationWindow {
 
     // Yields the phrase of the status bar for the network mode `mode`, as the message schema
     // numbers it, 0 where none is kept (FR-258); while an activate request or a deactivate
-    // request is pending, that the network is being activated or deactivated (FR-269, FR-270).
+    // request is pending, that the network is being activated or deactivated (FR-269, FR-270),
+    // and while a hold request is pending, which node is being opened (FR-285).
     function networkModeText(mode: int): string {
         if (Workbench.network.activating) {
             return qsTr("Activating network");
@@ -74,15 +76,49 @@ ApplicationWindow {
         if (Workbench.network.deactivating) {
             return qsTr("Deactivating network");
         }
+        if (Workbench.network.opening.length > 0) {
+            return qsTr("Opening node %1").arg(Workbench.network.opening);
+        }
         switch (mode) {
         case 1:
             return qsTr("Network invalid: no node runs");
         case 2:
-            return qsTr("Network valid, not active: activate to open a node");
+            return qsTr("Network valid, not active");
         case 3:
             return qsTr("Network active");
         default:
             return "";
+        }
+    }
+
+    // Yields the index of the entry of `nodeWindowModel` that names the node `name`, -1 where
+    // there is none.
+    function nodeWindowIndex(name: string): int {
+        for (let i = 0; i < nodeWindowModel.count; i++) {
+            if (nodeWindowModel.get(i).name === name) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    // Yields the index of the entry of `fileWindowModel` that names the file `path`, -1 where
+    // there is none.
+    function fileWindowIndex(path: string): int {
+        for (let i = 0; i < fileWindowModel.count; i++) {
+            if (fileWindowModel.get(i).path === path) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    // Shows, raises and activates `window`, where it is one.
+    function raise(window: var) {
+        if (window) {
+            window.show();
+            window.raise();
+            window.requestActivate();
         }
     }
 
@@ -97,8 +133,8 @@ ApplicationWindow {
 
     Component.onCompleted: tellRefusals(refusalSentences())
     onClosing: {
+        // shuts every node editor down as well (FR-068, FR-105)
         Workbench.network.shutDown();
-        Workbench.node.shutDown();
         Workbench.releaseLocks();
     }
 
@@ -165,7 +201,7 @@ ApplicationWindow {
             leftPadding: 8
             // the refusals while they last (FR-220), then the state of the build system and
             // the network mode (FR-258), or that the network is being activated or deactivated
-            // (FR-269, FR-270)
+            // or a node is being opened (FR-269, FR-270, FR-285)
             text: [mainWindow.settingsRefusal,
                    mainWindow.networkRefusal,
                    !Workbench.network.available
@@ -251,26 +287,87 @@ ApplicationWindow {
         id: insertKeyDialog
     }
 
-    NodeWindow {
-        id: nodeWindow
+    // one entry per node window presented, carrying the name of its node (FR-001, FR-085)
+    ListModel {
+        id: nodeWindowModel
+    }
 
-        transientParent: mainWindow
-        visible: false
+    // the node windows, one per entry, each bound to the node editor of its name; a window is
+    // destroyed with its detached windows when its entry is removed (FR-001, FR-047, FR-263)
+    Instantiator {
+        id: nodeWindows
+
+        model: nodeWindowModel
+        delegate: NodeWindow {
+            required property string name
+
+            node: Workbench.network.nodeNamed(name)
+            transientParent: mainWindow
+            visible: true
+        }
+    }
+
+    // one entry per editor window presented, carrying the path of its file (FR-290 to FR-293)
+    ListModel {
+        id: fileWindowModel
+    }
+
+    // the editor windows of the files opened from the graph, one per entry, each bound to the
+    // input group of its path; closing one has the network editor close the file (FR-290 to FR-293)
+    Instantiator {
+        id: fileWindows
+
+        model: fileWindowModel
+        delegate: EditorWindow {
+            required property string path
+
+            group: Workbench.network.fileNamed(path)
+            transientParent: mainWindow
+            visible: true
+            onClosing: Workbench.network.closeFile(path)
+        }
     }
 
     Connections {
         target: Workbench.network
 
+        // the node editor of the name is named and opening: its window is presented, or raised
+        // where it is presented already (FR-085, FR-284)
         function onNodeOpened(name) {
-            nodeWindow.show();
-            nodeWindow.raise();
-            nodeWindow.requestActivate();
+            const index = mainWindow.nodeWindowIndex(name);
+            if (index < 0) {
+                nodeWindowModel.append({ "name": name });
+                return;
+            }
+            mainWindow.raise(nodeWindows.objectAt(index) as Window);
         }
 
-        // the network ceased to be active: no node runs, so the node window and its detached
-        // windows close (FR-263)
-        function onNetworkDeactivated() {
-            nodeWindow.closeWithDetachedWindows();
+        // the input group of the path is named and opened: its editor window is presented, or
+        // raised where it is presented already (FR-290 to FR-292)
+        function onFileOpened(path) {
+            const index = mainWindow.fileWindowIndex(path);
+            if (index < 0) {
+                fileWindowModel.append({ "path": path });
+                return;
+            }
+            mainWindow.raise(fileWindows.objectAt(index) as Window);
+        }
+
+        // the input group of the path closed: the user closed its editor window (FR-293)
+        function onFileClosed(path) {
+            const index = mainWindow.fileWindowIndex(path);
+            if (index >= 0) {
+                fileWindowModel.remove(index);
+            }
+        }
+
+        // the node editor of the name closed: the user closed its window, or the network came
+        // to be invalid or the build system was lost (FR-089, FR-263)
+        function onNodeClosed(name) {
+            const index = mainWindow.nodeWindowIndex(name);
+            if (index >= 0) {
+                nodeWindowModel.remove(index);
+            }
         }
 
         function onProcessingMeasured(processingTime) {
@@ -286,11 +383,4 @@ ApplicationWindow {
         }
     }
 
-    Connections {
-        target: Workbench.node
-
-        function onProcessingMeasured(processingTime) {
-            Workbench.reportProcessingTime(processingTime);
-        }
-    }
 }

@@ -5,6 +5,8 @@
 
 use crate::core::octet_view::text_of_octets;
 
+use std::fs;
+
 // realises FR-030, FR-102, FR-110, FR-111, FR-163
 /// One *output* as its *output page* presents it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -230,6 +232,12 @@ impl OutputPages {
         self.files.get(self.current)
     }
 
+    // realises FR-291
+    /// Yields the *output* of the page `index`, `None` where there is no such page.
+    pub fn file_at(&self, index: usize) -> Option<&OutputFile> {
+        self.files.get(index)
+    }
+
     // realises FR-032, FR-034
     /// Presents the next page; yields whether there was one.
     // The name is the one the design gives the slot of the front end; the pages are no iterator.
@@ -261,6 +269,13 @@ impl OutputPages {
     pub fn has_previous(&self) -> bool {
         self.current > 0
     }
+}
+
+// realises FR-288
+/// Yields the octets of the file at `path`, which an *output page* shows while the *node* is not
+/// served; none where the file does not exist or cannot be read.
+pub fn file_octets(path: &str) -> Vec<u8> {
+    fs::read(path).unwrap_or_default()
 }
 
 // realises FR-150, FR-151, FR-152
@@ -309,7 +324,8 @@ pub fn presentation_after(
  * conforms to doc  : ✅
  * covers bridge    : OutputGroup::next, OutputGroup::previous, OutputGroup::set_paths,
  *                    OutputGroup::set_content, OutputGroup::stored, OutputGroup::set_diagnostics,
- *                    OutputGroup::set_origins, OutputGroup::set_store_failure */
+ *                    OutputGroup::set_origins, OutputGroup::set_store_failure,
+ *                    NodeEditor::open_node, NodeEditor::report_arrived */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -415,6 +431,21 @@ mod tests {
         assert_eq!(
             (first, second, contents),
             (true, true, vec![String::new(), "generated anew".to_owned()])
+        );
+    }
+
+    #[test]
+    fn the_output_of_a_page_is_yielded_by_its_index() {
+        // FR-291
+        let mut pages = OutputPages::of_paths(&paths(&["a.txt", "b.txt"]));
+        pages.set_content(1, b"held".to_vec());
+        assert_eq!(
+            (
+                pages.file_at(1).map(|file| file.octets.clone()),
+                pages.file_at(0).map(|file| file.octets.clone()),
+                pages.file_at(2).is_none()
+            ),
+            (Some(b"held".to_vec()), Some(vec![]), true)
         );
     }
 
@@ -638,6 +669,21 @@ mod tests {
         pages.set_diagnostics("a.gc3: error 1:1-1:2: fault");
         let gone = (pages.set_diagnostics(""), pages.current());
         assert_eq!(gone, (false, 1));
+    }
+
+    #[test]
+    fn octets_of_the_file_of_an_output_are_read_and_an_absent_file_yields_none() {
+        // FR-288
+        let directory = std::env::temp_dir().join(format!("genc3wb-output-{}", std::process::id()));
+        fs::create_dir_all(&directory).expect("the temporary directory can be created");
+        let present = directory.join("out.txt");
+        fs::write(&present, [b'a', 0xff]).expect("the file can be written");
+        let read = (
+            file_octets(&present.to_string_lossy()),
+            file_octets(&directory.join("absent.txt").to_string_lossy()),
+        );
+        let _ = fs::remove_dir_all(&directory);
+        assert_eq!(read, (vec![b'a', 0xff], vec![]));
     }
 
     #[test]

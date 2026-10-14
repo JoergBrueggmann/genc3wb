@@ -5,7 +5,9 @@
 
 use crate::core::api_message::{Diagnostic, NodeDescription};
 use crate::core::build_system::{BuildError, BuildSession, StateSink};
-use crate::core::network_graph::{GraphLayout, dot_of_network, render};
+use crate::core::network_graph::{
+    GraphFile, GraphLayout, dot_of_network, files_of_network, render,
+};
 use crate::core::text_increment::TextIncrement;
 
 use std::path::PathBuf;
@@ -13,20 +15,22 @@ use std::path::PathBuf;
 /// The text of FR-112 where a *store request* is handed over while no *build system* runs.
 const NOT_RUNNING: &str = "No build system runs.";
 
-// realises FR-075, FR-077, FR-078, FR-273, FR-274, FR-275
+// realises FR-075, FR-077, FR-078, FR-273, FR-274, FR-275, FR-289 to FR-291
 /// What a successful *build* yields for the *front end*: the two images of the *network graph*,
-/// the one of an *active network* and the one of a network that is not active, their layout,
-/// and the *nodes* they show.
+/// the one of a network that serves *nodes* and the one of an *invalid network*, their layout,
+/// and the *nodes* and the files they show.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BuiltGraph {
-    /// the file holding the PNG image of an *active network*
-    pub active_image_path: PathBuf,
-    /// the file holding the PNG image of a network that is not active
-    pub inactive_image_path: PathBuf,
+    /// the file holding the PNG image of a *valid network* or an *active network*
+    pub served_image_path: PathBuf,
+    /// the file holding the PNG image of an *invalid network*
+    pub invalid_image_path: PathBuf,
     /// the layout, the same for both images, by which a point of an image is related to a vertex
     pub layout: GraphLayout,
     /// the *node descriptions*, in the order of the vertices `n<index>`
     pub nodes: Vec<NodeDescription>,
+    /// the files of the network, in the order of the vertices `f<index>`
+    pub files: Vec<GraphFile>,
 }
 
 // realises FR-069, FR-073, FR-074, FR-128
@@ -111,9 +115,9 @@ impl NetworkBuilder {
         self.start()
     }
 
-    // realises FR-069, FR-073, FR-074, FR-075, FR-077, FR-128, FR-273, FR-274
-    /// Carries out a *build* and lays out its *network graph*, twice: in the fills of an
-    /// *active network* and in those of a network that is not active, the layout being the same.
+    // realises FR-069, FR-073, FR-074, FR-075, FR-077, FR-128, FR-273, FR-274, FR-289
+    /// Carries out a *build* and lays out its *network graph*, twice: in the colours of a network
+    /// that serves *nodes* and in those of an *invalid network*, the layout being the same.
     ///
     /// * Where no *build system* runs although one is named, it is started first.
     /// * Where the connection fails, the *build system* is given up, so that the next *build*
@@ -171,31 +175,32 @@ impl NetworkBuilder {
         };
         self.images_written += 1;
         let stem = format!("graph-{}", self.images_written);
-        let rendered = |active: bool, suffix: &str| {
+        let rendered = |served: bool, suffix: &str| {
             render(
-                &dot_of_network(&description.nodes, active),
+                &dot_of_network(&description.nodes, served),
                 &self.directory,
                 &format!("{stem}-{suffix}"),
             )
         };
-        let (active, inactive) = match (rendered(true, "active"), rendered(false, "inactive")) {
-            (Ok(active), Ok(inactive)) => (active, inactive),
+        let (served, invalid) = match (rendered(true, "served"), rendered(false, "invalid")) {
+            (Ok(served), Ok(invalid)) => (served, invalid),
             (Err(error), _) | (_, Err(error)) => {
                 return (result.diagnostics, Err(error.to_string()));
             }
         };
         for previous in std::mem::replace(
             &mut self.last_images,
-            vec![active.image_path.clone(), inactive.image_path.clone()],
+            vec![served.image_path.clone(), invalid.image_path.clone()],
         ) {
             let _ = std::fs::remove_file(previous);
         }
         (
             result.diagnostics,
             Ok(BuiltGraph {
-                active_image_path: active.image_path,
-                inactive_image_path: inactive.image_path,
-                layout: active.layout,
+                served_image_path: served.image_path,
+                invalid_image_path: invalid.image_path,
+                layout: served.layout,
+                files: files_of_network(&description.nodes),
                 nodes: description.nodes,
             }),
         )
@@ -272,6 +277,48 @@ impl NetworkBuilder {
         outcome.map_err(|error| error.to_string())
     }
 
+    // realises FR-281, FR-286
+    /// Transmits a *hold request* naming `node` to the running *build system*, which starts and
+    /// serves the *node* in a *valid network*, as [`BuildSession::hold`].
+    ///
+    /// * Where the connection fails, the *build system* is given up, as a *build* gives it up.
+    ///
+    /// # Errors
+    /// Returns the *error message* of FR-286: that no *build system* runs, or the rendering of
+    /// the [`BuildError`], which is the message text of the error response in an
+    /// *invalid network*.
+    pub fn hold(&mut self, node: &str) -> Result<(), String> {
+        let Some(session) = self.session.as_mut() else {
+            return Err(NOT_RUNNING.to_owned());
+        };
+        let outcome = session.hold(node);
+        if let Err(error) = &outcome {
+            self.give_up_on(error);
+        }
+        outcome.map_err(|error| error.to_string())
+    }
+
+    // realises FR-282, FR-287
+    /// Transmits a *release request* naming `node` to the running *build system*, which ends
+    /// the *node* in a *valid network* where no other client holds it, as
+    /// [`BuildSession::release`].
+    ///
+    /// * Where the connection fails, the *build system* is given up, as a *build* gives it up.
+    ///
+    /// # Errors
+    /// Returns the *error message* of FR-287: that no *build system* runs, or the rendering of
+    /// the [`BuildError`].
+    pub fn release(&mut self, node: &str) -> Result<(), String> {
+        let Some(session) = self.session.as_mut() else {
+            return Err(NOT_RUNNING.to_owned());
+        };
+        let outcome = session.release(node);
+        if let Err(error) = &outcome {
+            self.give_up_on(error);
+        }
+        outcome.map_err(|error| error.to_string())
+    }
+
     // realises FR-068
     /// Shuts the running *build system* down, where one runs.
     pub fn stop(&mut self) {
@@ -318,7 +365,9 @@ impl Drop for NetworkBuilder {
 * conforms to doc  : ✅
 * covers bridge    : NetworkEditor::set_network_path, NetworkEditor::set_build_system_path,
                      NetworkEditor::apply_increment, NetworkEditor::store,
-                     NetworkEditor::activate, NetworkEditor::deactivate, NetworkEditor::shut_down */
+                     NetworkEditor::activate, NetworkEditor::deactivate,
+                     NetworkEditor::open_node_at, NetworkEditor::open_node_named,
+                     NetworkEditor::close_node, NetworkEditor::shut_down */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -359,6 +408,16 @@ mod tests {
         assert_eq!(
             builder("nodeactivate").deactivate(),
             Err(NOT_RUNNING.to_owned())
+        );
+    }
+
+    #[test]
+    fn hold_and_release_without_a_running_build_system_are_reported_as_not_running() {
+        // FR-286, FR-287
+        let mut builder = builder("nohold");
+        assert_eq!(
+            (builder.hold("a"), builder.release("a")),
+            (Err(NOT_RUNNING.to_owned()), Err(NOT_RUNNING.to_owned()))
         );
     }
 

@@ -1,5 +1,6 @@
-// The node window as a machine: the inputs above the meta compiler DSL as its control, beside them the machine
-// logo and the outputs, the two splitters between them, the status line, and the detached windows.
+// One node window as a machine, bound to its node editor: the inputs above the meta compiler DSL as its
+// control, beside them the machine logo and the outputs, the two splitters between them, the status line, and
+// the detached windows.
 //
 // Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 // Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -17,10 +18,15 @@ import genc3wb
 Window {
     id: nodeWindow
 
+    // the node editor of this window, one per node opened (FR-001)
+    required property var node
+
     width: 1200
     height: 760
-    title: Workbench.node.name.length > 0 ? "genc³wb - " + Workbench.node.name : "genc³wb"
-    onClosing: Workbench.node.close()
+    title: nodeWindow.node.name.length > 0 ? "genc³wb - " + nodeWindow.node.name : "genc³wb"
+    // closing the window has the network editor close the node editor and release the node
+    // (FR-089, FR-105, FR-282)
+    onClosing: Workbench.network.closeNode(nodeWindow.node.name)
 
     // Yields the text of the node mode `mode` for the status line, as the message schema
     // numbers it: 1 invalid, 2 valid, 3 active; empty for 0, where none is told (FR-123)
@@ -36,16 +42,6 @@ Window {
             return qsTr("Node waiting for its meta compiler DSL");
         default:
             return "";
-        }
-    }
-
-    // Closes every detached window and the node window, where it is presented: the network
-    // ceased to be active (FR-263)
-    function closeWithDetachedWindows() {
-        outputWindowModel.clear();
-        editorWindowModel.clear();
-        if (nodeWindow.visible) {
-            nodeWindow.close();
         }
     }
 
@@ -110,22 +106,22 @@ Window {
                                 id: previousInputButton
 
                                 text: "<"
-                                enabled: Workbench.node.hasPreviousInput
-                                onClicked: Workbench.node.previousInput()
+                                enabled: nodeWindow.node.hasPreviousInput
+                                onClicked: nodeWindow.node.previousInput()
                             }
 
                             Label {
                                 id: inputLabel
 
-                                text: qsTr("Input %1 of %2").arg(Workbench.node.inputPage + 1).arg(Workbench.node.inputCount)
+                                text: qsTr("Input %1 of %2").arg(nodeWindow.node.inputPage + 1).arg(nodeWindow.node.inputCount)
                             }
 
                             Button {
                                 id: nextInputButton
 
                                 text: ">"
-                                enabled: Workbench.node.hasNextInput
-                                onClicked: Workbench.node.nextInput()
+                                enabled: nodeWindow.node.hasNextInput
+                                onClicked: nodeWindow.node.nextInput()
                             }
                         }
 
@@ -134,16 +130,16 @@ Window {
 
                             Layout.fillWidth: true
                             Layout.fillHeight: true
-                            currentIndex: Workbench.node.inputPage
+                            currentIndex: nodeWindow.node.inputPage
 
                             Repeater {
                                 id: inputRepeater
 
-                                model: Workbench.node.inputCount
+                                model: nodeWindow.node.inputCount
                                 delegate: InputGroup {
                                     required property int index
 
-                                    group: Workbench.node.inputAt(index)
+                                    group: nodeWindow.node.inputAt(index)
                                     onDetachRequested: editorWindowModel.append({ "input": index })
                                 }
                             }
@@ -154,7 +150,7 @@ Window {
                 InputGroup {
                     id: metaDslGroup
 
-                    group: Workbench.node.metaDsl
+                    group: nodeWindow.node.metaDsl
                     SplitView.fillHeight: true
                     SplitView.minimumHeight: 120
                     onDetachRequested: editorWindowModel.append({ "input": -1 })
@@ -229,7 +225,7 @@ Window {
                 OutputGroup {
                     id: outputGroup
 
-                    output: Workbench.output
+                    output: nodeWindow.node.output
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     onDetachRequested: outputWindowModel.append({ "number": outputWindowModel.count })
@@ -248,12 +244,12 @@ Window {
                 Layout.fillWidth: true
                 // the text of FR-112, or whether the node is served and processing, then its
                 // node mode (FR-123), as short phrases
-                text: [Workbench.node.status.length > 0
-                       ? Workbench.node.status
-                       : !Workbench.node.served
+                text: [nodeWindow.node.status.length > 0
+                       ? nodeWindow.node.status
+                       : !nodeWindow.node.served
                          ? qsTr("Node not served")
-                         : Workbench.node.busy ? qsTr("Node processing") : qsTr("Node served"),
-                       nodeWindow.nodeModeText(Workbench.node.nodeMode)]
+                         : nodeWindow.node.busy ? qsTr("Node processing") : qsTr("Node served"),
+                       nodeWindow.nodeModeText(nodeWindow.node.nodeMode)]
                       .filter(part => part.length > 0).join("  ·  ")
             }
 
@@ -278,6 +274,7 @@ Window {
         delegate: OutputWindow {
             required property int index
 
+            output: nodeWindow.node.output
             transientParent: nodeWindow
             visible: true
             onClosing: outputWindowModel.remove(index)
@@ -292,10 +289,18 @@ Window {
             required property int index
             required property int input
 
-            group: input < 0 ? Workbench.node.metaDsl : Workbench.node.inputAt(input)
+            group: input < 0 ? nodeWindow.node.metaDsl : nodeWindow.node.inputAt(input)
             transientParent: nodeWindow
             visible: true
             onClosing: editorWindowModel.remove(index)
+        }
+    }
+
+    Connections {
+        target: nodeWindow.node
+
+        function onProcessingMeasured(processingTime) {
+            Workbench.reportProcessingTime(processingTime);
         }
     }
 }

@@ -5,6 +5,7 @@
 
 pub mod api_message;
 pub mod build_system;
+pub mod document_store;
 pub mod editing;
 pub mod executable;
 pub mod file_lock;

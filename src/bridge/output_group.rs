@@ -255,6 +255,16 @@ impl OutputGroup {
 }
 
 impl OutputGroup {
+    // realises FR-291
+    /// Yields the octets held of the *output* of the page `index`, `None` where there is no such
+    /// page or no content was taken yet; read by the *node editor* that owns the group.
+    pub fn octets_of(&self, index: usize) -> Option<Vec<u8>> {
+        self.pages
+            .file_at(index)
+            .filter(|file| !file.octets.is_empty())
+            .map(|file| file.octets.clone())
+    }
+
     // realises FR-163
     /// Yields the octets of the presented *output*, none on the *diagnostics page*.
     fn octets(&self) -> &[u8] {

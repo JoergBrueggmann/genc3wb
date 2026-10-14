@@ -154,7 +154,7 @@ fn build_yields_the_nodes_and_the_laid_out_graph() {
                 .map(|node| (node.name.clone(), node.kind))
                 .collect::<Vec<_>>(),
             graph.layout.vertices.len(),
-            graph.active_image_path.is_file() && graph.inactive_image_path.is_file(),
+            graph.served_image_path.is_file() && graph.invalid_image_path.is_file(),
         )
     });
     drop(builder);
@@ -688,6 +688,101 @@ fn activation_fails_while_a_node_is_invalid_and_succeeds_once_it_is_corrected() 
             deactivated_again
         ),
         (Ok(()), true, true, Ok(()))
+    );
+}
+
+// FR-281, FR-282, FR-283, FR-286, FR-104, [AD3] IR-194 to IR-204
+// needs the service executable genc3d of genc³ 0.32.1.0 or later, named by the environment
+// variable GENC3D
+#[test]
+#[ignore]
+fn node_held_in_a_valid_network_is_served_and_released() {
+    // the network activates at start-up; the deactivation ends the node, which the hold request
+    // starts again and serves while the network stays a valid network
+    let directory = case_directory("hold", ONE_NODE);
+    write(&directory, "a.gc3", &copy_meta_dsl("a.in", "x.txt"));
+    write(&directory, "a.in", "hello");
+    let (network_told, network_states) = channel();
+    let (mut builder, started) = started(&directory, sinks_to(network_told));
+    let active = awaited(&network_states, |watched| {
+        watched.mode == Some(NetworkMode::Active)
+    });
+    let deactivated = builder.deactivate();
+    let valid_without_nodes = awaited(&network_states, |watched| {
+        watched.mode == Some(NetworkMode::Valid)
+            && watched.states.iter().all(|state| state.mode.is_none())
+    });
+    // a hold request names a node the network does not state ([AD3] IR-200)
+    let refused = builder.hold("zzz");
+    // the hold request is acknowledged once the started node has told its node mode, and the
+    // node is activated alone while the network stays a valid network ([AD3] IR-196 to IR-198)
+    let held = builder.hold("a");
+    let held_active = awaited(&network_states, |watched| {
+        watched.mode == Some(NetworkMode::Valid)
+            && watched
+                .states
+                .iter()
+                .any(|state| state.name == "a" && state.mode == Some(NodeMode::Active))
+    });
+    // the held node is served: it answers a change and a content query (FR-104)
+    let (node_told, node_states) = channel();
+    let (mut runner, attached) = attached(&directory, "a", &["a.in"], &node_told);
+    let answered = runner
+        .transmit(
+            "a.in",
+            "",
+            &increment_between("", "hello world"),
+            "hello world",
+        )
+        .map(|answer| answer.erroneous);
+    let content = content_awaited(&mut runner, "x.txt", b"hello world");
+    // a hold of a node that runs is acknowledged at once ([AD3] IR-199)
+    let held_again = builder.hold("a");
+    // the release ends the node, the network staying a valid network ([AD3] IR-201)
+    let released = builder.release("a");
+    let node_lost = awaited_loss(&node_states);
+    let ended = awaited(&network_states, |watched| {
+        watched.mode == Some(NetworkMode::Valid)
+            && watched.states.iter().all(|state| state.mode.is_none())
+    });
+    // a release of a node not held is acknowledged ([AD3] IR-202)
+    let released_again = builder.release("a");
+    drop(runner);
+    drop(builder);
+    let _ = fs::remove_dir_all(&directory);
+    assert_eq!(
+        (
+            started,
+            active.is_some(),
+            deactivated,
+            valid_without_nodes.is_some(),
+            refused.err().map(|message| message.contains("zzz")),
+            held,
+            held_active.is_some()
+        ),
+        (Ok(()), true, Ok(()), true, Some(true), Ok(()), true)
+    );
+    assert_eq!(
+        (
+            attached,
+            answered,
+            content,
+            held_again,
+            released,
+            node_lost,
+            ended.is_some(),
+            released_again
+        ),
+        (
+            Ok(()),
+            Ok(false),
+            Some(b"hello world".to_vec()),
+            Ok(()),
+            Ok(()),
+            true,
+            true,
+            Ok(())
+        )
     );
 }
 

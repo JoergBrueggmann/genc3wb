@@ -16,21 +16,25 @@ use std::path::Path;
 /// Which file an *input group* edits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputKind {
-    /// the *meta compiler DSL* of the opened *node*
+    /// the *meta compiler DSL* of the opened *node*, or a *source input* a *node* has as such in
+    /// an *editor window*
     MetaDsl,
-    /// one *input* of the opened *node*
+    /// one *input* of the opened *node*, or a *source input* in an *editor window*
     Input,
+    /// a *sink output* in an *editor window*, shown read-only (FR-291)
+    Output,
     /// the *network file* of the *compiler network editor*
     Network,
 }
 
 impl InputKind {
-    // realises FR-011
+    // realises FR-011, FR-290, FR-291
     /// Yields the caption of the *input group* and of its file selector.
     pub fn caption(self) -> &'static str {
         match self {
             InputKind::MetaDsl => "Meta compiler DSL",
             InputKind::Input => "Input",
+            InputKind::Output => "Output",
             InputKind::Network => "Compiler network file",
         }
     }
@@ -40,7 +44,7 @@ impl InputKind {
     pub fn file_filter(self) -> &'static str {
         match self {
             InputKind::MetaDsl => "Meta compiler DSL files (*.gc3)",
-            InputKind::Input => "All files (*)",
+            InputKind::Input | InputKind::Output => "All files (*)",
             InputKind::Network => "Compiler network files (*.gc3n)",
         }
     }
@@ -51,7 +55,7 @@ impl InputKind {
     /// *node description*.
     pub fn is_selectable(self) -> bool {
         match self {
-            InputKind::MetaDsl | InputKind::Input => false,
+            InputKind::MetaDsl | InputKind::Input | InputKind::Output => false,
             InputKind::Network => true,
         }
     }
@@ -218,7 +222,7 @@ impl InputFile {
             reason: error.to_string(),
         })?;
         let binary_allowed = match self.kind {
-            InputKind::Input => true,
+            InputKind::Input | InputKind::Output => true,
             InputKind::MetaDsl | InputKind::Network => false,
         };
         if !binary_allowed && !is_utf8(&octets) {
@@ -759,9 +763,29 @@ mod tests {
             [
                 InputKind::MetaDsl.is_selectable(),
                 InputKind::Input.is_selectable(),
+                InputKind::Output.is_selectable(),
                 InputKind::Network.is_selectable()
             ],
-            [false, false, true]
+            [false, false, false, true]
+        );
+    }
+
+    #[test]
+    fn an_output_is_captioned_output_and_loaded_whatever_its_octets() {
+        // FR-291: the file of a sink output in an editor window
+        let dir = CaseDir::new("output");
+        let path = dir.path("out.bin");
+        fs::write(&path, [0xff, 0x00]).expect("the file can be written");
+        let mut file = InputFile::new(InputKind::Output);
+        let loaded = file.load(&path);
+        assert_eq!(
+            (
+                InputKind::Output.caption(),
+                InputKind::Output.file_filter(),
+                loaded,
+                file.octets()
+            ),
+            ("Output", "All files (*)", Ok(true), &[0xff, 0x00][..])
         );
     }
 }

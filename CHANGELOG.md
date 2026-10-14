@@ -11,6 +11,35 @@ and this project adheres to a four-part version number.
 
 At the moment, nothing unreleased here.
 
+## [0.26.0.0] - 2026-10-14
+
+**_Colours_of_the_network_graph_and_editor_windows_on_its_files_**
+
+Leading work item: definition 0.22.0.0
+
+- Fill the vertices of the *network graph* by kind: a *source input* `#ebcbb0`, a *sink output* `#b0ebb0`, a *meta compiler-compiler* `#b0c3eb`, a *proxy node* `#ebebb0`, the file of a *connection* `#ffffff`, in a *valid network* and an *active network*; `#bcb2a9`, `#a9bca9`, `#a9afbc`, `#bcbca9` and `#cccccc` in an *invalid network* and while no *network mode* is kept; the two images of a *build* are the served and the invalid one.
+- Carry the text `double click here` on every *source input* and *sink output* in both images, and on a *meta compiler-compiler* in the served image alone.
+- Open an *editor window* on a double-click on a *source input*, editing it as a *shared document*, and a read-only one on a *sink output*, showing what the *producer* holds while a *node window* serves it and the file otherwise: the network editor owns one *input group* per *editor window*, reached by `fileNamed`, Main.qml instantiates an EditorWindow.qml per entry of its model on `fileOpened` and removes it on `fileClosed`, and the *node editor* hands the content of its *outputs* to the network editor; the kind `Output` of an *input group*.
+- Test the files of the network with their roles, the vertex of a file, the colours and the texts of both images, and the kind `Output`.
+- Describe the colours and the editor windows in 'README.md'; raise the version in 'Cargo.toml' to 0.26.0.
+- A new capability: a minor bump.
+
+
+## [0.25.0.0] - 2026-10-14
+
+**_Node_windows_held_in_a_valid_network_**
+
+Leading work item: definition 0.21.0.0
+
+- Present one *node window* per *node* opened, several at once: the network editor owns one *node editor* per window, reached by `nodeNamed`, and Main.qml instantiates a NodeWindow.qml per entry of its model on `nodeOpened`, removing it on `nodeClosed`; each *node editor* owns its output group, to which NodeWindow.qml and OutputWindow.qml bind.
+- Open a *node* in a *valid network* or an *active network* by a *hold request* (kind 18, key 23) through the *build thread*, presenting the *node window* on its acknowledged response and the *error message* on its error response, the status bar naming the *node* being opened meanwhile; release the *node* by a *release request* (kind 19) when its *node window* closes; keep the *node windows* through a *network deactivation* and close them all in an *invalid network* or when the *build system* is lost or restarted.
+- Hold one *shared document* per file: `DocumentStore` of the *core* and `DocumentRegistry` of the *bridge* hand the *input groups* of every *node window* the same `InputFile` by its path, each *input group* following an edit made in another and providing it to its own *node*, so that every *node* served that has the file receives the change.
+- Transmit the *store request* in a *valid network* as well, whose *nodes* are *held nodes*, the *store gate* holding it back per requesting *node editor*; show the files of the *outputs* on the *output pages* while the *node* is not served.
+- Test the encoding of the two *requests*, the *store gate*, the document store, the files of the *outputs*, and the hold and the release without a *build system*; add the integration test of a *node* held in a *valid network*, served and released, against `genc3d`.
+- Describe the *node windows* and the hold in 'README.md', which needs genc³api 0.19.0.0 and genc³ 0.32.1.0; raise the version in 'Cargo.toml' to 0.25.0.
+- A new capability against an extended interface: a minor bump.
+
+
 ## [0.24.0.0] - 2026-10-13
 
 **_Meta_compiler_DSL_entering_the_node_from_below_**

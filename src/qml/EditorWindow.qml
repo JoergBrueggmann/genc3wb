@@ -1,4 +1,4 @@
-// A detached window of one input group.
+// A detached window of one input group, and the editor window of a file opened from the network graph.
 //
 // Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 // Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>

@@ -190,35 +190,124 @@ impl GraphLayout {
     }
 }
 
-/// The fill of the vertex of a *meta compiler-compiler* in an *active network*.
-const META_COMPILER_COMPILER_FILL: &str = "lightblue";
-/// The fill of the vertex of a *proxy node* in an *active network*.
-const PROXY_NODE_FILL: &str = "wheat";
-/// The fill of the vertex of every *node* while the network is not active.
-const INACTIVE_FILL: &str = "lightgrey";
-/// The fill of the vertex of a *sink output*.
-const SINK_OUTPUT_FILL: &str = "palegreen";
-/// The text in the top left corner of the vertex of a *meta compiler-compiler* (FR-274).
+/// The fills of the vertex of a *meta compiler-compiler*: in a network that serves *nodes*, a
+/// *valid network* or an *active network*, and in an *invalid network*, a subdued blue and the
+/// same hue at a tenth of its saturation, dimmed (FR-076, FR-273).
+const META_COMPILER_COMPILER_FILLS: (&str, &str) = ("#b0c3eb", "#a9afbc");
+/// The fills of the vertex of a *proxy node*: a subdued yellow, and dimmed.
+const PROXY_NODE_FILLS: (&str, &str) = ("#ebebb0", "#bcbca9");
+/// The fills of the vertex of a *source input*: the orange of the logo of sw4sd.com subdued,
+/// and dimmed.
+const SOURCE_INPUT_FILLS: (&str, &str) = ("#ebcbb0", "#bcb2a9");
+/// The fills of the vertex of a *sink output*: a subdued green, and dimmed.
+const SINK_OUTPUT_FILLS: (&str, &str) = ("#b0ebb0", "#a9bca9");
+/// The fills of the vertex of the file of a *connection*: white, and dimmed.
+const CONNECTION_FILLS: (&str, &str) = ("#ffffff", "#cccccc");
+/// The text in the top left corner of the vertex of a *meta compiler-compiler*, of a
+/// *source input* and of a *sink output* (FR-274, FR-289).
 const HINT: &str = "double click here";
 /// The point size of that text, smaller than the 11 of the name.
 const HINT_POINT_SIZE: u32 = 7;
 
-// realises FR-075, FR-076, FR-273, FR-274, FR-276, IR-021, NFR-006
-/// Derives the DOT text of the *network graph* of `nodes`, in the fills of an *active network*
-/// where `active` holds and in those of a network that is not active otherwise.
+// realises FR-076, FR-088, FR-289, FR-290, FR-291
+/// The role of a file of the network: what its vertex is and what a double-click on it opens.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FileRole {
+    /// a *source input*, which no *node* produces; `meta_dsl` says that a *node* has it as its
+    /// *meta compiler DSL*, on which an *editor window* edits it as such
+    SourceInput { meta_dsl: bool },
+    /// a *sink output*, which the *node* named produces and no *node* consumes
+    SinkOutput { producer: String },
+    /// the file of a *connection*: produced by one *node* and consumed by another
+    Connection,
+}
+
+// realises FR-075, FR-076, FR-289, FR-290, FR-291
+/// One file of the network as the graph shows it: the vertex `f<index>` of its index.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GraphFile {
+    /// the path as the *node descriptions* carry it, the *document identifier*
+    pub identifier: String,
+    /// what the file is to the network
+    pub role: FileRole,
+}
+
+// realises FR-075, FR-076, FR-289, FR-290, FR-291
+/// Yields the files of the network of `nodes`, in the order of the vertices `f<index>`: every
+/// distinct path in the order of its first use, the *meta compiler DSL* of a
+/// *meta compiler-compiler* being the first path of its *node*, each with its role.
+///
+/// * A path no *node* produces is a *source input*, told whether a *node* has it as its
+///   *meta compiler DSL*; a path a *node* produces and none consumes is a *sink output*, with
+///   its first *producer*; a path produced and consumed is the file of a *connection*.
+pub fn files_of_network(nodes: &[NodeDescription]) -> Vec<GraphFile> {
+    let mut paths: Vec<&str> = Vec::new();
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
+    let mut meta_dsls: BTreeSet<&str> = BTreeSet::new();
+    let mut consumed: BTreeSet<&str> = BTreeSet::new();
+    let mut producers: BTreeMap<&str, &str> = BTreeMap::new();
+    for node in nodes {
+        if node.kind == NodeKind::MetaCompilerCompiler {
+            meta_dsls.insert(node.transformation.as_str());
+        }
+        consumed.extend(paths_consumed_by(node).map(String::as_str));
+        for output in &node.outputs {
+            producers
+                .entry(output.as_str())
+                .or_insert(node.name.as_str());
+        }
+        for path in paths_consumed_by(node).chain(node.outputs.iter()) {
+            if seen.insert(path.as_str()) {
+                paths.push(path.as_str());
+            }
+        }
+    }
+    paths
+        .into_iter()
+        .map(|path| GraphFile {
+            identifier: path.to_owned(),
+            role: match (producers.get(path), consumed.contains(path)) {
+                (None, _) => FileRole::SourceInput {
+                    meta_dsl: meta_dsls.contains(path),
+                },
+                (Some(producer), false) => FileRole::SinkOutput {
+                    producer: (*producer).to_owned(),
+                },
+                (Some(_), true) => FileRole::Connection,
+            },
+        })
+        .collect()
+}
+
+/// Yields the HTML-like label of a vertex: the text `double click here` at `HINT_POINT_SIZE`,
+/// aligned left, in `hint_colour`, above `text`, which is escaped.
+fn hinted_label(text: &str, hint_colour: &str) -> String {
+    format!(
+        "<<TABLE BORDER=\"0\" CELLBORDER=\"0\" CELLSPACING=\"0\" CELLPADDING=\"1\">\
+         <TR><TD ALIGN=\"LEFT\"><FONT POINT-SIZE=\"{HINT_POINT_SIZE}\" COLOR=\"{hint_colour}\">{HINT}</FONT></TD></TR>\
+         <TR><TD>{}</TD></TR></TABLE>>",
+        html_escaped(text)
+    )
+}
+
+// realises FR-075, FR-076, FR-273, FR-274, FR-276, FR-289, IR-021, NFR-006
+/// Derives the DOT text of the *network graph* of `nodes`, in the colours of a network that
+/// serves *nodes*, a *valid network* or an *active network*, where `served` holds, and in those
+/// of an *invalid network* otherwise.
 ///
 /// * A *node* is the vertex `n<index>`, a box: a *meta compiler-compiler* carries its name alone,
-///   a *proxy node* its name and its tool chain. In an *active network* the box of a
-///   *meta compiler-compiler* is light blue and that of a *proxy node* wheat; otherwise both are
-///   light grey (FR-273).
-/// * The label of a *meta compiler-compiler* is an HTML-like label: the text `double click here`
-///   in a smaller font, aligned left, above the name. The text is drawn in the colour of the fill
-///   where the network is not active, so that it is not seen there and the two layouts are
-///   identical (FR-274); a point of either image therefore lies in the same vertex.
-/// * A distinct path is the vertex `f<index>`, in the order of its first use, the
-///   *meta compiler DSL* of a *meta compiler-compiler* being the first path of its *node* and an
-///   *input* of it: a *source input* is a note, a *sink output* a filled note, the file of a
-///   *connection* an ellipse, in both modes.
+///   a *proxy node* its name and its tool chain. Every vertex is filled by its kind, in the first
+///   colour of its pair where `served` holds and in the second, the same hue at a tenth of its
+///   saturation and dimmed, otherwise (FR-076, FR-273).
+/// * The label of a *meta compiler-compiler*, of a *source input* and of a *sink output* is an
+///   HTML-like label: the text `double click here` in a smaller font, aligned left, above the
+///   name or the path. On a file the text is black in both images; on a *meta compiler-compiler*
+///   it is black where `served` holds and drawn in the colour of the fill otherwise, so that it
+///   is not seen there and the two layouts are identical (FR-274, FR-289); a point of either
+///   image therefore lies in the same vertex.
+/// * A distinct path is the vertex `f<index>`, in the order of [`files_of_network`]: a
+///   *source input* and a *sink output* are filled notes, the file of a *connection* a filled
+///   ellipse, in both images.
 /// * Every edge names its ports (FR-276): the edge of an *input* enters the box at its west
 ///   side, the edge of an *output* leaves it at its east side, and the edge of the
 ///   *meta compiler DSL* enters it at its south side. A *meta compiler DSL* no *node* produces
@@ -229,59 +318,66 @@ const HINT_POINT_SIZE: u32 = 7;
 ///   south side.
 /// * The graph runs from left to right, has no padding, so that the image has the size of the
 ///   layout, and has the resolution [`IMAGE_DPI`].
-pub fn dot_of_network(nodes: &[NodeDescription], active: bool) -> String {
-    let mut indices: BTreeMap<&str, usize> = BTreeMap::new();
-    let mut paths: Vec<&str> = Vec::new();
-    let mut produced: BTreeSet<&str> = BTreeSet::new();
-    let mut consumed: BTreeSet<&str> = BTreeSet::new();
-    for node in nodes {
-        consumed.extend(paths_consumed_by(node).map(String::as_str));
-        produced.extend(node.outputs.iter().map(String::as_str));
-        for path in paths_consumed_by(node).chain(node.outputs.iter()) {
-            if !indices.contains_key(path.as_str()) {
-                indices.insert(path.as_str(), paths.len());
-                paths.push(path.as_str());
-            }
-        }
-    }
+pub fn dot_of_network(nodes: &[NodeDescription], served: bool) -> String {
+    let files = files_of_network(nodes);
+    let indices: BTreeMap<&str, usize> = files
+        .iter()
+        .enumerate()
+        .map(|(index, file)| (file.identifier.as_str(), index))
+        .collect();
+    let produced: BTreeSet<&str> = files
+        .iter()
+        .filter(|file| !matches!(file.role, FileRole::SourceInput { .. }))
+        .map(|file| file.identifier.as_str())
+        .collect();
+    let colour_of = |fills: (&'static str, &'static str)| if served { fills.0 } else { fills.1 };
     let mut dot =
         String::from("digraph network {\n    node [fontname=\"Helvetica\", fontsize=11];\n");
     dot.push_str(&format!(
         "    graph [rankdir=LR, pad=0, dpi={IMAGE_DPI}];\n"
     ));
     for (index, node) in nodes.iter().enumerate() {
-        let fill = match (node.kind, active) {
-            (NodeKind::MetaCompilerCompiler, true) => META_COMPILER_COMPILER_FILL,
-            (NodeKind::ProxyNode, true) => PROXY_NODE_FILL,
-            (_, false) => INACTIVE_FILL,
-        };
-        let label = match node.kind {
-            NodeKind::MetaCompilerCompiler => format!(
-                "<<TABLE BORDER=\"0\" CELLBORDER=\"0\" CELLSPACING=\"0\" CELLPADDING=\"1\">\
-                 <TR><TD ALIGN=\"LEFT\"><FONT POINT-SIZE=\"{HINT_POINT_SIZE}\" COLOR=\"{}\">{HINT}</FONT></TD></TR>\
-                 <TR><TD>{}</TD></TR></TABLE>>",
-                if active { "black" } else { fill },
-                html_escaped(&node.name)
-            ),
-            NodeKind::ProxyNode => format!(
-                "\"{}\\n{}\"",
-                escaped(&node.name),
-                escaped(&node.transformation)
+        let (fill, label) = match node.kind {
+            NodeKind::MetaCompilerCompiler => {
+                let fill = colour_of(META_COMPILER_COMPILER_FILLS);
+                (
+                    fill,
+                    hinted_label(&node.name, if served { "black" } else { fill }),
+                )
+            }
+            NodeKind::ProxyNode => (
+                colour_of(PROXY_NODE_FILLS),
+                format!(
+                    "\"{}\\n{}\"",
+                    escaped(&node.name),
+                    escaped(&node.transformation)
+                ),
             ),
         };
         dot.push_str(&format!(
-            "    n{index} [label={label}, shape=box, style=filled, fillcolor={fill}];\n"
+            "    n{index} [label={label}, shape=box, style=filled, fillcolor=\"{fill}\"];\n"
         ));
     }
-    for (index, path) in paths.iter().enumerate() {
-        let attributes = match (produced.contains(path), consumed.contains(path)) {
-            (false, _) => "shape=note".to_owned(),
-            (true, false) => format!("shape=note, style=filled, fillcolor={SINK_OUTPUT_FILL}"),
-            (true, true) => "shape=ellipse".to_owned(),
+    for (index, file) in files.iter().enumerate() {
+        let (label, shape, fill) = match &file.role {
+            FileRole::SourceInput { .. } => (
+                hinted_label(&file.identifier, "black"),
+                "note",
+                colour_of(SOURCE_INPUT_FILLS),
+            ),
+            FileRole::SinkOutput { .. } => (
+                hinted_label(&file.identifier, "black"),
+                "note",
+                colour_of(SINK_OUTPUT_FILLS),
+            ),
+            FileRole::Connection => (
+                format!("\"{}\"", escaped(&file.identifier)),
+                "ellipse",
+                colour_of(CONNECTION_FILLS),
+            ),
         };
         dot.push_str(&format!(
-            "    f{index} [label=\"{}\", {attributes}];\n",
-            escaped(path)
+            "    f{index} [label={label}, shape={shape}, style=filled, fillcolor=\"{fill}\"];\n"
         ));
     }
     let mut placed: BTreeSet<&str> = BTreeSet::new();
@@ -318,6 +414,13 @@ pub fn dot_of_network(nodes: &[NodeDescription], active: bool) -> String {
 /// Yields the index of the *node* a vertex identifier names, `None` for the vertex of a file.
 pub fn node_index_of_vertex(identifier: &str) -> Option<usize> {
     identifier.strip_prefix('n')?.parse().ok()
+}
+
+// realises FR-088, FR-290, FR-291
+/// Yields the index of the file a vertex identifier names, among the files of
+/// [`files_of_network`], `None` for the vertex of a *node*.
+pub fn file_index_of_vertex(identifier: &str) -> Option<usize> {
+    identifier.strip_prefix('f')?.parse().ok()
 }
 
 // realises FR-086, FR-087, FR-088, FR-102, FR-103, FR-238
@@ -456,7 +559,8 @@ fn html_escaped(text: &str) -> String {
  * independence     : ✅
  * edge cases       : ✅
  * conforms to doc  : ✅
- * covers bridge    : NetworkEditor::report_arrived, NetworkEditor::open_node_at, NodeEditor::open_node */
+ * covers bridge    : NetworkEditor::report_arrived, NetworkEditor::open_node_at,
+ *                    NetworkEditor::open_file, NodeEditor::open_node */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -544,28 +648,53 @@ mod tests {
     }
 
     #[test]
-    fn source_input_sink_output_and_connection_differ_in_shape_or_fill() {
+    fn source_input_sink_output_and_connection_differ_in_shape_and_fill() {
+        // FR-076: f0 is the meta compiler DSL a.gc3, which no node produces: a source input
         let dot = dot_of_network(&two_stages(), true);
-        let attributes = |identifier: &str| {
-            dot.lines()
-                .find(|line| line.trim_start().starts_with(&format!("{identifier} [")))
-                .map(|line| line.split("\", ").nth(1).unwrap_or_default().to_owned())
-        };
-        // f0 is the meta compiler DSL a.gc3, which no node produces: a source input (FR-076)
         assert_eq!(
             (
-                attributes("f0"),
-                attributes("f1"),
-                attributes("f2"),
-                attributes("f3")
+                attributes_of(&dot, "f0"),
+                attributes_of(&dot, "f1"),
+                attributes_of(&dot, "f2"),
+                attributes_of(&dot, "f3")
             ),
             (
-                Some("shape=note];".to_owned()),
-                Some("shape=note];".to_owned()),
-                Some("shape=ellipse];".to_owned()),
-                Some("shape=note, style=filled, fillcolor=palegreen];".to_owned())
+                "shape=note, style=filled, fillcolor=\"#ebcbb0\"];".to_owned(),
+                "shape=note, style=filled, fillcolor=\"#ebcbb0\"];".to_owned(),
+                "shape=ellipse, style=filled, fillcolor=\"#ffffff\"];".to_owned(),
+                "shape=note, style=filled, fillcolor=\"#b0ebb0\"];".to_owned()
             )
         );
+    }
+
+    #[test]
+    fn files_of_the_network_carry_their_roles_in_the_order_of_the_vertices() {
+        // FR-076, FR-290, FR-291: a.gc3 is a meta compiler DSL no node produces, a.in a source
+        // input, x.txt the file of a connection produced by a, y.txt the sink output of b
+        let files = files_of_network(&two_stages());
+        let roles: Vec<(&str, FileRole)> = files
+            .iter()
+            .map(|file| (file.identifier.as_str(), file.role.clone()))
+            .collect();
+        assert_eq!(
+            roles,
+            vec![
+                ("a.gc3", FileRole::SourceInput { meta_dsl: true }),
+                ("a.in", FileRole::SourceInput { meta_dsl: false }),
+                ("x.txt", FileRole::Connection),
+                (
+                    "y.txt",
+                    FileRole::SinkOutput {
+                        producer: "b".to_owned()
+                    }
+                )
+            ]
+        );
+    }
+
+    #[test]
+    fn network_without_nodes_has_no_files() {
+        assert_eq!(files_of_network(&[]), vec![]);
     }
 
     #[test]
@@ -613,7 +742,7 @@ mod tests {
         assert_eq!(
             (attributes_of(&dot, "f2"), edges),
             (
-                "shape=ellipse];".to_owned(),
+                "shape=ellipse, style=filled, fillcolor=\"#ffffff\"];".to_owned(),
                 vec![
                     "n0 -> f0 [dir=back, tailport=s, headport=n];",
                     "f1 -> n0 [headport=w];",
@@ -636,49 +765,86 @@ mod tests {
     }
 
     #[test]
-    fn nodes_are_filled_by_kind_in_an_active_network_and_grey_otherwise() {
-        // FR-076, FR-273
-        let active = dot_of_network(&two_stages(), true);
-        let inactive = dot_of_network(&two_stages(), false);
+    fn vertices_are_filled_by_kind_and_dimmed_in_an_invalid_network() {
+        // FR-076, FR-273: the same hues at a tenth of their saturation, dimmed to four fifths
+        let served = dot_of_network(&two_stages(), true);
+        let invalid = dot_of_network(&two_stages(), false);
         assert_eq!(
             (
-                attributes_of(&active, "n0"),
-                attributes_of(&active, "n1"),
-                attributes_of(&inactive, "n0"),
-                attributes_of(&inactive, "n1"),
-                attributes_of(&inactive, "f3")
+                attributes_of(&served, "n0"),
+                attributes_of(&served, "n1"),
+                attributes_of(&invalid, "n0"),
+                attributes_of(&invalid, "n1"),
+                attributes_of(&invalid, "f0"),
+                attributes_of(&invalid, "f2"),
+                attributes_of(&invalid, "f3")
             ),
             (
-                "shape=box, style=filled, fillcolor=lightblue];".to_owned(),
-                "shape=box, style=filled, fillcolor=wheat];".to_owned(),
-                "shape=box, style=filled, fillcolor=lightgrey];".to_owned(),
-                "shape=box, style=filled, fillcolor=lightgrey];".to_owned(),
-                "shape=note, style=filled, fillcolor=palegreen];".to_owned()
+                "shape=box, style=filled, fillcolor=\"#b0c3eb\"];".to_owned(),
+                "shape=box, style=filled, fillcolor=\"#ebebb0\"];".to_owned(),
+                "shape=box, style=filled, fillcolor=\"#a9afbc\"];".to_owned(),
+                "shape=box, style=filled, fillcolor=\"#bcbca9\"];".to_owned(),
+                "shape=note, style=filled, fillcolor=\"#bcb2a9\"];".to_owned(),
+                "shape=ellipse, style=filled, fillcolor=\"#cccccc\"];".to_owned(),
+                "shape=note, style=filled, fillcolor=\"#a9bca9\"];".to_owned()
+            )
+        );
+    }
+
+    /// Yields the colour and the text of the hint of the vertex `identifier` of `dot`.
+    fn hint_of(dot: &str, identifier: &str) -> Option<String> {
+        dot.lines()
+            .find(|line| line.trim_start().starts_with(&format!("{identifier} [")))
+            .and_then(|line| line.split("COLOR=\"").nth(1))
+            .and_then(|rest| rest.split("</FONT>").next())
+            .map(str::to_owned)
+    }
+
+    #[test]
+    fn hint_of_a_node_is_black_while_nodes_are_served_and_in_the_fill_colour_otherwise() {
+        // FR-274, FR-273: the text is in both labels, so that the layouts are identical; a proxy
+        // node carries none
+        let served = dot_of_network(&two_stages(), true);
+        let invalid = dot_of_network(&two_stages(), false);
+        assert_eq!(
+            (
+                hint_of(&served, "n0"),
+                hint_of(&invalid, "n0"),
+                served.contains("n1 [label=\""),
+                hint_of(&served, "n1")
+            ),
+            (
+                Some("black\">double click here".to_owned()),
+                Some("#a9afbc\">double click here".to_owned()),
+                true,
+                None
             )
         );
     }
 
     #[test]
-    fn hint_is_black_in_an_active_network_and_in_the_fill_colour_otherwise() {
-        // FR-274, FR-273: the text is in both labels, so that the layouts are identical
-        let active = dot_of_network(&two_stages(), true);
-        let inactive = dot_of_network(&two_stages(), false);
-        let hint = |dot: &str| {
-            dot.lines()
-                .find(|line| line.trim_start().starts_with("n0 ["))
-                .and_then(|line| line.split("COLOR=\"").nth(1))
-                .and_then(|rest| rest.split("</FONT>").next())
-                .map(str::to_owned)
-        };
+    fn hint_of_a_source_input_and_of_a_sink_output_is_black_in_both_images() {
+        // FR-289: the file of a connection carries none
+        let served = dot_of_network(&two_stages(), true);
+        let invalid = dot_of_network(&two_stages(), false);
+        let black = Some("black\">double click here".to_owned());
         assert_eq!(
             (
-                hint(&active),
-                hint(&inactive),
-                active.contains("n1 [label=\"")
+                hint_of(&served, "f0"),
+                hint_of(&served, "f1"),
+                hint_of(&served, "f3"),
+                hint_of(&invalid, "f1"),
+                hint_of(&invalid, "f3"),
+                hint_of(&served, "f2"),
+                served.contains("f2 [label=\"x.txt\"")
             ),
             (
-                Some("black\">double click here".to_owned()),
-                Some("lightgrey\">double click here".to_owned()),
+                black.clone(),
+                black.clone(),
+                black.clone(),
+                black.clone(),
+                black,
+                None,
                 true
             )
         );
@@ -695,7 +861,9 @@ mod tests {
             )],
             true,
         );
-        assert!(dot.contains("label=\"a \\\"b\\\"\\\\c\""));
+        // the path is an input of a: a source input, whose label is HTML-like, so that the quotes
+        // are entities and the backslash stands as it is
+        assert!(dot.contains("<TD>a &quot;b&quot;\\c</TD>"));
     }
 
     #[test]
@@ -777,6 +945,15 @@ mod tests {
         assert_eq!(
             (node_index_of_vertex("n12"), node_index_of_vertex("f3")),
             (Some(12), None)
+        );
+    }
+
+    #[test]
+    fn vertex_of_a_file_names_its_index_and_vertex_of_a_node_names_none() {
+        // FR-290, FR-291
+        assert_eq!(
+            (file_index_of_vertex("f3"), file_index_of_vertex("n12")),
+            (Some(3), None)
         );
     }
 

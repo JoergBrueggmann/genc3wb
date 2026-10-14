@@ -617,6 +617,39 @@ impl<S: Connection> Conversation<S> {
         }
     }
 
+    // realises FR-281, FR-286
+    /// Transmits a *hold request* naming `node` and awaits its acknowledged response, which the
+    /// *build system* transmits once the *node* it started has told its *node mode*, or at once
+    /// where the *node* runs (\[AD3\] IR-198, IR-199).
+    ///
+    /// # Errors
+    /// Returns [`BuildError::Refused`] where the *build system* answers with an error response,
+    /// in an *invalid network* or for a *node* the gc3n document does not state
+    /// (\[AD3\] IR-200), [`BuildError::Connection`] where the stream fails, and
+    /// [`BuildError::Protocol`] where a *message* is not decoded or has an unexpected kind.
+    pub fn hold(&mut self, node: &str) -> Result<(), BuildError> {
+        let hold = Request::Hold {
+            node: node.to_owned(),
+        };
+        acknowledged(self.exchange(&hold)?, "the hold request")
+    }
+
+    // realises FR-282, FR-287
+    /// Transmits a *release request* naming `node` and awaits its acknowledged response, which
+    /// the *build system* transmits once the *node* has ended, or at once (\[AD3\] IR-201,
+    /// IR-202).
+    ///
+    /// # Errors
+    /// Returns [`BuildError::Refused`] where the *build system* answers with an error response,
+    /// [`BuildError::Connection`] where the stream fails, and [`BuildError::Protocol`] where a
+    /// *message* is not decoded or has an unexpected kind.
+    pub fn release(&mut self, node: &str) -> Result<(), BuildError> {
+        let release = Request::Release {
+            node: node.to_owned(),
+        };
+        acknowledged(self.exchange(&release)?, "the release request")
+    }
+
     // realises FR-228, FR-230
     /// Transmits a *watch request* and awaits nothing: its *state responses* are no
     /// *terminal responses*, the first follows at once and a further one whenever the state
@@ -974,6 +1007,28 @@ impl BuildSession {
         self.conversation.deactivate()
     }
 
+    // realises FR-281, FR-286
+    /// Transmits a *hold request* naming `node` to the *build system*, which starts and serves
+    /// the *node* in a *valid network* and marks it in an *active network* (\[AD3\] IR-196 to
+    /// IR-199), as [`Conversation::hold`].
+    ///
+    /// # Errors
+    /// Returns what [`Conversation::hold`] returns.
+    pub fn hold(&mut self, node: &str) -> Result<(), BuildError> {
+        self.conversation.hold(node)
+    }
+
+    // realises FR-282, FR-287
+    /// Transmits a *release request* naming `node` to the *build system*, which ends the *node*
+    /// in a *valid network* where no other client holds it (\[AD3\] IR-201, IR-202), as
+    /// [`Conversation::release`].
+    ///
+    /// # Errors
+    /// Returns what [`Conversation::release`] returns.
+    pub fn release(&mut self, node: &str) -> Result<(), BuildError> {
+        self.conversation.release(node)
+    }
+
     // realises FR-068
     /// Transmits a *shutdown request* and waits for the process to end; ends it where it does not.
     ///
@@ -1086,6 +1141,23 @@ fn absolute_program(executable: &str) -> PathBuf {
         return path.to_path_buf();
     }
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// Yields `Ok(())` where `response` is the acknowledged response, [`BuildError::Refused`] with
+/// its message text where it is an error response, and [`BuildError::Protocol`] for any other
+/// *terminal response* to `request`.
+fn acknowledged(response: Response, request: &str) -> Result<(), BuildError> {
+    match response {
+        Response::Acknowledged => Ok(()),
+        Response::Error(text) => Err(BuildError::Refused(text)),
+        Response::Diagnostics { .. }
+        | Response::VersionMismatch { .. }
+        | Response::Network { .. }
+        | Response::State { .. }
+        | Response::Content { .. }
+        | Response::Cancelled
+        | Response::Other(_) => Err(unexpected(request)),
+    }
 }
 
 /// Yields the error of a *response* whose kind does not answer `request`.
@@ -1961,6 +2033,48 @@ mod tests {
             Err(BuildError::Refused(
                 "the network could not be deactivated".to_owned()
             ))
+        );
+    }
+
+    #[test]
+    fn hold_and_release_requests_are_acknowledged_refused_or_a_protocol_error() {
+        // FR-281, FR-282, FR-286, FR-287, [AD3] IR-198 to IR-202
+        let mut acknowledged = Conversation::new(Scripted::answering(&[
+            (1, Response::Acknowledged),
+            (2, Response::Acknowledged),
+        ]));
+        let held = (acknowledged.hold("a"), acknowledged.release("a"));
+        let mut refused = Conversation::new(Scripted::answering(&[
+            (
+                1,
+                Response::Error("n.gc3n: the network is invalid".to_owned()),
+            ),
+            (
+                2,
+                Response::Error("node z: the network does not state it".to_owned()),
+            ),
+        ]));
+        let refusals = (refused.hold("a"), refused.release("z"));
+        let mut unexpected =
+            Conversation::new(Scripted::answering(&[(1, network(0)), (2, network(0))]));
+        let protocol = (
+            matches!(unexpected.hold("a"), Err(BuildError::Protocol(_))),
+            matches!(unexpected.release("a"), Err(BuildError::Protocol(_))),
+        );
+        assert_eq!(
+            (held, refusals, protocol),
+            (
+                (Ok(()), Ok(())),
+                (
+                    Err(BuildError::Refused(
+                        "n.gc3n: the network is invalid".to_owned()
+                    )),
+                    Err(BuildError::Refused(
+                        "node z: the network does not state it".to_owned()
+                    ))
+                ),
+                (true, true)
+            )
         );
     }
 
