@@ -19,7 +19,7 @@ use crate::core::octet_view::text_of_octets;
 use crate::core::output::file_octets;
 use crate::core::text_increment::TextIncrement;
 
-use qtbridge::{QObjectHolder, QmlMethodInvoker, invoke_method, qobject};
+use qtbridge::{QmlMethodInvoker, QmlObject, invoke_method, qobject};
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, VecDeque};

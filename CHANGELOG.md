@@ -11,6 +11,19 @@ and this project adheres to a four-part version number.
 
 At the moment, nothing unreleased here.
 
+## [0.26.1.0] - 2026-10-14
+
+**_Bridged_types_kept_across_a_garbage_collection_**
+
+Leading work item: guidelines 0.12.1.0 (AIAgentQtRust)
+
+- Fix the *software problem report* '**_Node_window_opens_without_its_file_paths_and_text_**', decided by the product owner on 2026-10-14 (alternative c): a *node window* or an *editor window* opened after another was closed showed no path and no text, since the QML engine had deleted the `QObject` of the *node editor* or *input group* the slot handed it in a garbage collection, `qtbridge` 0.2.0 leaving a Rust-created `QObject` a method returns to the engine.
+- Build against `qtbridge` 0.3.0 in 'Cargo.toml' and 'Cargo.lock', whose registry pins every Rust-created `QObject` to C++ ownership while Rust holds it; rename the trait `QObjectHolder` to `QmlObject` in the *bridge*, which is all the upgrade changes in the code; raise the crates of `cxx` to 1.0.205 in 'Cargo.lock', since 1.0.200 left the C++ side of `cxx-qt-lib` out of the link.
+- Add the integration test 'tests/network_editor.rs', ignored by default since it needs a Qt platform: it runs the QML engine offscreen against the *bridge*, takes the *node editor*, its *input groups* and an *input group* of an *editor window* by the slots, drops them, calls `gc()`, and finds every one still attached and reachable.
+- Raise the version in 'Cargo.toml' to 0.26.1.
+- A corrected fault: a patch bump.
+
+
 ## [0.26.0.0] - 2026-10-14
 
 **_Colours_of_the_network_graph_and_editor_windows_on_its_files_**

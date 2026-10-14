@@ -12,7 +12,7 @@ use crate::core::octet_view::{EditorMode, row_count, row_segments, row_text_of_b
 use crate::core::settings::SettingsStore;
 use crate::core::text_increment::{IncrementTracker, TextIncrement};
 
-use qtbridge::{QObjectHolder, QmlMethodInvoker, invoke_method, qobject};
+use qtbridge::{QmlMethodInvoker, QmlObject, invoke_method, qobject};
 
 use std::cell::RefCell;
 use std::io::Write;

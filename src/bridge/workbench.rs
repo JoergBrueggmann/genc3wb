@@ -12,7 +12,7 @@ use crate::core::key_stroke::KeyStroke;
 use crate::core::settings::{Settings, SettingsStore, tab_size_violation, times_of_processing};
 use crate::core::version::version_of_package;
 
-use qtbridge::{QObjectHolder, qobject};
+use qtbridge::{QmlObject, qobject};
 
 use std::cell::RefCell;
 use std::rc::Rc;

@@ -3,7 +3,7 @@
 
 [package]
 name = "genc3wb"
-version = "0.26.0"
+version = "0.26.1"
 edition = "2024"
 description = "The workbench of the meta compiler-compiler genc³: edits a compiler network and the files of its nodes, lets the build system serve them, and presents their outputs."
 
@@ -16,7 +16,7 @@ name = "genc3wb"
 path = "src/main.rs"
 
 [dependencies]
-qtbridge = "0.2"
+qtbridge = "0.3"
 ciborium = "0.2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_norway = "0.9.42"
