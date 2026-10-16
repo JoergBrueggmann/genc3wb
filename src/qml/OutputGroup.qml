@@ -1,5 +1,5 @@
-// The output group: navigation, page label, detach button, the output pages with their mode switch and
-// their mark of an outdated file, and the diagnostics page with the icons of the origins, which is presented
+// The output group: navigation, page label, the output pages with their mode switch, their mark of an outdated
+// file and their detach button, and the diagnostics page with the icons of the origins, which is presented
 // while diagnostics or origins appear.
 //
 // Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
@@ -19,9 +19,6 @@ GroupBox {
     id: root
 
     required property var output
-    property bool detachable: true
-
-    signal detachRequested()
 
     title: qsTr("Outputs")
     padding: 8
@@ -59,14 +56,6 @@ GroupBox {
 
             Item {
                 Layout.fillWidth: true
-            }
-
-            ToolButton {
-                id: detachButton
-
-                text: "⧉"
-                visible: root.detachable
-                onClicked: root.detachRequested()
             }
         }
 
@@ -113,6 +102,15 @@ GroupBox {
                         id: modeSwitch
 
                         documentIsText: root.output.isText
+                    }
+
+                    // the detach button of the output page: opens the editor window of the output
+                    // presented (FR-045, FR-299)
+                    ToolButton {
+                        id: detachButton
+
+                        text: "⧉"
+                        onClicked: Workbench.network.openFileNamed(root.output.filePath)
                     }
                 }
 

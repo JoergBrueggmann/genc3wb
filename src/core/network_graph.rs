@@ -464,6 +464,29 @@ pub fn files_of_node(node: &NodeDescription, nodes: &[NodeDescription]) -> Optio
     }
 }
 
+// realises FR-294, FR-295, FR-298
+/// Yields the names of the *meta compiler-compilers* an *editor window* on `file` holds: for a
+/// *source input* every one of `nodes` that has the file as an *input* or as its
+/// *meta compiler DSL*, in the order of `nodes`; for a *sink output* and for the file of a
+/// *connection* the first of `nodes` that has it as an *output*, the *producer*; a *proxy node*
+/// never.
+pub fn nodes_of_file(file: &GraphFile, nodes: &[NodeDescription]) -> Vec<String> {
+    let compilers = nodes
+        .iter()
+        .filter(|node| node.kind == NodeKind::MetaCompilerCompiler);
+    match file.role {
+        FileRole::SourceInput { .. } => compilers
+            .filter(|node| paths_consumed_by(node).any(|path| *path == file.identifier))
+            .map(|node| node.name.clone())
+            .collect(),
+        FileRole::SinkOutput { .. } | FileRole::Connection => compilers
+            .filter(|node| node.outputs.contains(&file.identifier))
+            .map(|node| node.name.clone())
+            .take(1)
+            .collect(),
+    }
+}
+
 // realises FR-086, FR-087, FR-102
 /// Yields the path of a file of a *node*: `identifier` resolved against `network_directory`, the
 /// directory of the *network file*.
@@ -695,6 +718,34 @@ mod tests {
     #[test]
     fn network_without_nodes_has_no_files() {
         assert_eq!(files_of_network(&[]), vec![]);
+    }
+
+    #[test]
+    fn source_input_is_held_by_every_compiler_that_consumes_it_and_a_produced_file_by_its_producer()
+    {
+        // FR-294, FR-295, FR-298: in.txt is read by a and by c, the meta compiler DSL c.gc3 by c
+        // alone, x.txt is produced by a and consumed by the proxy node b, y.txt produced by b
+        let nodes = vec![
+            node("a", NodeKind::MetaCompilerCompiler, &["in.txt"], &["x.txt"]),
+            node("b", NodeKind::ProxyNode, &["x.txt", "in.txt"], &["y.txt"]),
+            node("c", NodeKind::MetaCompilerCompiler, &["in.txt"], &["z.txt"]),
+        ];
+        let files = files_of_network(&nodes);
+        let held: Vec<(&str, Vec<String>)> = files
+            .iter()
+            .map(|file| (file.identifier.as_str(), nodes_of_file(file, &nodes)))
+            .collect();
+        assert_eq!(
+            held,
+            vec![
+                ("a.gc3", vec!["a".to_owned()]),
+                ("in.txt", vec!["a".to_owned(), "c".to_owned()]),
+                ("x.txt", vec!["a".to_owned()]),
+                ("y.txt", vec![]),
+                ("c.gc3", vec!["c".to_owned()]),
+                ("z.txt", vec!["c".to_owned()]),
+            ]
+        );
     }
 
     #[test]

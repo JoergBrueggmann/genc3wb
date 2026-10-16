@@ -11,6 +11,27 @@ and this project adheres to a four-part version number.
 
 At the moment, nothing unreleased here.
 
+## [0.27.0.1] - 2026-10-16
+
+**_README_aligned_with_the_marketing_of_genc³_**
+
+- Introduce genc³wb in 'README.md' as the workbench of genc³, in the wording of the messaging kit of the marketing of genc³, link the website sw4sd.com, its About page, the news post of 2026-10-04 and the contact form, and add the section 'Status': the source public under GPLv3, `genc3d` released internally and available to design partners, macOS today and Linux and Windows planned, the notation changeable before 1.0, the LSP adapter and AI assistance planned; keep the technical description under the headings 'What the workbench does' and 'Built with', since 'make-dist.sh' ships it. Requested by the product owner on 2026-10-15.
+- Raise the version in 'Cargo.toml' and 'Cargo.lock' to 0.27.0+1, which the test of the version holds to the topmost version heading of 'CHANGELOG.md'.
+- Changes nothing of what the project folder delivers: a build bump.
+
+## [0.27.0.0] - 2026-10-14
+
+**_Editor_windows_serve_their_nodes_and_one_editor_per_file_**
+
+Leading work item: definition 0.23.0.0
+
+- Engineer the *change request* '**_Editor_windows_serve_their_nodes_and_one_editor_per_file_**', decided by the product owner on 2026-10-14, as genc³wb definition 0.23.0.0 designs it: the network editor holds the *nodes* of every file an *editor window* presents by *hold requests*, serving each through a *node editor* that presents no window, so that the edits of a *source input* reach every *node* that has it and an *editor window* on a file a *node* produces shows what the *producer* holds; a *node window* closed leaves a *node* an *editor window* holds served, and an *editor window* closed releases the *nodes* no other window holds; the marks of the *diagnostics* of a served *node* reach the *editor windows* on its files by `markFile` and `markFileOctets`, resent by `resendMarks` when such a window opens.
+- Open the *editor window* of a file from the detach button of an *input group* and from the detach button of an *output page*, by the slot `openFileNamed`, in place of the *detached windows*; remove OutputWindow.qml and the models of the *detached windows* of NodeWindow.qml; the detach button of the output group moves to the *output page*.
+- Open an *editor window* on the file of a *connection* by a double-click on its vertex, read-only, showing what its *producer* holds while the *producer* is served.
+- Test `nodes_of_file` and the slots of the network editor; add the integration test 'tests/editor_windows.rs' against `genc3d`, which edits a *source input* in its *editor window* and finds the content in the *editor window* of the *sink output* with no *node window* open.
+- Describe the editor windows and the detach buttons in 'README.md'; raise the version in 'Cargo.toml' to 0.27.0.
+- A new capability: a minor bump.
+
 ## [0.26.1.0] - 2026-10-14
 
 **_Bridged_types_kept_across_a_garbage_collection_**

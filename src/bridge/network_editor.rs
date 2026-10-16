@@ -13,7 +13,7 @@ use crate::core::input_file::InputKind;
 use crate::core::network_builder::{BuildOutcome, BuiltGraph, NetworkBuilder, StateSinks};
 use crate::core::network_graph::{
     FileRole, GraphFile, GraphLayout, file_index_of_vertex, files_of_node, node_index_of_vertex,
-    path_of_identifier,
+    nodes_of_file, path_of_identifier,
 };
 use crate::core::node_state::{NodeStates, StoreGate};
 use crate::core::output::file_octets;
@@ -100,31 +100,49 @@ enum Report {
     Stopped,
 }
 
-// realises FR-001, FR-085
-/// One *node editor* of the network editor with its invoker and the name of its *node*, empty
-/// while no *node window* is bound to it.
+// realises FR-001, FR-085, FR-296, FR-297
+/// One *node editor* of the network editor with its invoker, the name of its *node*, empty while
+/// the editor is free, and whether a *node window* is presented for it; the editor is named
+/// while a *node window* or an *editor window* holds the *node*.
 struct NodeSlot {
-    /// the name of the *node* the editor presents, empty where the editor is free
+    /// the name of the *node* the editor serves, empty where the editor is free
     name: String,
+    /// whether a *node window* is bound to the editor; false for a *node* that *editor windows*
+    /// alone hold
+    window: bool,
     /// the *node editor*
     editor: Rc<RefCell<NodeEditor>>,
     /// its invoker, by which the network editor reaches it
     invoker: QmlMethodInvoker,
 }
 
-// realises FR-290 to FR-293
+// realises FR-290 to FR-298
 /// One *input group* of an *editor window* with its invoker, the path of its file, empty while no
-/// *editor window* is bound to it, and the name of the *producer* of a *sink output*, empty for a
-/// *source input*.
+/// *editor window* is bound to it, the name of the *producer* of a file a *node* produces, empty
+/// for a *source input*, and the names of the *nodes* the window holds.
 struct FileSlot {
     /// the path of the file the group presents, resolved; empty where the group is free
     path: String,
-    /// the name of the *producer* of a *sink output*, empty for a *source input*
+    /// the name of the *producer* of a *sink output* or of the file of a *connection*, empty for
+    /// a *source input*
     producer: String,
+    /// the names of the *nodes* the *editor window* holds, empty while the network serves none
+    nodes: Vec<String>,
     /// the *input group*
     group: Rc<RefCell<InputGroup>>,
     /// its invoker, by which the network editor reaches it
     invoker: QmlMethodInvoker,
+}
+
+// realises FR-281, FR-285, FR-294, FR-295
+/// A *hold request* that awaits its *response*: the name of the *node* and whether a
+/// *node window* is wanted for it, which a double-click on the *node* sets while the request of
+/// an *editor window* is pending.
+struct PendingHold {
+    /// the name of the *node*
+    name: String,
+    /// whether a *node window* is to be presented once the hold is acknowledged
+    window: bool,
 }
 
 // realises FR-001, FR-064, FR-085, FR-109, FR-229, FR-241, FR-252, FR-258, FR-259, FR-269,
@@ -153,8 +171,8 @@ pub struct NetworkEditor {
     /// the files of that image, in the order of the vertices `f<index>` (FR-289 to FR-291)
     files: Vec<GraphFile>,
     /// the *input groups* of the *editor windows*: one per *editor window* presented, named by
-    /// the path of its file, and those whose window closed, unnamed, kept for the next file
-    /// opened (FR-290 to FR-293)
+    /// the path of its file and holding the *nodes* that have the file, and those whose window
+    /// closed, unnamed, kept for the next file opened (FR-290 to FR-297)
     file_groups: Vec<FileSlot>,
     /// the *error message* of the last *build*, empty where it was successful
     error_message: String,
@@ -176,11 +194,12 @@ pub struct NetworkEditor {
     /// the number of *deactivate requests* handed to the build thread and not yet reported
     /// (FR-259, FR-270)
     deactivations_pending: u32,
-    /// the names of the *nodes* whose *hold request* awaits its *response*, in the order of
-    /// the requests (FR-281, FR-285)
-    holds_pending: Vec<String>,
-    /// the *node editors*: one per *node window* presented, named by its *node*, and those
-    /// whose window closed, unnamed, kept for the next *node* opened (FR-001, FR-085)
+    /// the *nodes* whose *hold request* awaits its *response*, in the order of the requests,
+    /// each with whether a *node window* is wanted for it (FR-281, FR-285, FR-294, FR-295)
+    holds_pending: Vec<PendingHold>,
+    /// the *node editors*: one per *node* held, by a *node window* or by *editor windows*,
+    /// named by its *node*, and those whose *node* was released, unnamed, kept for the next
+    /// *node* held (FR-001, FR-085, FR-296)
     editors: Vec<NodeSlot>,
     /// the commands to the build thread, `None` before the first one and after `shut_down`
     commands: Option<Sender<Command>>,
@@ -197,7 +216,7 @@ pub struct NetworkEditor {
 
 // realises FR-064 to FR-069, FR-078 to FR-083, FR-085 to FR-089, FR-091, FR-092, FR-102 to FR-105,
 // FR-109, FR-128, FR-228, FR-229, FR-235, FR-241, FR-245, FR-252, FR-258 to FR-263, FR-267 to
-// FR-270, FR-273 to FR-275, FR-281 to FR-287, FR-289 to FR-293
+// FR-270, FR-273 to FR-275, FR-281 to FR-287, FR-289 to FR-299
 #[qobject(NoQmlElement)]
 impl NetworkEditor {
     qproperty!(
@@ -307,7 +326,11 @@ impl NetworkEditor {
     // realises FR-285
     // The names of the nodes whose hold request awaits its response, joined by ", ".
     fn opening(&self) -> String {
-        self.holds_pending.join(", ")
+        self.holds_pending
+            .iter()
+            .map(|hold| hold.name.as_str())
+            .collect::<Vec<&str>>()
+            .join(", ")
     }
 
     // setters
@@ -391,7 +414,8 @@ impl NetworkEditor {
         }
     }
 
-    // realises FR-085, FR-086, FR-087, FR-088, FR-102, FR-103, FR-104, FR-290, FR-291, IR-024
+    // realises FR-085, FR-086, FR-087, FR-088, FR-102, FR-103, FR-104, FR-290, FR-291, FR-298,
+    // IR-024
     /// Opens what the vertex at a point of the image names: the *node*, as `open_node` does, or
     /// the file, as `open_file` does; does nothing beside every vertex.
     ///
@@ -414,6 +438,23 @@ impl NetworkEditor {
         }
     }
 
+    // realises FR-045, FR-292, FR-299
+    /// Opens the file whose resolved path is `path` in an *editor window*, as `open_file` does
+    /// for the file of a vertex, so that the window is presented or raised; does nothing for a
+    /// path that is no file of the *network graph*. Called by the *front end* from the detach
+    /// button of an *input group* and of an *output page*.
+    #[qslot(qml_name = "openFileNamed")]
+    fn open_file_named(&mut self, path: String) {
+        let directory = self.network_directory();
+        if let Some(index) = self
+            .files
+            .iter()
+            .position(|file| path_of_identifier(Path::new(&directory), &file.identifier) == path)
+        {
+            self.open_file(index);
+        }
+    }
+
     // realises FR-290, FR-291
     /// Yields the *input group* named `path`, the one of the *editor window* of that file; a free
     /// one for a path none is named by, so that no binding fails. Called by the *front end* when
@@ -430,11 +471,12 @@ impl NetworkEditor {
         Rc::clone(&slot.group)
     }
 
-    // realises FR-293
+    // realises FR-293, FR-297
     /// Takes that the user closed the *editor window* of the file `path`: releases the
     /// *shared document* of its *input group*, unnames the group, so that the next file opened
-    /// reuses it, and emits `file_closed`; does nothing where no *input group* is named `path`.
-    /// Called by the *front end*.
+    /// reuses it, releases every *node* the window held that no *node window* and no other
+    /// *editor window* holds, and emits `file_closed`; does nothing where no *input group* is
+    /// named `path`. Called by the *front end*.
     #[qslot(qml_name = "closeFile")]
     fn close_file(&mut self, path: String) {
         let Some(slot) = self.file_groups.iter_mut().find(|slot| slot.path == path) else {
@@ -442,7 +484,9 @@ impl NetworkEditor {
         };
         slot.path.clear();
         slot.producer.clear();
+        let held = std::mem::take(&mut slot.nodes);
         slot.group.borrow_mut().release_document();
+        self.release_unheld(held);
         self.file_closed(path);
     }
 
@@ -454,6 +498,57 @@ impl NetworkEditor {
     fn output_served(&mut self, path: String, octets: Vec<u8>) {
         if let Some(slot) = self.file_groups.iter().find(|slot| slot.path == path) {
             invoke_method!(&slot.invoker, "setContent", octets);
+        }
+    }
+
+    // realises FR-296
+    /// Takes the marks of the *diagnostics* a *node editor* set in its *input group* of the
+    /// document at `path`, in its text: schedules `setDiagnostics` of the *input group* named
+    /// `path`, where one is, so that the *editor window* on the file shows them; scheduled by
+    /// a *node editor*.
+    #[qslot(qml_name = "markFile")]
+    fn mark_file(
+        &mut self,
+        path: String,
+        starts: Vec<i32>,
+        ends: Vec<i32>,
+        severities: Vec<i32>,
+        texts: Vec<String>,
+    ) {
+        if let Some(slot) = self.file_groups.iter().find(|slot| slot.path == path) {
+            invoke_method!(
+                &slot.invoker,
+                "setDiagnostics",
+                starts,
+                ends,
+                severities,
+                texts
+            );
+        }
+    }
+
+    // realises FR-296
+    /// Takes the marks of the *diagnostics* a *node editor* set in its *input group* of the
+    /// document at `path`, in its bits: schedules `setOctetMarks` of the *input group* named
+    /// `path`, where one is; scheduled by a *node editor*.
+    #[qslot(qml_name = "markFileOctets")]
+    fn mark_file_octets(
+        &mut self,
+        path: String,
+        starts: Vec<i32>,
+        ends: Vec<i32>,
+        severities: Vec<i32>,
+        texts: Vec<String>,
+    ) {
+        if let Some(slot) = self.file_groups.iter().find(|slot| slot.path == path) {
+            invoke_method!(
+                &slot.invoker,
+                "setOctetMarks",
+                starts,
+                ends,
+                severities,
+                texts
+            );
         }
     }
 
@@ -495,21 +590,21 @@ impl NetworkEditor {
         Rc::clone(&slot.editor)
     }
 
-    // realises FR-089, FR-105, FR-282
-    /// Takes that the user closed the *node window* of the *node* `name`: schedules `close` of
-    /// its *node editor*, which closes the connection to the *node* and releases its
-    /// *shared documents*, transmits a *release request* where the network serves *nodes*,
-    /// unnames the *node editor*, so that the next *node* opened reuses it, and emits
-    /// `node_closed`; does nothing where no *node editor* is named `name`. Called by the
-    /// *front end*.
+    // realises FR-089, FR-105, FR-282, FR-297
+    /// Takes that the user closed the *node window* of the *node* `name`: marks its
+    /// *node editor* as having no window and emits `node_closed`; where no *editor window*
+    /// holds the *node*, schedules `close` of the *node editor*, which closes the connection to
+    /// the *node* and releases its *shared documents*, transmits a *release request* where the
+    /// network serves *nodes*, and unnames the *node editor*, so that the next *node* held
+    /// reuses it; where an *editor window* holds the *node*, the editor serves on without a
+    /// window. Does nothing where no *node editor* is named `name`. Called by the *front end*.
     #[qslot(qml_name = "closeNode")]
     fn close_node(&mut self, name: String) {
-        if !self.unname_editor(&name) {
+        let Some(slot) = self.editors.iter_mut().find(|slot| slot.name == name) else {
             return;
-        }
-        if self.states.serves_nodes() {
-            self.send(Command::Release { name: name.clone() });
-        }
+        };
+        slot.window = false;
+        self.release_unheld(vec![name.clone()]);
         self.node_closed(name);
     }
 
@@ -649,7 +744,11 @@ impl NetworkEditor {
     /// * The error response to an *activate request*, a *deactivate request*, a *hold request*
     ///   or a *release request*, or the failure of its connection, becomes the *error message*.
     /// * The acknowledged response to a *hold request* names a *node editor* for the *node*,
-    ///   opens it and emits `node_opened`, on which the *front end* presents its *node window*.
+    ///   opens it and, where a *node window* is wanted, emits `node_opened`, on which the
+    ///   *front end* presents its *node window*; a *node* held for *editor windows* alone is
+    ///   served without a window.
+    /// * Where the network comes to serve *nodes* from not serving them, the *nodes* of every
+    ///   *editor window* are held anew.
     /// * The answer to a *store request* is scheduled as `storeAnswered` of the *node editor*
     ///   of each requester.
     #[qslot(qml_name = "reportArrived")]
@@ -704,10 +803,15 @@ impl NetworkEditor {
                     }
                 }
                 Report::Held { name, outcome } => {
-                    self.holds_pending.retain(|pending| *pending != name);
+                    let window = self
+                        .holds_pending
+                        .iter()
+                        .position(|pending| pending.name == name)
+                        .map(|index| self.holds_pending.remove(index).window)
+                        .unwrap_or(false);
                     self.mode_changed();
                     match outcome {
-                        Ok(()) => self.present_node(&name),
+                        Ok(()) => self.present_node(&name, window),
                         Err(message) => self.take_outcome(Err(message)),
                     }
                 }
@@ -748,6 +852,11 @@ impl NetworkEditor {
                     if !self.states.serves_nodes() {
                         // an invalid network: the build system ended the held nodes (FR-263)
                         self.close_all_nodes();
+                    } else if !was_served {
+                        // the editor windows presented hold their nodes anew (FR-294, FR-295)
+                        for index in 0..self.file_groups.len() {
+                            self.hold_nodes_of_file(index);
+                        }
                     }
                 }
                 Report::Lost => self.forget_states(),
@@ -789,20 +898,22 @@ impl NetworkEditor {
         self.file_groups.push(FileSlot {
             path: String::new(),
             producer: String::new(),
+            nodes: Vec::new(),
             group,
             invoker,
         });
         self.file_groups.len() - 1
     }
 
-    // realises FR-088, FR-290, FR-291, FR-292
+    // realises FR-290, FR-291, FR-292, FR-294, FR-295, FR-298
     /// Opens the file of index `index` of the *network graph* in an *editor window*: emits
     /// `file_opened` where an *input group* is named by its path, so that the window is raised;
     /// names a free group otherwise, configured with the kind `MetaDsl` or `Input` for a
     /// *source input*, which edits the *shared document* of the file, and `Output` for a
-    /// *sink output*, which shows the file and, where a *node editor* serves the *producer*, what
-    /// it holds, and emits `file_opened`; does nothing for the file of a *connection* and for an
-    /// index that names no file.
+    /// *sink output* and for the file of a *connection*, which shows the file and, where a
+    /// *node editor* serves the *producer*, what it holds, holds the *nodes* that have the file
+    /// where the network serves *nodes*, and emits `file_opened`; does nothing for an index that
+    /// names no file.
     fn open_file(&mut self, index: usize) {
         let Some(file) = self.files.get(index).cloned() else {
             return;
@@ -814,10 +925,16 @@ impl NetworkEditor {
             return;
         }
         let (kind, producer) = match &file.role {
-            FileRole::Connection => return,
             FileRole::SourceInput { meta_dsl: true } => (InputKind::MetaDsl, String::new()),
             FileRole::SourceInput { meta_dsl: false } => (InputKind::Input, String::new()),
             FileRole::SinkOutput { producer } => (InputKind::Output, producer.clone()),
+            FileRole::Connection => (
+                InputKind::Output,
+                nodes_of_file(&file, &self.nodes)
+                    .first()
+                    .cloned()
+                    .unwrap_or_default(),
+            ),
         };
         let index = self
             .file_groups
@@ -848,8 +965,71 @@ impl NetworkEditor {
             if let Some(editor) = self.editors.iter().find(|slot| slot.name == producer) {
                 invoke_method!(&editor.invoker, "resendOutputs");
             }
+        } else {
+            // the marks of a node served already, before its next diagnostics (FR-296)
+            for holder in nodes_of_file(&file, &self.nodes) {
+                if let Some(editor) = self.editors.iter().find(|slot| slot.name == holder) {
+                    invoke_method!(&editor.invoker, "resendMarks");
+                }
+            }
         }
+        self.hold_nodes_of_file(index);
         self.file_opened(path);
+    }
+
+    // realises FR-294, FR-295, FR-298
+    /// Holds the *nodes* that have the file of the *input group* of index `index` for its
+    /// *editor window*: where the group is named and the network serves *nodes*, records their
+    /// names, from the graph of this moment, and holds each without a window, which transmits
+    /// a *hold request* for one that is neither held nor being held; does nothing otherwise.
+    fn hold_nodes_of_file(&mut self, index: usize) {
+        if !self.states.serves_nodes() {
+            return;
+        }
+        let Some(path) = self
+            .file_groups
+            .get(index)
+            .map(|slot| slot.path.clone())
+            .filter(|path| !path.is_empty())
+        else {
+            return;
+        };
+        let directory = self.network_directory();
+        let Some(file) = self
+            .files
+            .iter()
+            .find(|file| path_of_identifier(Path::new(&directory), &file.identifier) == path)
+        else {
+            return;
+        };
+        let holders = nodes_of_file(file, &self.nodes);
+        self.file_groups[index].nodes.clone_from(&holders);
+        for name in holders {
+            self.hold(name, false);
+        }
+    }
+
+    // realises FR-105, FR-282, FR-297
+    /// Releases every *node* of `names` that no *editor window* holds and no *node window* is
+    /// bound to: schedules `close` of its *node editor*, unnames it, and transmits a
+    /// *release request* where the network serves *nodes*.
+    fn release_unheld(&mut self, names: Vec<String>) {
+        for name in names {
+            let held_by_file = self
+                .file_groups
+                .iter()
+                .any(|slot| !slot.path.is_empty() && slot.nodes.contains(&name));
+            let held_by_window = self
+                .editors
+                .iter()
+                .any(|slot| slot.name == name && slot.window);
+            if held_by_file || held_by_window || !self.unname_editor(&name) {
+                continue;
+            }
+            if self.states.serves_nodes() {
+                self.send(Command::Release { name });
+            }
+        }
     }
 
     /// Yields the directory of the *network file*, against which the paths of the files are
@@ -875,19 +1055,30 @@ impl NetworkEditor {
         }
         self.editors.push(NodeSlot {
             name: String::new(),
+            window: false,
             editor,
             invoker,
         });
         self.editors.len() - 1
     }
 
-    // realises FR-085, FR-104
+    // realises FR-085, FR-104, FR-296
     /// Names a free *node editor* for the *node* `name`, whose *hold request* was acknowledged,
     /// creating one where none is free, schedules its `openNode` with the files of the *node*,
-    /// and emits `node_opened`; a *node* the *network graph* no longer holds is released again
-    /// and opens nothing.
-    fn present_node(&mut self, name: &str) {
-        let Some(node) = self.nodes.iter().find(|node| node.name == name) else {
+    /// and, where a *node window* is wanted, emits `node_opened`; a *node* the *network graph*
+    /// no longer holds, or that no window wants any more, is released again and opens nothing.
+    fn present_node(&mut self, name: &str, window: bool) {
+        let wanted = window
+            || self
+                .file_groups
+                .iter()
+                .any(|slot| !slot.path.is_empty() && slot.nodes.iter().any(|held| held == name));
+        let Some(node) = self
+            .nodes
+            .iter()
+            .find(|node| node.name == name)
+            .filter(|_| wanted)
+        else {
             self.send(Command::Release {
                 name: name.to_owned(),
             });
@@ -916,6 +1107,7 @@ impl NetworkEditor {
             .unwrap_or_else(|| self.create_editor());
         let slot = &mut self.editors[index];
         slot.name = files.name.clone();
+        slot.window = window;
         invoke_method!(
             &slot.invoker,
             "openNode",
@@ -928,7 +1120,9 @@ impl NetworkEditor {
             produced,
             identifiers(&files.outputs)
         );
-        self.node_opened(files.name);
+        if window {
+            self.node_opened(files.name);
+        }
     }
 
     // realises FR-089, FR-105, FR-263
@@ -939,26 +1133,52 @@ impl NetworkEditor {
             return false;
         };
         slot.name.clear();
+        slot.window = false;
         invoke_method!(&slot.invoker, "close");
         true
     }
 
     // realises FR-105, FR-263
-    /// Closes every named *node editor* and emits `node_closed` for each, without a
-    /// *release request*: the network is an *invalid network*, in which the *build system*
-    /// ended the *held nodes*, or the *build system* runs no more; forgets the *hold requests*
-    /// pending as well.
+    /// Closes every named *node editor* and emits `node_closed` for each that has a window,
+    /// without a *release request*: the network is an *invalid network*, in which the
+    /// *build system* ended the *held nodes*, or the *build system* runs no more; forgets the
+    /// *hold requests* pending and the *nodes* the *editor windows* hold as well.
     fn close_all_nodes(&mut self) {
         self.holds_pending.clear();
-        let names: Vec<String> = self
+        for slot in &mut self.file_groups {
+            slot.nodes.clear();
+            if !slot.path.is_empty() {
+                // the marks of the nodes that ended are gone with them (FR-296)
+                let none: Vec<i32> = Vec::new();
+                invoke_method!(
+                    &slot.invoker,
+                    "setDiagnostics",
+                    none.clone(),
+                    none.clone(),
+                    none.clone(),
+                    Vec::<String>::new()
+                );
+                invoke_method!(
+                    &slot.invoker,
+                    "setOctetMarks",
+                    none.clone(),
+                    none.clone(),
+                    none,
+                    Vec::<String>::new()
+                );
+            }
+        }
+        let named: Vec<(String, bool)> = self
             .editors
             .iter()
             .filter(|slot| !slot.name.is_empty())
-            .map(|slot| slot.name.clone())
+            .map(|slot| (slot.name.clone(), slot.window))
             .collect();
-        for name in names {
+        for (name, window) in named {
             self.unname_editor(&name);
-            self.node_closed(name);
+            if window {
+                self.node_closed(name);
+            }
         }
     }
 
@@ -973,14 +1193,14 @@ impl NetworkEditor {
         self.set_build_system_path(path);
     }
 
-    // realises FR-088, FR-262, FR-281, FR-284, FR-285
-    /// Opens the *node* of index `index` of the *network graph*: emits `node_opened` where a
-    /// *node editor* of its name is named, so that its window is raised; hands a *hold request*
-    /// naming it to the build thread otherwise, counting the name among those opening, which the
-    /// status bar tells; does nothing for a *proxy node*, for an index that names no *node*,
-    /// while a *hold request* of the name is pending, and while the network serves no *nodes*,
-    /// in an *invalid network* or without a *network mode*, the status bar showing the
-    /// *network mode*.
+    // realises FR-088, FR-262, FR-281, FR-284, FR-285, FR-296
+    /// Opens the *node* of index `index` of the *network graph* for a *node window*, as `hold`
+    /// with a window does: emits `node_opened` where a *node editor* of its name is named, so
+    /// that its window is presented or raised; hands a *hold request* naming it to the build
+    /// thread otherwise, counting the name among those opening, which the status bar tells;
+    /// does nothing for a *proxy node*, for an index that names no *node*, and while the
+    /// network serves no *nodes*, in an *invalid network* or without a *network mode*, the
+    /// status bar showing the *network mode*.
     fn open_node(&mut self, index: usize) {
         if !self.states.serves_nodes() {
             return;
@@ -992,14 +1212,35 @@ impl NetworkEditor {
             return;
         }
         let name = node.name.clone();
-        if self.editors.iter().any(|slot| slot.name == name) {
-            self.node_opened(name);
+        self.hold(name, true);
+    }
+
+    // realises FR-281, FR-284, FR-285, FR-294, FR-295, FR-296
+    /// Holds the *node* `name` for a *node window* where `window`, and for an *editor window*
+    /// otherwise: where its *node editor* is named, marks the window as wanted and emits
+    /// `node_opened` for a window, and transmits nothing; where a *hold request* of the name is
+    /// pending, marks the window as wanted on it; hands a *hold request* to the build thread
+    /// otherwise, counting it among those pending, which the status bar tells.
+    fn hold(&mut self, name: String, window: bool) {
+        if let Some(slot) = self.editors.iter_mut().find(|slot| slot.name == name) {
+            if window {
+                slot.window = true;
+                self.node_opened(name);
+            }
             return;
         }
-        if self.holds_pending.contains(&name) {
+        if let Some(pending) = self
+            .holds_pending
+            .iter_mut()
+            .find(|pending| pending.name == name)
+        {
+            pending.window |= window;
             return;
         }
-        self.holds_pending.push(name.clone());
+        self.holds_pending.push(PendingHold {
+            name: name.clone(),
+            window,
+        });
         self.send(Command::Hold { name });
         self.mode_changed();
     }

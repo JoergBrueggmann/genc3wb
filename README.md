@@ -1,17 +1,58 @@
-# genc3wb
+# genc³wb
 
-The language workbench of the meta compiler-compiler genc³. Its main window is the compiler
-network editor: it edits a compiler network file (gc3n-file), lets a build system
-such as `genc3d` evaluate it while it is edited, and shows the network it states
-as a graph. A double-click on a node of the graph opens a node window, one per
-node and several at once, which shows the node as the network file states it:
-its meta compiler DSL, its inputs and its outputs. The build system runs the
+genc³wb is the workbench of genc³, the meta compiler-compiler and build system
+of software 4sd. genc³ chains your abstractions into a build network: every
+step from one abstraction to the next — a domain language to a model, a model
+to code, a binary frame to text — is one readable rule file, a network file
+chains the steps, and every edit is rebuilt only where it matters. genc³wb
+shows that network as a graph while genc³ evaluates it, opens each step with
+its rule file, inputs and outputs, marks diagnostics where they belong, and
+shows the outputs of the chain after every accepted change — as text, hex or
+bits.
+
+What genc³ is, what is available today and what is planned:
+[sw4sd.com](https://www.sw4sd.com/) and its [About page](https://sw4sd.com/about/).
+The news post
+[genc³ in 2026: the build network is here](https://sw4sd.com/2026/10/04/genc%c2%b3-in-2026-the-build-network-is-here/)
+shows genc³wb with the example that ships with genc³: a small class language
+normalised into a record form and rendered as two C++20 files that compile —
+three abstractions, two rule files, one network.
+
+## Status
+
+- The source of genc³wb is public under the GNU General Public License,
+  version 3 ('LICENSE'). The build system `genc3d` it drives belongs to genc³,
+  which is released internally and available to design partners, not as a
+  public download. To try genc³ and genc³wb on your case, use the
+  [contact form](https://sw4sd.com/contact/) of software 4sd.
+- genc³ builds for macOS on Apple silicon today; builds for Linux and Windows
+  are planned. genc³wb reaches `genc3d` and its nodes through Unix domain
+  sockets, so that in this version the graph and the node windows are shown on
+  Linux and macOS alone; without a build system a network file is edited, but
+  no graph is shown.
+- The notation of the rule files and the network files may still change before
+  genc³ 1.0.
+- Planned: integration into existing IDEs through the Language Server Protocol,
+  and AI assistance for writing rule files.
+
+## What the workbench does
+
+### The compiler network editor
+
+The main window of genc³wb is the compiler network editor: it edits a compiler
+network file (gc3n-file), lets a build system such as `genc3d` evaluate it
+while it is edited, and shows the network it states as a graph. A double-click
+on a node of the graph opens a node window, one per node and several at once,
+which shows the node as the network file states it: its meta compiler DSL, its
+inputs and its outputs. The build system runs the
 whole network live while its files
 are edited: every change is transmitted to the node, the diagnostics of the
 node are shown at the editor they concern, whoever caused them, its outputs are
 presented as the node holds them, and the outputs of every node are stored
 after every change the node accepts without an error, while no node of the
 network has an error and the network is active.
+
+### Modes of the network, held nodes and the graph
 
 The network has a mode, which the status bar of the main window shows: it is
 invalid while the network file cannot be read as a network, valid while it can
@@ -43,14 +84,21 @@ grey and dimmed. Every meta compiler-compiler of a valid or active network,
 and every such input and output in every mode, carries the small text
 `double click here` in its top left corner: a double-click on an input opens
 an editor window on the file, which edits it as the node windows do and
-reaches every node that has it, and a double-click on an output opens a
-read-only editor window showing what the producing node holds while a node
-window serves it, and the file otherwise. The meta compiler DSL of a meta compiler-compiler is a vertex of its
+reaches every node that has it, and a double-click on an output, or on the
+file of a connection, opens a read-only editor window showing what the
+producing node holds. An editor window holds the nodes that have its file,
+as a node window holds its node, so that the edits of an input reach them and
+the output shows what they derive with no node window open; the detach button
+of an input group and of an output page of a node window opens the editor
+window of that file as well, and a file has one editor window, raised when it
+is opened again. The meta compiler DSL of a meta compiler-compiler is a vertex of its
 own, an input of the node, so that a node carries its name alone; a proxy node
 carries its tool chain below its name. The graph runs from left to right: the
 inputs enter a node at its left side, the outputs leave it at its right side,
 and the meta compiler DSL enters it from below, standing below its node unless
 another node produces it.
+
+### Text, hex and bits
 
 An input and an output are held as their octets, whatever they are. The code
 editor of each has a switch of three positions: `txt` shows the octets read as
@@ -76,13 +124,15 @@ of every window with an editor. The insert key is fn + Return (Enter) on macOS
 and Insert elsewhere; `Settings > Insert key...` records another one, which is
 stored in `genc3wb.yaml` as `insert_key`.
 
-NOTE: Portions of this project's code and documentation were developed with AI
-assistance (Claude), under the author's direction, review, and authorisation.
+## Built with
 
 genc³wb is written in Rust. Its user interface is a Qt Quick application,
 reached from Rust through Qt Bridge for Rust, the crate `qtbridge`. No C++ is
 written; a C++ toolchain is needed only because the crate builds its own
 bridging code against Qt.
+
+NOTE: Portions of this project's code and documentation were developed with AI
+assistance (Claude), under the author's direction, review, and authorisation.
 
 ## Preconditions
 

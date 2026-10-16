@@ -1,4 +1,5 @@
-// A detached window of one input group, and the editor window of a file opened from the network graph.
+// The editor window of one file of the network, opened from the network graph or by a detach button of a node
+// window, bound to the input group the network editor owns for the file.
 //
 // Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 // Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>

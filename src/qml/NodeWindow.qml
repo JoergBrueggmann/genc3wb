@@ -1,6 +1,6 @@
 // One node window as a machine, bound to its node editor: the inputs above the meta compiler DSL as its
-// control, beside them the machine logo and the outputs, the two splitters between them, the status line, and
-// the detached windows.
+// control, beside them the machine logo and the outputs, the two splitters between them, and the status line;
+// the detach buttons of its groups open the editor windows of their files.
 //
 // Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 // Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -140,7 +140,8 @@ Window {
                                     required property int index
 
                                     group: nodeWindow.node.inputAt(index)
-                                    onDetachRequested: editorWindowModel.append({ "input": index })
+                                    // the detach button opens the editor window of the file (FR-045)
+                                    onDetachRequested: Workbench.network.openFileNamed(group.path)
                                 }
                             }
                         }
@@ -153,7 +154,8 @@ Window {
                     group: nodeWindow.node.metaDsl
                     SplitView.fillHeight: true
                     SplitView.minimumHeight: 120
-                    onDetachRequested: editorWindowModel.append({ "input": -1 })
+                    // the detach button opens the editor window of the meta compiler DSL (FR-045)
+                    onDetachRequested: Workbench.network.openFileNamed(metaDslGroup.group.path)
                 }
             }
 
@@ -228,7 +230,6 @@ Window {
                     output: nodeWindow.node.output
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    onDetachRequested: outputWindowModel.append({ "number": outputWindowModel.count })
                 }
             }
         }
@@ -256,43 +257,6 @@ Window {
             TypingModeLabel {
                 id: typingModeLabel
             }
-        }
-    }
-
-    ListModel {
-        id: outputWindowModel
-    }
-
-    ListModel {
-        id: editorWindowModel
-    }
-
-    Instantiator {
-        id: outputWindows
-
-        model: outputWindowModel
-        delegate: OutputWindow {
-            required property int index
-
-            output: nodeWindow.node.output
-            transientParent: nodeWindow
-            visible: true
-            onClosing: outputWindowModel.remove(index)
-        }
-    }
-
-    Instantiator {
-        id: editorWindows
-
-        model: editorWindowModel
-        delegate: EditorWindow {
-            required property int index
-            required property int input
-
-            group: input < 0 ? nodeWindow.node.metaDsl : nodeWindow.node.inputAt(input)
-            transientParent: nodeWindow
-            visible: true
-            onClosing: editorWindowModel.remove(index)
         }
     }
 

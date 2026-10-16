@@ -293,7 +293,7 @@ ApplicationWindow {
     }
 
     // the node windows, one per entry, each bound to the node editor of its name; a window is
-    // destroyed with its detached windows when its entry is removed (FR-001, FR-047, FR-263)
+    // destroyed when its entry is removed (FR-001, FR-047, FR-263)
     Instantiator {
         id: nodeWindows
 

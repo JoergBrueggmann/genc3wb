@@ -92,8 +92,10 @@ type Group2 = (Rc<RefCell<OutputGroup>>, QmlMethodInvoker);
 /// The invoker of the *node editor* as the *node thread* and the reader threads share it.
 type SharedInvoker = Arc<Mutex<QmlMethodInvoker>>;
 
-// realises FR-001, FR-103, FR-104, FR-117, FR-123, FR-230 to FR-234, FR-239, FR-288
-/// A *node editor*: one per *node window*, owned by the network editor.
+// realises FR-001, FR-103, FR-104, FR-117, FR-123, FR-230 to FR-234, FR-239, FR-288, FR-296
+/// A *node editor*: one per *node* held, owned by the network editor, bound to a *node window*
+/// where one is presented and serving without a window where *editor windows* alone hold the
+/// *node*.
 pub struct NodeEditor {
     /// the name of the opened *node*, empty before the first one
     name: String,
@@ -580,6 +582,23 @@ impl NodeEditor {
         self.measure(started);
     }
 
+    // realises FR-296
+    /// Schedules the marks of the *diagnostics* recorded of every document the user edits anew,
+    /// as `schedule_marks` does, so that an *editor window* opened on one of them while the
+    /// *node* is served shows the marks; scheduled by the network editor.
+    #[qslot(qml_name = "resendMarks")]
+    fn resend_marks(&mut self) {
+        let marked: Vec<(String, Vec<Diagnostic>)> = self
+            .diagnostics
+            .iter()
+            .filter(|(document, _)| !self.produced.contains(document))
+            .map(|(document, diagnostics)| (document.clone(), diagnostics.clone()))
+            .collect();
+        for (document, diagnostics) in marked {
+            self.mark_diagnostics(&document, &diagnostics);
+        }
+    }
+
     // realises FR-107, FR-108, FR-109, FR-110, FR-111, FR-112, FR-125, FR-126, FR-225,
     // FR-231 to FR-234, FR-239, FR-246 to FR-250, FR-252, FR-288
     /// Takes every report of the *node thread* and of the reader thread of the connection to
@@ -889,24 +908,50 @@ impl NodeEditor {
         self.schedule_marks(document, &text, diagnostics);
     }
 
-    // realises FR-126, FR-127, FR-169, FR-170
+    // realises FR-126, FR-127, FR-169, FR-170, FR-296
     /// Schedules `setDiagnostics` and `setOctetMarks` of the *input group* of `document` with
-    /// the marks of `diagnostics` in `text` and in the bits of the document.
+    /// the marks of `diagnostics` in `text` and in the bits of the document, and `markFile` and
+    /// `markFileOctets` of the network editor with the same marks and the path of the document,
+    /// for an *editor window* on it.
     fn schedule_marks(&self, document: &str, text: &str, diagnostics: &[Diagnostic]) {
-        if let Some(group) = self.group_of(document) {
-            let marks = marks_of_diagnostics(text, diagnostics);
+        let Some(group) = self.group_of(document) else {
+            return;
+        };
+        let path = path_of_identifier(&self.directory, document);
+        let marks = marks_of_diagnostics(text, diagnostics);
+        invoke_method!(
+            group,
+            "setDiagnostics",
+            marks.starts.clone(),
+            marks.ends.clone(),
+            marks.severities.clone(),
+            marks.texts.clone()
+        );
+        if let Some(network) = &self.network {
             invoke_method!(
-                group,
-                "setDiagnostics",
+                network,
+                "markFile",
+                path.clone(),
                 marks.starts,
                 marks.ends,
                 marks.severities,
                 marks.texts
             );
-            let marks = bit_marks_of_diagnostics(diagnostics);
+        }
+        let marks = bit_marks_of_diagnostics(diagnostics);
+        invoke_method!(
+            group,
+            "setOctetMarks",
+            marks.starts.clone(),
+            marks.ends.clone(),
+            marks.severities.clone(),
+            marks.texts.clone()
+        );
+        if let Some(network) = &self.network {
             invoke_method!(
-                group,
-                "setOctetMarks",
+                network,
+                "markFileOctets",
+                path,
                 marks.starts,
                 marks.ends,
                 marks.severities,
