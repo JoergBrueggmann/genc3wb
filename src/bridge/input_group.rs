@@ -7,6 +7,7 @@ use crate::bridge::document_registry::DocumentRegistry;
 use crate::core::api_message::Marks;
 use crate::core::file_lock::{FileLock, Refusal, Taking};
 use crate::core::input_file::{InputFile, InputKind, ProcessingState};
+use crate::core::launch;
 use crate::core::octet_edit::{digits_of_text, text_of_digits};
 use crate::core::octet_view::{EditorMode, row_count, row_segments, row_text_of_bits};
 use crate::core::settings::SettingsStore;
@@ -323,6 +324,15 @@ impl InputGroup {
     fn increment_provided(&mut self, rendering: String);
 
     // slots
+    // realises FR-476
+    /// Names the *handed file* at `path` as the *network file*, as `apply_path` does, without
+    /// storing its path; scheduled by the *workbench object* for a file the operating system
+    /// hands over in the *start-up phase*, before the user edits.
+    #[qslot(qml_name = "nameHanded")]
+    fn name_handed(&mut self, path: String) {
+        self.apply_path(&path, false);
+    }
+
     // realises FR-014
     /// Answers the question of `ask_to_save`: saves where `save`, then loads the pending path.
     #[qslot(qml_name = "answerSave")]
@@ -331,7 +341,7 @@ impl InputGroup {
             let _ = self.file.borrow_mut().save();
         }
         if let Some(path) = self.pending_path.take() {
-            self.apply_path(&path);
+            self.apply_path(&path, true);
         }
     }
 
@@ -785,19 +795,24 @@ impl InputGroup {
         self.text_changed();
     }
 
-    // realises FR-090, FR-214, FR-217
-    /// Loads the file at the path the settings hold for the *network file*, announces the state,
-    /// and announces the path to the network editor where one is wired.
+    // realises FR-090, FR-214, FR-217, FR-476, FR-478
+    /// Loads the file at the path the settings hold for the *network file*, or the *handed file*
+    /// `handed` in its place where there is one, whose path is not stored (FR-476); announces
+    /// the state, and announces the path to the network editor where one is wired.
     ///
     /// * Where another genc³wb holds the *lock file* of that *network file*, no *network file*
     ///   is named, and the path stays in the settings as it is.
-    pub fn load_initial(&mut self) {
-        let path = self
-            .settings
-            .as_ref()
-            .filter(|_| self.kind() == InputKind::Network)
-            .map(|settings| settings.borrow().network_path().to_owned())
-            .unwrap_or_default();
+    /// * The path is held absolute, and its folder becomes the working directory (FR-478).
+    pub fn load_initial(&mut self, handed: Option<&str>) {
+        let path = match handed.filter(|_| self.kind() == InputKind::Network) {
+            Some(handed) => launch::absolute(handed),
+            None => self
+                .settings
+                .as_ref()
+                .filter(|_| self.kind() == InputKind::Network)
+                .map(|settings| launch::absolute(settings.borrow().network_path()))
+                .unwrap_or_default(),
+        };
         let path = if self.lock_network(&path) {
             path
         } else {
@@ -817,7 +832,7 @@ impl InputGroup {
             self.ask_to_save(path);
             return;
         }
-        self.apply_path(&path);
+        self.apply_path(&path, true);
     }
 
     // realises FR-280
@@ -838,10 +853,13 @@ impl InputGroup {
         }
     }
 
-    // realises FR-012, FR-013, FR-091, FR-214, FR-216, FR-239, FR-242, FR-253, FR-277, FR-280
-    /// Stores `path` in the settings for the *network file*, takes the document of `path`, and
-    /// notifies the *front end*.
+    // realises FR-012, FR-013, FR-091, FR-214, FR-216, FR-239, FR-242, FR-253, FR-277, FR-280,
+    // FR-476, FR-478
+    /// Stores `path` in the settings for the *network file*, where `store`, takes the document of
+    /// `path`, and notifies the *front end*.
     ///
+    /// * The path of the *network file* is held absolute, and its folder becomes the working
+    ///   directory (FR-478); the *handed file* is not stored (FR-476).
     /// * The document of a *node* the user edits is the *shared document* of `path`, acquired
     ///   from the *document registry*: loaded where this group created it, presented as it is
     ///   where another *presenter* holds it (FR-280); the document presented before is released.
@@ -852,16 +870,24 @@ impl InputGroup {
     ///   *network file* named before stays, and `path_changed` restores its path in the field.
     /// * The file of an *input* that has a *producer* is not loaded and not shared: its
     ///   document is named and empty.
-    fn apply_path(&mut self, path: &str) {
+    fn apply_path(&mut self, path: &str, store: bool) {
+        let kind = self.kind();
+        let absolute = if kind == InputKind::Network {
+            launch::absolute(path)
+        } else {
+            path.to_owned()
+        };
+        let path = absolute.as_str();
         if !self.lock_network(path) {
             self.path_changed();
             return;
         }
-        let kind = self.kind();
-        if let (Some(settings), InputKind::Network) = (&self.settings, kind) {
+        if let (Some(settings), InputKind::Network, true) = (&self.settings, kind, store) {
             let mut settings = settings.borrow_mut();
             settings.set_network_path(path);
             let _ = settings.store();
+            drop(settings);
+            crate::bridge::workbench::settings_stored();
         }
         let octets_before = self.file.borrow().octets().to_vec();
         if self.produced {
@@ -891,7 +917,7 @@ impl InputGroup {
         }
     }
 
-    // realises FR-214, FR-216, FR-217, FR-219, FR-220, FR-221, FR-222, FR-253
+    // realises FR-214, FR-216, FR-217, FR-219, FR-220, FR-221, FR-222, FR-253, FR-478
     /// Takes the *lock file* of the *network file* at `path`, releasing the one held before;
     /// yields whether `path` may be named, which every file but a *network file* may.
     ///
@@ -900,6 +926,8 @@ impl InputGroup {
     /// * The *lock file* already held for the same file is kept.
     /// * Where another genc³wb holds it, the *refusal* is held and announced by
     ///   `refusal_changed` and `refused`, and the *lock file* held before is kept.
+    /// * Where the *network file* is named, its folder becomes the working directory
+    ///   (FR-478); a folder that cannot be entered leaves the working directory as it is.
     fn lock_network(&mut self, path: &str) -> bool {
         if self.kind() != InputKind::Network {
             return true;
@@ -925,6 +953,7 @@ impl InputGroup {
         if self.refusal.take().is_some() {
             self.refusal_changed();
         }
+        let _ = launch::enter_folder_of(path);
         true
     }
 

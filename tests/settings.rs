@@ -3,9 +3,7 @@
 //! Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 //! Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
 
-use genc3wb::core::settings::{
-    DEFAULT_BUILD_SYSTEM_PATH, DEFAULT_NODE_UPPER_HEIGHT, SETTINGS_FILE_NAME, Settings,
-};
+use genc3wb::core::settings::{DEFAULT_NODE_UPPER_HEIGHT, SETTINGS_FILE_NAME, Settings};
 
 use std::fs;
 
@@ -60,7 +58,7 @@ fn the_paths_of_the_compiler_network_editor_are_restored_and_no_path_of_the_node
         (
             10,
             "/tmp/n.gc3n",
-            DEFAULT_BUILD_SYSTEM_PATH,
+            Settings::default_build_system_path().as_str(),
             4200,
             9000,
             false,

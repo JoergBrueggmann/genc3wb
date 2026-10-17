@@ -11,14 +11,14 @@ use std::process::Command;
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-// realises FR-214, FR-215
+// realises FR-214
 /// The suffix of the name of a *lock file* behind the name of the file it locks.
 pub const LOCK_SUFFIX: &str = ".lock";
 
 /// How often a *lock file* is taken again where its *holder* removed it while it was taken.
 const ATTEMPTS: usize = 3;
 
-// realises FR-214, FR-215
+// realises FR-214
 /// Yields the path of the *lock file* of the file at `file`: its path with `.lock` appended.
 pub fn lock_path_of(file: &Path) -> PathBuf {
     let mut path = file.as_os_str().to_owned();
@@ -104,7 +104,7 @@ pub enum Taking {
     Refused(Refusal),
 }
 
-// realises FR-214, FR-215, FR-221, C-008
+// realises FR-214, FR-221, C-008
 /// A *lock file* this process holds, by the advisory lock of the operating system: `flock` on
 /// MacOS, so that it is released when the process terminates in whatever way.
 ///
@@ -120,7 +120,7 @@ pub struct FileLock {
 }
 
 impl FileLock {
-    // realises FR-214, FR-215, FR-216, FR-218, FR-222, IR-034, IR-037
+    // realises FR-214, FR-216, FR-222, IR-034, IR-037
     /// Takes the *lock file* of the file at `file` and writes this process into it as its
     /// *holder*.
     ///
@@ -301,7 +301,7 @@ mod tests {
 
     #[test]
     fn the_lock_file_is_named_by_the_file_and_the_suffix() {
-        // FR-214, FR-215
+        // FR-214
         assert_eq!(
             (
                 lock_path_of(Path::new("dir/network.gc3n")),
@@ -399,7 +399,7 @@ mod tests {
 
     #[test]
     fn a_held_lock_file_is_refused_and_names_its_holder() {
-        // FR-216, FR-218, IR-034, IR-037
+        // FR-216, IR-034, IR-037
         let dir = case_dir("refused");
         let file = dir.join("network.gc3n");
         let first = FileLock::take(&file);

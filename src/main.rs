@@ -1,14 +1,25 @@
-//! The entry point: embeds the front end, builds the Qt application, and runs the event loop.
+//! The entry point: reads the command line, embeds the front end, builds the Qt application
+//! with the handler of the file-open event, and runs the event loop.
 //!
 //! Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 //! Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
 
 use genc3wb::bridge::editing::Editing;
-use genc3wb::bridge::workbench::Workbench;
+use genc3wb::bridge::workbench::{self, Workbench};
+use genc3wb::core::launch;
 
 use qtbridge::{QApp, include_bytes_qml};
 
 fn main() {
+    // the handed file of the command line, or a refused argument (IR-206)
+    match launch::handed_file(std::env::args().skip(1)) {
+        Ok(Some(path)) => workbench::hand_file(path),
+        Ok(None) => {}
+        Err(message) => {
+            eprintln!("{message}");
+            std::process::exit(1);
+        }
+    }
     include_bytes_qml!("qml/qmldir", "genc3wb");
     include_bytes_qml!("qml/Main.qml", "genc3wb");
     include_bytes_qml!("qml/NodeWindow.qml", "genc3wb");
@@ -38,6 +49,8 @@ fn main() {
     include_bytes_qml!("qml/icons/machine.png", "genc3wb");
     let exit_code = QApp::new()
         .application_name("genc3wb")
+        // the file the operating system hands over, at launch or while running (IR-207)
+        .on_file_open(workbench::file_opened)
         .register::<Workbench>()
         .register::<Editing>()
         .load_qml_from_file("qrc:/genc3wb/qml/Main.qml")

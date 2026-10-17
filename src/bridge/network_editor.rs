@@ -346,6 +346,8 @@ impl NetworkEditor {
             let mut settings = settings.borrow_mut();
             settings.set_build_system_path(&self.build_system_path);
             let _ = settings.store();
+            drop(settings);
+            crate::bridge::workbench::settings_stored();
         }
         self.executable = executable::is_executable(&self.build_system_path);
         self.build_system_path_changed();

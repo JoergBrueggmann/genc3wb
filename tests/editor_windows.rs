@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 /// A *network file* of one *node*, which copies its *source input* to its *sink output*.
-const ONE_NODE: &str = "meta compiler-compiler network n.gc3n\n\
+const ONE_NODE: &str = "meta compiler-compiler network\n\
     node copy\n  inputs\n    in.txt\n  outputs\n    out.txt\n";
 
 /// The *meta compiler DSL* of the *node*: a syntax matching the letters of 'hello world', and a
@@ -131,7 +131,7 @@ ApplicationWindow {{
             }} else if (root.step === 4 && root.ticks >= 15) {{
                 var shown = root.output.text.indexOf("hello worldddd") === 0;
                 Workbench.network.shutDown();
-                Workbench.releaseLocks();
+                Workbench.releaseLock();
                 Qt.exit(shown ? 0 : 1);
             }}
         }}
@@ -142,7 +142,7 @@ ApplicationWindow {{
         running: true
         onTriggered: {{
             Workbench.network.shutDown();
-            Workbench.releaseLocks();
+            Workbench.releaseLock();
             Qt.exit(8);
         }}
     }}

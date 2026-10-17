@@ -4,8 +4,8 @@
 //! Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 //! Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
 
-use crate::core::file_lock::{FileLock, Refusal, Taking};
 use crate::core::key_stroke::KeyStroke;
+use crate::core::launch::executable_folder;
 
 use serde::{Deserialize, Serialize};
 
@@ -32,9 +32,9 @@ pub const DEFAULT_AUTOMATIC: bool = true;
 pub const TIME_STEP: u32 = 200;
 /// The least *idle time*, in milliseconds: 0.2 seconds.
 pub const MIN_IDLE_TIME: u32 = TIME_STEP;
-/// The path of the *build system* where the *settings file* does not hold one: the copy that the
-/// distribution carries beside the workbench.
-pub const DEFAULT_BUILD_SYSTEM_PATH: &str = "./genc3/bin/genc3d";
+/// The name of the *build system* in the folder of the executable, which is its path where the
+/// *settings file* does not hold one (`Settings::default_build_system_path`).
+pub const DEFAULT_BUILD_SYSTEM_NAME: &str = "genc3d";
 
 // realises FR-140
 /// The *tab size* where the *settings file* does not hold one.
@@ -132,7 +132,7 @@ impl Default for Settings {
             node_upper_height: DEFAULT_NODE_UPPER_HEIGHT,
             network_left_width: DEFAULT_NETWORK_LEFT_WIDTH,
             network_path: String::new(),
-            build_system_path: DEFAULT_BUILD_SYSTEM_PATH.to_owned(),
+            build_system_path: Settings::default_build_system_path(),
             insert_key: KeyStroke::default_insert_key(),
         }
     }
@@ -275,14 +275,25 @@ fn default_insert_key() -> String {
 
 /// The default of the key `build_system_path`, for a *settings file* that lacks it.
 fn default_build_system_path() -> String {
-    DEFAULT_BUILD_SYSTEM_PATH.to_owned()
+    Settings::default_build_system_path()
 }
 
 impl Settings {
     // realises IR-011, IR-012
-    /// Yields the path of the *settings file*: 'genc3wb.yaml' in the working directory.
+    /// Yields the path of the *settings file*: 'genc3wb.yaml' in the folder of the executable
+    /// (`launch::executable_folder`).
     pub fn default_path() -> PathBuf {
-        PathBuf::from(SETTINGS_FILE_NAME)
+        executable_folder().join(SETTINGS_FILE_NAME)
+    }
+
+    // realises FR-094
+    /// Yields the default path of the *build system*: `DEFAULT_BUILD_SYSTEM_NAME` in the folder
+    /// of the executable (`launch::executable_folder`).
+    pub fn default_build_system_path() -> String {
+        executable_folder()
+            .join(DEFAULT_BUILD_SYSTEM_NAME)
+            .to_string_lossy()
+            .into_owned()
     }
 
     // realises FR-090, FR-094, FR-095, FR-140, FR-149, IR-011
@@ -326,10 +337,14 @@ impl Settings {
         })
     }
 
-    // realises FR-091, FR-099, FR-141, FR-149, FR-255, IR-012
+    // realises FR-091, FR-099, FR-141, FR-149, FR-255, FR-479, IR-012
     /// Stores the settings, to be restored at the next start.
     ///
     /// * The directory of the file is created where it does not exist.
+    /// * The content is written into a temporary file beside the *settings file*, named after
+    ///   it with the process number appended, and that file is renamed over the *settings
+    ///   file*, so that the file is replaced as a whole: a genc³wb reading it at the same time
+    ///   reads the content before or after, never a part, and the last write wins (FR-479).
     ///
     /// # Errors
     /// Returns [`SettingsError::Io`] where the file cannot be written.
@@ -351,7 +366,12 @@ impl Settings {
         };
         let content = serde_norway::to_string(&stored)
             .map_err(|error| SettingsError::Malformed(error.to_string()))?;
-        fs::write(path, content).map_err(|error| SettingsError::Io(error.to_string()))
+        let temporary = temporary_path_of(path);
+        fs::write(&temporary, content).map_err(|error| SettingsError::Io(error.to_string()))?;
+        fs::rename(&temporary, path).map_err(|error| {
+            let _ = fs::remove_file(&temporary);
+            SettingsError::Io(error.to_string())
+        })
     }
 
     // realises FR-093, FR-095
@@ -485,14 +505,13 @@ impl Settings {
     }
 }
 
-// realises FR-215, FR-218, FR-220, FR-222, FR-254, IR-011, IR-012
-/// The settings of the session with the *settings file* they are stored in, and the
-/// *lock file* of that *settings file*, which entitles to store them.
+// realises FR-479, FR-480, IR-011, IR-012
+/// The settings of the session with the *settings file* they are stored in, and the reason of
+/// the last failed write of it.
 ///
-/// * The *lock file* is taken when the store is opened and held until it is dropped (FR-215).
-/// * Where another genc³wb holds it, the settings are read all the same, but not stored: the
-///   store holds the *refusal* (FR-218).
-/// * Where it cannot be created, the settings are stored as though it were held (FR-222).
+/// * It holds no lock: every store writes, and the last write wins (FR-479).
+/// * Where a write fails, the reason is held until a write succeeds, so that the status bar
+///   tells it (FR-480); the settings of the session change all the same.
 /// * It dereferences to the [`Settings`] it holds, which are read and changed through it.
 #[derive(Debug)]
 pub struct SettingsStore {
@@ -500,63 +519,50 @@ pub struct SettingsStore {
     settings: Settings,
     /// the path of the *settings file*
     path: PathBuf,
-    /// the *lock file* of the *settings file*, `None` where it is not held
-    lock: Option<FileLock>,
-    /// the *refusal* of the *settings file*, `None` where no other genc³wb holds its
-    /// *lock file*
-    refusal: Option<Refusal>,
+    /// the reason of the operating system where the last write failed, `None` where it
+    /// succeeded or none was made yet
+    failure: Option<String>,
 }
 
 impl SettingsStore {
-    // realises FR-094, FR-095, FR-215, FR-218, FR-222, IR-011
-    /// Takes the *lock file* of the *settings file* at `path` and restores the settings from
-    /// it, as [`Settings::load`] does; the default settings where it cannot be read.
+    // realises FR-094, FR-095, IR-011
+    /// Restores the settings from the *settings file* at `path`, as [`Settings::load`] does;
+    /// the default settings where it cannot be read.
     pub fn open(path: &Path) -> SettingsStore {
-        let (lock, refusal) = match FileLock::take(path) {
-            Taking::Held(lock) => (Some(lock), None),
-            Taking::Unlockable(_) => (None, None),
-            Taking::Refused(refusal) => (None, Some(refusal)),
-        };
         SettingsStore {
             settings: Settings::load(path).unwrap_or_default(),
             path: path.to_owned(),
-            lock,
-            refusal,
+            failure: None,
         }
     }
 
-    // realises FR-218, IR-012
-    /// Writes the settings to the *settings file*, unless another genc³wb holds its
-    /// *lock file*; yields whether they were written.
+    // realises FR-479, FR-480, IR-012
+    /// Writes the settings to the *settings file*, and holds the reason where the write fails,
+    /// or clears it where it succeeds.
     ///
     /// # Errors
     /// Returns what [`Settings::save`] returns.
-    pub fn store(&self) -> Result<bool, SettingsError> {
-        if self.refusal.is_some() {
-            return Ok(false);
-        }
-        self.settings.save(&self.path).map(|()| true)
+    pub fn store(&mut self) -> Result<(), SettingsError> {
+        let result = self.settings.save(&self.path);
+        self.failure = result.as_ref().err().map(ToString::to_string);
+        result
     }
 
-    // realises FR-218, FR-219, FR-220
-    /// Yields the *refusal* of the *settings file*, `None` where no other genc³wb holds its
-    /// *lock file*.
-    pub fn refusal(&self) -> Option<&Refusal> {
-        self.refusal.as_ref()
+    // realises FR-480
+    /// Yields the reason of the last failed write of the *settings file*, `None` where the last
+    /// write succeeded or none was made yet.
+    pub fn failure(&self) -> Option<&str> {
+        self.failure.as_deref()
     }
+}
 
-    // realises FR-215
-    /// Yields whether the store holds the *lock file* of the *settings file*.
-    pub fn holds_lock(&self) -> bool {
-        self.lock.is_some()
-    }
-
-    // realises FR-215, FR-221
-    /// Releases and removes the *lock file* of the *settings file*, where it is held; called
-    /// when *product* terminates.
-    pub fn release_lock(&mut self) {
-        self.lock = None;
-    }
+// realises FR-479
+/// Yields the path of the temporary file a save of the *settings file* at `path` writes first:
+/// the path with `.` and the process number appended.
+fn temporary_path_of(path: &Path) -> PathBuf {
+    let mut temporary = path.as_os_str().to_owned();
+    temporary.push(format!(".{}", std::process::id()));
+    PathBuf::from(temporary)
 }
 
 impl Deref for SettingsStore {
@@ -585,8 +591,6 @@ impl DerefMut for SettingsStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use crate::core::file_lock::lock_path_of;
 
     fn case_file(name: &str) -> PathBuf {
         let dir =
@@ -623,7 +627,13 @@ mod tests {
                 settings.long_idle_time(),
                 settings.automatic()
             ),
-            ("", DEFAULT_BUILD_SYSTEM_PATH, 2000, 16000, true)
+            (
+                "",
+                Settings::default_build_system_path().as_str(),
+                2000,
+                16000,
+                true
+            )
         );
     }
 
@@ -739,7 +749,7 @@ mod tests {
                 DEFAULT_IDLE_TIME,
                 DEFAULT_LONG_IDLE_TIME,
                 DEFAULT_AUTOMATIC,
-                DEFAULT_BUILD_SYSTEM_PATH
+                Settings::default_build_system_path().as_str()
             )
         );
     }
@@ -1006,35 +1016,49 @@ mod tests {
     }
 
     #[test]
-    fn the_settings_file_lies_in_the_working_directory() {
-        // IR-011, IR-012
-        assert_eq!(Settings::default_path(), Path::new(SETTINGS_FILE_NAME));
-    }
-
-    #[test]
-    fn a_store_takes_the_lock_file_and_writes_the_settings() {
-        // FR-215, IR-012
-        let dir = case_dir("store-held");
-        let path = dir.join(SETTINGS_FILE_NAME);
-        let mut store = SettingsStore::open(&path);
-        let locked = (store.holds_lock(), lock_path_of(&path).exists());
-        store.set_network_path("n.gc3n");
-        let stored = store.store();
-        let read = Settings::load(&path).map(|settings| settings.network_path().to_owned());
-        store.release_lock();
-        let released = lock_path_of(&path).exists();
-        drop(store);
-        let _ = fs::remove_dir_all(&dir);
+    fn the_settings_file_and_the_build_system_lie_in_the_folder_of_the_executable() {
+        // FR-094, IR-011, IR-012
+        let folder = executable_folder();
         assert_eq!(
-            (locked, stored, read, released),
-            ((true, true), Ok(true), Ok("n.gc3n".to_owned()), false)
+            (
+                Settings::default_path(),
+                Settings::default_build_system_path()
+            ),
+            (
+                folder.join(SETTINGS_FILE_NAME),
+                folder
+                    .join(DEFAULT_BUILD_SYSTEM_NAME)
+                    .to_string_lossy()
+                    .into_owned()
+            )
         );
     }
 
     #[test]
-    fn a_second_store_reads_the_settings_but_does_not_write_them() {
-        // FR-218, FR-254
-        let dir = case_dir("store-refused");
+    fn a_store_writes_the_settings_and_leaves_no_temporary_file() {
+        // FR-479, IR-012
+        let dir = case_dir("store-writes");
+        let path = dir.join(SETTINGS_FILE_NAME);
+        let mut store = SettingsStore::open(&path);
+        store.set_network_path("n.gc3n");
+        let stored = store.store();
+        let read = Settings::load(&path).map(|settings| settings.network_path().to_owned());
+        let files = fs::read_dir(&dir)
+            .map(|entries| entries.count())
+            .unwrap_or(0);
+        let failure = store.failure().map(ToOwned::to_owned);
+        drop(store);
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(
+            (stored, read, files, failure),
+            (Ok(()), Ok("n.gc3n".to_owned()), 1, None)
+        );
+    }
+
+    #[test]
+    fn two_stores_write_the_same_file_and_the_last_write_wins() {
+        // FR-479
+        let dir = case_dir("store-last-wins");
         let path = dir.join(SETTINGS_FILE_NAME);
         let mut first = SettingsStore::open(&path);
         first.set_network_path("first.gc3n");
@@ -1044,29 +1068,39 @@ mod tests {
         second.set_network_path("second.gc3n");
         let stored = second.store();
         let on_disk = Settings::load(&path).map(|settings| settings.network_path().to_owned());
-        let refusal = second.refusal().map(|refusal| refusal.file.clone());
         drop(second);
         drop(first);
         let _ = fs::remove_dir_all(&dir);
         assert_eq!(
-            (read.as_str(), stored, on_disk, refusal),
-            (
-                "first.gc3n",
-                Ok(false),
-                Ok("first.gc3n".to_owned()),
-                Some(path.to_string_lossy().into_owned())
-            )
+            (read.as_str(), stored, on_disk),
+            ("first.gc3n", Ok(()), Ok("second.gc3n".to_owned()))
         );
     }
 
     #[test]
-    fn a_store_whose_lock_file_cannot_be_created_writes_as_though_it_held_it() {
-        // FR-222: the folder that does not exist is created by the writing
-        let dir = case_dir("store-unlockable");
-        let path = dir.join("absent").join(SETTINGS_FILE_NAME);
-        let store = SettingsStore::open(&path);
-        let state = (store.holds_lock(), store.refusal().is_none(), store.store());
+    fn a_failed_write_holds_its_reason_until_a_write_succeeds() {
+        // FR-480
+        let dir = case_dir("store-fails");
+        let blocking = dir.join("blocking");
+        fs::write(&blocking, "a file where a folder is needed").expect("the file can be written");
+        let mut store = SettingsStore::open(&blocking.join(SETTINGS_FILE_NAME));
+        let failed = store.store().is_err();
+        let reason = store.failure().map(|reason| !reason.is_empty());
+        let mut writable = SettingsStore::open(&dir.join(SETTINGS_FILE_NAME));
+        let _ = writable.store();
+        let cleared = writable.failure().is_none();
         let _ = fs::remove_dir_all(&dir);
-        assert_eq!(state, (false, true, Ok(true)));
+        assert_eq!((failed, reason, cleared), (true, Some(true), true));
+    }
+
+    #[test]
+    fn a_store_creates_the_folder_of_the_settings_file() {
+        // IR-012: the folder that does not exist is created by the writing
+        let dir = case_dir("store-creates");
+        let path = dir.join("absent").join(SETTINGS_FILE_NAME);
+        let mut store = SettingsStore::open(&path);
+        let state = (store.store(), path.is_file());
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(state, (Ok(()), true));
     }
 }

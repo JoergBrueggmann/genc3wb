@@ -11,6 +11,34 @@ and this project adheres to a four-part version number.
 
 At the moment, nothing unreleased here.
 
+## [0.29.0.1] - 2026-10-17
+
+**_Indented_nodes_and_no_network_name_in_the_compiler_network_meta_DSL_**
+
+Leading work item: genc3api 0.19.0.1
+
+- Write the network lines of the integration tests without a name, as the *build system* genc³ 0.36.0.0 reads them.
+- Changes the tests alone: a build bump.
+
+## [0.29.0.0] - 2026-10-17
+
+**_Registration_of_gc3n-files_to_open_with_genc3wb_on_double_click_**
+
+Leading work item: guidelines AIAgentQtRust 0.13.0.0
+
+- Engineer the *change request* '**_Registration_of_gc3n-files_to_open_with_genc3wb_on_double_click_**', decided by the product owner on 2026-10-17, as genc³wb definition 0.25.0.0 states it: a double-click on a gc3n-file opens it with the workbench, the *settings file* lies beside the executable and is no longer locked, and the executables of genc³ stand beside the workbench.
+- `qtbridge` from the fork 'qtbridge-rust' of the product owner, branch 'file-open-event' on the tag of 0.3.0, through `[patch.crates-io]` for every crate of that workspace: `QApp::on_file_open` hands the file-open event of the operating system to Rust, `QApp::post_file_open` raises it in a test.
+- New component `core::launch`: the folder of the executable with its symbolic links resolved, the *handed file* of the command line with the refusal of any other argument on standard error and the exit code 1 (IR-206), the second workbench started on a file (FR-477, IR-208), a path made absolute, and the folder of a *network file* entered as the working directory (FR-478).
+- `core::settings`: the *settings file* and the default *build system* `genc3d` in the folder of the executable (FR-094, IR-011, IR-012); `Settings::save` writes a temporary file beside the *settings file* and renames it over it, so that the last write wins (FR-479); `SettingsStore` holds no *lock file* and no *refusal* any more but the reason of the last failed write (FR-480); `DEFAULT_BUILD_SYSTEM_PATH` becomes `DEFAULT_BUILD_SYSTEM_NAME` with `Settings::default_build_system_path`.
+- `bridge::workbench`: the state of the module in a `thread_local!` — the *handed file* left by 'main.rs' (`hand_file`), the invoker of the *workbench object* left by the slot `started`, and the end of the *start-up phase*, 2 seconds after the *front end* is up, or at once where the command line handed the file — and the handler `file_opened` of the event: the file is the *handed file* before the *front end* is up, is scheduled to `openHandedFile` and on to `nameHanded` of the *input group* of the *network file* in the *start-up phase*, and starts a second workbench after it; the property `settingsFailure` with its signal, the slot `announceSettingsFailure` and the function `settings_stored`, by which the other *bridged types* have the status bar follow a store; `releaseLocks` becomes `releaseLock`, the properties of the refusal of the *settings file* go.
+- `bridge::input_group`: `load_initial` takes the *handed file* in place of the stored path; the slot `nameHanded` names it without storing (FR-476); the path of a *network file* is held absolute and its folder entered as the working directory when it is named (FR-478); `apply_path` stores on demand.
+- 'Main.qml': `Workbench.started()` on completion, the failure of the settings in the status bar as `Settings not stored: <reason>`, the refusal dialog of the *network file* alone, `releaseLock()` on closing.
+- 'make-dist.sh': 'dist/bin' with genc3wb, genc3d, genc3 and gc3, the rest of the distribution of genc³ under 'dist/genc3'; the bundle 'genc3wb.app' with 'Info.plist' declaring the document type `de.software4sd.genc3wb.gc3n` for the extension gc3n and its executable a symbolic link to 'bin/genc3wb'; 'register.command', which registers the bundle with `lsregister` and puts 'bin' on the search path by a marked block in '~/.zprofile', repeatable; 'start' and 'start.bat' removed; the verification extended to the four executables, the link, the plist and the refused option (C-009). Probed on macOS 26.6 through Launch Services: the file of the launch is named by the launched workbench, a second file opened while it runs starts a second workbench on it, each in the folder of its file, nothing stored.
+- 'README.md': the distribution, the registration and the double-click, the settings beside the executable, one workbench per network without a lock of the settings.
+- Tests: the unit tests of `launch` and the rewritten ones of the settings store; the integration tests 'launch.rs', the file-open event in the *start-up phase*, and 'launch_handed.rs', the *handed file* of the command line, each with a Qt application of its own; `cargo test` passes 443 tests, `GENC3D=<genc3 dist>/bin/genc3d cargo test -- --ignored` the 28 integration tests against genc3d 0.35.0.0; `cargo fmt --check`, `cargo clippy --all-targets` and `qmllint` report nothing.
+- Raise the version in 'Cargo.toml' and 'Cargo.lock' to 0.29.0.
+- Adds to what the project folder delivers: a minor bump, the major part being 0.
+
 ## [0.28.0.1] - 2026-10-16
 
 **_Meta_compiler_DSL_fixtures_of_the_integration_tests_**

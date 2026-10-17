@@ -1,4 +1,6 @@
-//! The *bridged type* `Workbench`: the *workbench object*, owner of the settings and the groups.
+//! The *bridged type* `Workbench`: the *workbench object*, owner of the settings and the groups;
+//! and the *handed file* and the file-open event of the operating system, as functions of the
+//! module.
 //!
 //! Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 //! Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -6,22 +8,112 @@
 use crate::bridge::document_registry::DocumentRegistry;
 use crate::bridge::input_group::InputGroup;
 use crate::bridge::network_editor::NetworkEditor;
-use crate::core::file_lock::Holder;
 use crate::core::input_file::InputKind;
 use crate::core::key_stroke::KeyStroke;
+use crate::core::launch;
 use crate::core::settings::{Settings, SettingsStore, tab_size_violation, times_of_processing};
 use crate::core::version::version_of_package;
 
-use qtbridge::{QmlObject, qobject};
+use qtbridge::{QmlMethodInvoker, QmlObject, invoke_method, qobject};
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
-// realises FR-001, FR-063, FR-090, FR-095, FR-099, FR-140, FR-141, FR-149, FR-192, FR-215,
-// FR-218, FR-254, FR-277
+// realises FR-476, FR-477
+/// How long the *start-up phase* lasts after the *front end* is up: the file the operating
+/// system hands over at launch arrives within about a tenth of a second of it, a double-click of
+/// the user later.
+const START_UP_GRACE: Duration = Duration::from_secs(2);
+
+// realises FR-476, FR-477, IR-206, IR-207
+/// The state of the module: what reaches the *workbench object* from outside the *front end*.
+///
+/// The *workbench object* is created by the QML engine when the *front end* first names it, so
+/// that 'main.rs' and the handler of the file-open event reach no instance of it: the *handed
+/// file* of the command line is left here for `Default` to take, and the invoker of the
+/// *workbench object*, left by `started`, carries a file the operating system hands over in the
+/// *start-up phase* to `open_handed_file`.
+#[derive(Default)]
+struct Launch {
+    /// the *handed file* not taken by the *workbench object* yet
+    handed: Option<String>,
+    /// whether the command line handed the file, after which no file-open event of the launch
+    /// is to be expected
+    by_command_line: bool,
+    /// the invoker of the *workbench object*, once the *front end* is up
+    invoker: Option<QmlMethodInvoker>,
+    /// when the *start-up phase* ends, `None` while the *front end* is not up
+    phase_end: Option<Instant>,
+}
+
+impl Launch {
+    /// Yields whether the *start-up phase* lasts: the *front end* is up and its end is not
+    /// reached yet.
+    fn in_start_up_phase(&self) -> bool {
+        self.phase_end.is_some_and(|end| Instant::now() < end)
+    }
+}
+
+thread_local! {
+    static LAUNCH: RefCell<Launch> = RefCell::new(Launch::default());
+}
+
+// realises FR-476, IR-206
+/// Leaves `path` as the *handed file* for the *workbench object*, which names it as its
+/// *network file* in place of the stored path when it is created; called by 'main.rs' before
+/// the *front end* is loaded.
+pub fn hand_file(path: String) {
+    LAUNCH.with(|launch| {
+        let mut launch = launch.borrow_mut();
+        launch.handed = Some(path);
+        launch.by_command_line = true;
+    });
+}
+
+// realises FR-476, FR-477, IR-207
+/// Takes the file-open event of the operating system carrying `path`; the handler installed by
+/// 'main.rs' with `QApp::on_file_open`, called on the main thread from the event loop.
+///
+/// * Before the *front end* is up, the file is the *handed file* (`hand_file`).
+/// * In the *start-up phase*, `openHandedFile` of the *workbench object* is scheduled with it.
+/// * After the *start-up phase*, a second *product* is started on it (`launch::start_second`);
+///   where that fails, the reason is written to standard error.
+pub fn file_opened(path: String) {
+    LAUNCH.with(|launch| {
+        let mut launch = launch.borrow_mut();
+        match &launch.invoker {
+            None => launch.handed = Some(path),
+            Some(invoker) if launch.in_start_up_phase() => {
+                invoke_method!(invoker, "openHandedFile", path);
+            }
+            Some(_) => {
+                if let Err(reason) = launch::start_second(&path) {
+                    eprintln!(
+                        "genc3wb: a second genc3wb could not be started on '{path}': {reason}"
+                    );
+                }
+            }
+        }
+    });
+}
+
+// realises FR-480
+/// Schedules `announceSettingsFailure` of the *workbench object*, where the *front end* is up,
+/// so that the status bar follows a store of the settings made by another *bridged type*.
+pub fn settings_stored() {
+    LAUNCH.with(|launch| {
+        if let Some(invoker) = &launch.borrow().invoker {
+            invoke_method!(invoker, "announceSettingsFailure");
+        }
+    });
+}
+
+// realises FR-001, FR-063, FR-090, FR-095, FR-099, FR-140, FR-141, FR-149, FR-192, FR-277,
+// FR-476, FR-480
 /// The *workbench object*.
 pub struct Workbench {
-    /// the settings with the *settings file* and its *lock file*, shared with the groups
+    /// the settings with the *settings file*, shared with the groups
     settings: Rc<RefCell<SettingsStore>>,
     /// the *document registry*, shared with every *input group* of a *node window* (FR-277)
     documents: Rc<RefCell<DocumentRegistry>>,
@@ -31,16 +123,21 @@ pub struct Workbench {
     network: Rc<RefCell<NetworkEditor>>,
     /// the *typing mode*: whether typing inserts, and overwrites otherwise (FR-192)
     insert_mode: bool,
+    /// the failure of the last write of the *settings file* as announced last, so that the
+    /// signal is emitted where it changed (FR-480)
+    announced_failure: String,
 }
 
 impl Default for Workbench {
-    /// Takes the *lock file* of the *settings file* and restores the settings, creates the
+    /// Restores the settings and takes the *handed file* left by `hand_file`, creates the
     /// *document registry*, the network editor and the *input group* of the *network file*, and
     /// wires them: the network editor with the settings, the *document registry* and that
-    /// *input group*, and that *input group* with the network editor, both with their paths; the
+    /// *input group*, and that *input group* with the network editor, both with their paths, the
+    /// *handed file* in place of the stored path of the *network file* where there is one; the
     /// network editor creates the *node editors*.
     fn default() -> Self {
         let settings = Rc::new(RefCell::new(SettingsStore::open(&Settings::default_path())));
+        let handed = LAUNCH.with(|launch| launch.borrow_mut().handed.take());
         let documents = Rc::new(RefCell::new(DocumentRegistry::new()));
         let network = NetworkEditor::default_with_attached_qobject();
         let network_input = InputGroup::default_with_attached_qobject();
@@ -56,19 +153,21 @@ impl Default for Workbench {
             None,
         );
         network.borrow_mut().load_initial();
-        network_input.borrow_mut().load_initial();
+        network_input.borrow_mut().load_initial(handed.as_deref());
         Workbench {
             settings,
             documents,
             network_input,
             network,
             insert_mode: true,
+            announced_failure: String::new(),
         }
     }
 }
 
 // realises FR-001, FR-063, FR-095, FR-099, FR-130 to FR-135, FR-140, FR-141, FR-146 to FR-149,
-// FR-192 to FR-194, FR-198 to FR-200, FR-214, FR-215, FR-218 to FR-221, FR-224, FR-254 to FR-257
+// FR-192 to FR-194, FR-198 to FR-200, FR-214, FR-221, FR-224, FR-255 to FR-257, FR-476, FR-477,
+// FR-480
 #[qobject(Singleton)]
 impl Workbench {
     qproperty!("networkInput", Read = network_input, Constant);
@@ -111,18 +210,11 @@ impl Workbench {
         Read = network_left_width,
         Notify = splitters_changed
     );
-    // the refusal of the settings file and its holder, empty and 0 where there is none (FR-220)
+    // the reason of the last failed write of the settings file, empty where it succeeded (FR-480)
     qproperty!(
-        "settingsRefusedFile",
-        Read = settings_refused_file,
-        Constant
-    );
-    qproperty!("settingsHolderPid", Read = settings_holder_pid, Constant);
-    qproperty!("settingsHolderHost", Read = settings_holder_host, Constant);
-    qproperty!(
-        "settingsHolderSince",
-        Read = settings_holder_since,
-        Constant
+        "settingsFailure",
+        Read = settings_failure,
+        Notify = settings_failure_changed
     );
     // the version of the product in its four parts (FR-224)
     qproperty!("version", Read = version, Constant);
@@ -190,32 +282,12 @@ impl Workbench {
         self.settings.borrow().network_left_width()
     }
 
-    // realises FR-218, FR-219, FR-220
-    fn settings_refused_file(&self) -> String {
+    // realises FR-480
+    fn settings_failure(&self) -> String {
         self.settings
             .borrow()
-            .refusal()
-            .map(|refusal| refusal.file.clone())
-            .unwrap_or_default()
-    }
-
-    // realises FR-219, FR-220
-    fn settings_holder_pid(&self) -> i32 {
-        self.settings_holder()
-            .map_or(0, |holder| i32::try_from(holder.pid).unwrap_or(i32::MAX))
-    }
-
-    // realises FR-219, FR-220
-    fn settings_holder_host(&self) -> String {
-        self.settings_holder()
-            .map(|holder| holder.host)
-            .unwrap_or_default()
-    }
-
-    // realises FR-219, FR-220
-    fn settings_holder_since(&self) -> String {
-        self.settings_holder()
-            .map(|holder| holder.since)
+            .failure()
+            .map(ToOwned::to_owned)
             .unwrap_or_default()
     }
 
@@ -233,6 +305,9 @@ impl Workbench {
 
     #[qsignal(qml_name = "splittersChanged")]
     fn splitters_changed(&mut self);
+
+    #[qsignal(qml_name = "settingsFailureChanged")]
+    fn settings_failure_changed(&mut self);
 
     #[qsignal(qml_name = "settingsRejected")]
     fn settings_rejected(&mut self, message: String);
@@ -381,13 +456,62 @@ impl Workbench {
         self.splitters_changed();
     }
 
-    // realises FR-214, FR-215, FR-221
-    /// Releases and removes the *lock files* of the *settings file* and of the *network file*;
-    /// called by the *front end* when the main window closes, since *product* terminates then.
-    #[qslot(qml_name = "releaseLocks")]
-    fn release_locks(&mut self) {
-        self.settings.borrow_mut().release_lock();
+    // realises FR-214, FR-221
+    /// Releases and removes the *lock file* of the *network file*; called by the *front end*
+    /// when the main window closes, since *product* terminates then.
+    #[qslot(qml_name = "releaseLock")]
+    fn release_lock(&mut self) {
         self.network_input.borrow_mut().release_lock();
+    }
+
+    // realises FR-476, FR-477, IR-207
+    /// Keeps the invoker of the *workbench object* in the state of the module, so that
+    /// `file_opened` reaches `open_handed_file` in the *start-up phase* and `settings_stored`
+    /// reaches `announce_settings_failure`, and starts the *start-up phase*, which lasts
+    /// `START_UP_GRACE` from now, or ends at once where the command line handed the file, since
+    /// no file-open event of the launch follows then; called by the *front end* once the main
+    /// window is completed. A file the operating system handed over before is named then.
+    #[qslot(qml_name = "started")]
+    fn started(&mut self) {
+        let invoker = self.get_qml_method_invoker();
+        let handed = LAUNCH.with(|launch| {
+            let mut launch = launch.borrow_mut();
+            launch.invoker = Some(invoker);
+            let now = Instant::now();
+            launch.phase_end = Some(if launch.by_command_line {
+                now
+            } else {
+                now + START_UP_GRACE
+            });
+            launch.handed.take()
+        });
+        if let Some(path) = handed {
+            self.open_handed_file(path);
+        }
+    }
+
+    // realises FR-476
+    /// Names `path` as the *handed file*: the *network file* of the session, its path not stored;
+    /// schedules `nameHanded` of the *input group* of the *network file* by its invoker, since
+    /// that group emits its signals in the call and the *front end* reads its properties then,
+    /// which a borrow from here would refuse. Scheduled by `file_opened` in the *start-up phase*.
+    #[qslot(qml_name = "openHandedFile")]
+    fn open_handed_file(&mut self, path: String) {
+        let invoker = self.network_input.borrow().get_qml_method_invoker();
+        invoke_method!(invoker, "nameHanded", path);
+    }
+
+    // realises FR-480
+    /// Emits `settings_failure_changed` where the failure of the last write of the *settings
+    /// file* differs from the one announced last; scheduled by `settings_stored` after a store
+    /// made by another *bridged type*.
+    #[qslot(qml_name = "announceSettingsFailure")]
+    fn announce_settings_failure(&mut self) {
+        let failure = self.settings_failure();
+        if failure != self.announced_failure {
+            self.announced_failure = failure;
+            self.settings_failure_changed();
+        }
     }
 
     // realises FR-129, FR-130, FR-256
@@ -419,20 +543,12 @@ impl Workbench {
 }
 
 impl Workbench {
-    // realises FR-218, IR-012
-    /// Writes the *settings file*, unless another genc³wb holds its *lock file*; a failure
-    /// leaves the settings of the session as they are.
-    fn store(&self) {
-        let _ = self.settings.borrow().store();
-    }
-
-    /// Yields the *holder* of the *lock file* of the *settings file* where the *settings file*
-    /// is refused and its *lock file* names one.
-    fn settings_holder(&self) -> Option<Holder> {
-        self.settings
-            .borrow()
-            .refusal()
-            .and_then(|refusal| refusal.holder.clone())
+    // realises FR-479, FR-480, IR-012
+    /// Writes the *settings file*; a failure leaves the settings of the session as they are and
+    /// is announced where it differs from the one announced last.
+    fn store(&mut self) {
+        let _ = self.settings.borrow_mut().store();
+        self.announce_settings_failure();
     }
 
     // realises FR-199, FR-200

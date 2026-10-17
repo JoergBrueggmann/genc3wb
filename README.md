@@ -286,15 +286,20 @@ qmllint -I src/qml src/qml/*.qml
 
 ### Making a distribution
 
-The script 'make-dist.sh' assembles the folder `dist`: the executable of the
-workbench under `bin`, the scripts `start` and `start.bat`, this description,
-the licence and the work items of the package, and, under `genc3`, a copy of the
-distribution of genc³ with its build system `genc3d`. What is distributed
-therefore holds the workbench and the build system it drives.
+The script 'make-dist.sh' assembles the folder `dist`: under `bin` the
+executable of the workbench beside the three executables of genc³, `genc3d`,
+`genc3` and `gc3`; the application bundle `genc3wb.app`, whose executable is a
+symbolic link to `bin/genc3wb` and which declares gc3n-files as the documents
+it opens; the script `register.command`; this description, the licence and the
+work items of the package; and, under `genc3`, the rest of the distribution of
+genc³: its description, licence, work items, reference manual and examples.
+What is distributed therefore holds the workbench and the build system it
+drives.
 
-**The distribution is started by a double-click on `start`, or on `start.bat` on
-Windows.** Each script changes to the folder it lies in, so that the workbench
-finds its settings file and the build system beside itself.
+**The workbench is started by a double-click on `genc3wb.app`, or on a gc3n-file
+once the distribution is registered.** The workbench finds its settings file
+and the build system in the folder of its own executable, `bin`, whichever way
+it is started.
 
 The script first runs 'make-dist.sh' of genc³, so that the copy is the
 distribution that was just built and verified there, and then builds the
@@ -305,16 +310,48 @@ the first argument, or in the environment variable `GENC3`:
 GENC3=/path/to/genc3 ./make-dist.sh
 ```
 
-The exit code is 0 where the folder was assembled, the executable of the
-workbench and the script `start` are executable, and the copied `genc3d` runs.
-In the distribution the build system is named `./genc3/bin/genc3d`, beside the
-workbench, which is the path genc³wb uses where it has none stored.
+The exit code is 0 where the folder was assembled, the four executables under
+`bin` are executable, the executable of the bundle reaches `bin/genc3wb`, its
+`Info.plist` is well-formed, the copied `genc3d` runs, and `genc3wb --help` is
+refused with the exit code 1. In the distribution the build system is
+`genc3d` in the folder of the workbench, which is the path genc³wb uses where
+it has none stored.
+
+### Registering the distribution: double-click on a gc3n-file
+
+Place the folder `dist`, or a copy of it, where it is to stay, and run
+`register.command` in it, by a double-click or in a terminal. It registers the
+bundle `genc3wb.app` with Launch Services, so that a double-click on a
+gc3n-file opens it with the workbench, and it puts the folder `bin` on the
+search path of new terminals by a marked block in `~/.zprofile`, so that
+`genc3wb`, `genc3d`, `genc3` and `gc3` are callable by name. Run it again
+after moving the folder; it replaces its earlier registration and its block.
+The registration is made for macOS on Apple silicon; Linux and Windows follow
+later.
+
+A gc3n-file opened by double-click is the network file of that workbench, and
+the folder of the file is its working directory. The path is not stored: a
+plain start of the workbench reopens the network file it stored last, as
+before. A gc3n-file opened while a workbench runs starts a second workbench
+on it, so that every double-click runs a workbench of its own; the lock of a
+network file rules between them as described below.
+
+In a terminal the same is done with the path as the only argument:
+
+```bash
+genc3wb /path/to/network.gc3n
+```
+
+Any other argument, or more than one, is refused with a message on standard
+error and the exit code 1.
 
 ### Where the settings are stored
 
-genc³wb reads the file `genc3wb.yaml` of its working directory at its start and
-writes it whenever a value changes. Started by a double-click on `start`, the
-working directory is the root of the distribution, so the file lies there.
+genc³wb reads the file `genc3wb.yaml` of the folder of its own executable at
+its start and writes it whenever a value changes. In the distribution that
+folder is `bin`; the folder of a symbolic link is resolved, so that the bundle
+and `bin/genc3wb` share the file. Where the folder cannot be written, the
+settings hold for the session and the status bar says so.
 
 The file is YAML and holds the idle time and the long idle time in seconds
 with one decimal, whether the times are set automatically, the path of the
@@ -322,7 +359,7 @@ network file, the path of the build system and the insert key. The node window n
 its own: the meta compiler DSL, the inputs and the outputs of a node are taken
 from the network file when the node is opened. Where the file does not exist,
 the idle time is 2 seconds, the long idle time 16 seconds, the automatic setting
-on, and the build system `./genc3/bin/genc3d`.
+on, and the build system `genc3d` in the folder of the workbench.
 
 The two times are set in the dialog of the settings menu, in steps of 0.2
 seconds; the idle time is at least 0.2 seconds and the long idle time is
@@ -332,17 +369,19 @@ build system takes to answer a change — up to the storing of the outputs — a
 sets the idle time to twice that, rounded up to 0.2 seconds, and the long idle
 time to eight times the idle time, after every answered change.
 
-### One workbench per network and per settings file
+### One workbench per network
 
 A genc³wb holds a lock file beside the network file it has open, named like
-the network file with `.lock` appended, e.g. `network.gc3n.lock`, and one
-beside its settings file, `genc3wb.yaml.lock`, which the first genc³wb started
-in a folder takes for its whole run. A lock file names its holder: the process
-number, the host and the time it was taken. A second genc³wb on the same Mac
-does not open a network another one holds: it keeps the network it had, or
-opens none at its start. Started in the same folder, it works with the
-settings it read but stores none of its changes. Either refusal is told by a
+the network file with `.lock` appended, e.g. `network.gc3n.lock`. A lock file
+names its holder: the process number, the host and the time it was taken. A
+second genc³wb on the same Mac does not open a network another one holds: it
+keeps the network it had, or opens none at its start. The refusal is told by a
 dialog and in the status bar of the main window, naming the holder.
+
+The settings file is not locked: every workbench reads it at its start, every
+workbench writes it, the file replaced as a whole each time, and the last
+write wins; a change of the settings in one workbench reaches another at its
+next start.
 
 The lock is the advisory lock of the operating system, which is released when
 its holder terminates in whatever way, so that a lock file left behind by a

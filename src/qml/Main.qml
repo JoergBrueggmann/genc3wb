@@ -1,6 +1,6 @@
 // The main window, the compiler network editor: menu bar, status bar, the network file and its graph, the
-// dialog telling a refusal of the network file or of the settings file, and the node windows, one per node
-// opened.
+// dialog telling a refusal of the network file, the failure of a write of the settings file in the status
+// bar, and the node windows, one per node opened.
 //
 // Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 // Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -23,23 +23,17 @@ ApplicationWindow {
     visible: true
     title: "genc³wb"
 
-    // the holder of the settings file and of the network file, as a phrase, empty where there
-    // is no refusal (FR-219, FR-220)
-    readonly property string settingsHeld: Workbench.settingsRefusedFile.length > 0
-                                           ? heldText(Workbench.settingsRefusedFile,
-                                                      Workbench.settingsHolderPid,
-                                                      Workbench.settingsHolderHost,
-                                                      Workbench.settingsHolderSince)
-                                           : ""
+    // the holder of the network file, as a phrase, empty where there is no refusal (FR-219, FR-220)
     readonly property string networkHeld: Workbench.networkInput.refusedFile.length > 0
                                           ? heldText(Workbench.networkInput.refusedFile,
                                                      Workbench.networkInput.holderPid,
                                                      Workbench.networkInput.holderHost,
                                                      Workbench.networkInput.holderSince)
                                           : ""
-    // the refusals for the status bar: short phrases (FR-220)
-    readonly property string settingsRefusal: mainWindow.settingsHeld.length > 0
-                                              ? qsTr("Settings not stored: %1").arg(mainWindow.settingsHeld)
+    // the failure of the last write of the settings file and the refusal for the status bar: short
+    // phrases (FR-220, FR-480)
+    readonly property string settingsFailure: Workbench.settingsFailure.length > 0
+                                              ? qsTr("Settings not stored: %1").arg(Workbench.settingsFailure)
                                               : ""
     readonly property string networkRefusal: mainWindow.networkHeld.length > 0
                                              ? qsTr("Network not opened: %1").arg(mainWindow.networkHeld)
@@ -57,11 +51,9 @@ ApplicationWindow {
                : qsTr("%1 held by genc³wb, process %2, since %3").arg(file).arg(pid).arg(time);
     }
 
-    // Yields the sentences of the dialog of FR-219 for the refusals, empty where there is none.
+    // Yields the sentence of the dialog of FR-219 for the refusal, empty where there is none.
     function refusalSentences(): list<string> {
-        return [mainWindow.settingsHeld.length > 0
-                ? qsTr("The settings are not stored: %1.").arg(mainWindow.settingsHeld) : "",
-                mainWindow.networkHeld.length > 0
+        return [mainWindow.networkHeld.length > 0
                 ? qsTr("The network is not opened: %1.").arg(mainWindow.networkHeld) : ""];
     }
 
@@ -131,11 +123,15 @@ ApplicationWindow {
         }
     }
 
-    Component.onCompleted: tellRefusals(refusalSentences())
+    Component.onCompleted: {
+        // the front end is up: a file the operating system hands over reaches the workbench (FR-476)
+        Workbench.started();
+        tellRefusals(refusalSentences());
+    }
     onClosing: {
         // shuts every node editor down as well (FR-068, FR-105)
         Workbench.network.shutDown();
-        Workbench.releaseLocks();
+        Workbench.releaseLock();
     }
 
     menuBar: MenuBar {
@@ -199,10 +195,11 @@ ApplicationWindow {
             Layout.fillWidth: true
             padding: 3
             leftPadding: 8
-            // the refusals while they last (FR-220), then the state of the build system and
-            // the network mode (FR-258), or that the network is being activated or deactivated
-            // or a node is being opened (FR-269, FR-270, FR-285)
-            text: [mainWindow.settingsRefusal,
+            // the failed write of the settings file and the refusal while they last (FR-220,
+            // FR-480), then the state of the build system and the network mode (FR-258), or that
+            // the network is being activated or deactivated or a node is being opened (FR-269,
+            // FR-270, FR-285)
+            text: [mainWindow.settingsFailure,
                    mainWindow.networkRefusal,
                    !Workbench.network.available
                    ? qsTr("Build system not available on this platform")

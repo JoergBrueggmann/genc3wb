@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 const PATIENCE: Duration = Duration::from_secs(20);
 
 /// A *network file* of two *nodes*, the *output* of the one the *input* of the other.
-const TWO_NODES: &str = "meta compiler-compiler network n.gc3n\n\
+const TWO_NODES: &str = "meta compiler-compiler network\n\
     node a\n  inputs\n    a.in\n  outputs\n    x.txt\n\
     node b\n  inputs\n    x.txt\n  outputs\n    y.txt\n  transformation proxy make\n";
 
@@ -213,12 +213,12 @@ fn faulty_edit_fails_with_the_fault_and_its_correction_succeeds_again() {
 }
 
 /// A *network file* of one *node*.
-const ONE_NODE: &str = "meta compiler-compiler network n.gc3n\n\
+const ONE_NODE: &str = "meta compiler-compiler network\n\
     node a\n  inputs\n    a.in\n  outputs\n    x.txt\n";
 
 /// A *network file* of two *nodes* in which the *output* of `a` is the *meta compiler DSL* of
 /// `b`: `b` is started with `--meta-dsl-produced`, waits for `a` and is activated after it.
-const PRODUCED_META_DSL: &str = "meta compiler-compiler network n.gc3n\n\
+const PRODUCED_META_DSL: &str = "meta compiler-compiler network\n\
     node a\n  inputs\n    a.in\n  outputs\n    b.gc3\n\
     node b\n  inputs\n    b.in\n  outputs\n    out.txt\n";
 
@@ -239,7 +239,7 @@ fn producing_meta_dsl() -> String {
 
 /// A *network file* of a chain of three *nodes*: the *output* of `a` is the *input* of `b`, and
 /// the *output* of `b` the *input* of `c`.
-const CHAIN: &str = "meta compiler-compiler network n.gc3n\n\
+const CHAIN: &str = "meta compiler-compiler network\n\
     node a\n  inputs\n    a.in\n  outputs\n    x.txt\n\
     node b\n  inputs\n    x.txt\n  outputs\n    y.txt\n\
     node c\n  inputs\n    y.txt\n  outputs\n    z.txt\n";
@@ -785,7 +785,7 @@ fn node_held_in_a_valid_network_is_served_and_released() {
 
 /// A *network file* of one *node* with two *inputs*, which its *meta compiler DSL* parses
 /// together.
-const JOIN: &str = "meta compiler-compiler network n.gc3n\n\
+const JOIN: &str = "meta compiler-compiler network\n\
     node join\n  inputs\n    names.txt\n    greeting.txt\n  \
     outputs\n    letters.txt\n    both.txt\n";
 

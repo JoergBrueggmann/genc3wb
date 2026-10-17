@@ -87,7 +87,7 @@ ApplicationWindow {
  *                    NodeEditor::meta_dsl, NodeEditor::output */
 
 // The case needs a Qt platform, for which it chooses the offscreen one, and a working directory
-// of its own, since the *workbench object* takes the lock file of the settings file beside it.
+// of its own; the settings file lies beside the test executable, where the *workbench object* writes it.
 
 #[test]
 #[ignore]
