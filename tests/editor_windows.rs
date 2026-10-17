@@ -22,9 +22,9 @@ const ONE_NODE: &str = "meta compiler-compiler network n.gc3n\n\
 
 /// The *meta compiler DSL* of the *node*: a syntax matching the letters of 'hello world', and a
 /// generator emitting the matched text.
-const COPY_META_DSL: &str = "syntax\n    root = chars, EOS\n    chars = ch, { ch }\n    \
-    ch = 'h' | 'e' | 'l' | 'o' | 'w' | 'r' | 'd' | ' '\n\
-    generator copy input \"in.txt\" output \"out.txt\"\n    root -> flat(#1)\n";
+const COPY_META_DSL: &str = "syntax\n    Root = Chars, EOS\n    Chars = Ch, { Ch }\n    \
+    Ch = 'h' | 'e' | 'l' | 'o' | 'w' | 'r' | 'd' | ' '\n\
+    generator\n    Root -> flat(#0)\n";
 
 /// Yields the path of the build system: the environment variable `GENC3D`.
 fn build_system() -> String {

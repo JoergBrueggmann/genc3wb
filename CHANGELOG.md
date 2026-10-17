@@ -11,6 +11,28 @@ and this project adheres to a four-part version number.
 
 At the moment, nothing unreleased here.
 
+## [0.28.0.1] - 2026-10-16
+
+**_Meta_compiler_DSL_fixtures_of_the_integration_tests_**
+
+Leading work item: genc3 0.34.0.0
+
+- Rewrite the *meta compiler DSLs* of the integration tests 'tests/build_system.rs' and 'tests/editor_windows.rs' to the notation of genc³ 0.34.0.0 ('**_Generator_sections_without_file_names_**'): the head line of a *generator section* is `generator` or `generator binary`, without a name and without the clauses naming the files; the *inputs section* of the fixture of the *node* `join` becomes the *input section* `input as` with two *parts*, its sections reading the composition `input` by the roots `Names` and `Greeting`; every rule of a *syntax section* begins with a capital letter.
+- Raise the version in 'Cargo.toml' and 'Cargo.lock' to 0.28.0+1, which the test of the version holds to the topmost version heading of 'CHANGELOG.md'. The 432 unit tests pass by `cargo test`; the 27 integration tests pass by `GENC3D=<genc3 dist>/bin/genc3d cargo test -- --ignored` against genc3d 0.34.0.0; `cargo fmt --check` and `cargo clippy --all-targets` report nothing.
+- Changes nothing of what the project folder delivers: a build bump.
+
+## [0.28.0.0] - 2026-10-16
+
+**_Indexing_zero-based_except_human-readable_lines_and_columns_**
+
+Leading work item: genc3 0.33.0.0
+
+- Engineer the *change request* '**_Indexing_zero-based_except_human-readable_lines_and_columns_**', decided by the product owner on 2026-10-16 (1 b), as genc³wb definition 0.24.0.0 states it: the label of the *inputs* of a *node window* and the page label of the output group count the presented *input* and the presented page from 0, `Input 0 of 2`, `Output 0 of 2` and `Diagnostics (page 0 of 2)`, the number after `of` staying the count; NodeWindow.qml and OutputGroup.qml bind the labels to `inputPage` and `pageIndex` as they are, without adding 1.
+- Test the page label: 'tests/qml/tst_output_group.qml' presents the output group with a stand-in of its bridged type and reads the label on the first *output page*, on a further one and on the *diagnostics page*, run by 'tests/output_group.rs' through the QML test runner, whose invocation 'tests/code_editor.rs' and the new file share in 'tests/qml_runner/mod.rs'; the label carries the object name `pageLabel` for it, and the stand-ins Editing.qml and Workbench.qml of 'tests/qml' gain `modeSelected` and `tabSize`, which the output group reaches.
+- Rewrite the *positional references* of the *meta compiler DSLs* of the integration tests 'tests/build_system.rs' and 'tests/editor_windows.rs' from `#1`, `#2`, ... to `#0`, `#1`, ..., as genc³ 0.33.0.0 reads them.
+- Raise the version in 'Cargo.toml' and 'Cargo.lock' to 0.28.0.
+- Changes what the user reads incompatibly with the version before: a minor bump, the major part being 0.
+
 ## [0.27.0.1] - 2026-10-16
 
 **_README_aligned_with_the_marketing_of_genc³_**

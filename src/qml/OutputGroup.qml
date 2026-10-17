@@ -41,9 +41,10 @@ GroupBox {
             Label {
                 id: pageLabel
 
+                objectName: "pageLabel"
                 text: root.output.diagnosticsPage
-                      ? qsTr("Diagnostics (page %1 of %2)").arg(root.output.pageIndex + 1).arg(root.output.pageCount)
-                      : qsTr("Output %1 of %2").arg(root.output.pageIndex + 1).arg(root.output.pageCount)
+                      ? qsTr("Diagnostics (page %1 of %2)").arg(root.output.pageIndex).arg(root.output.pageCount)
+                      : qsTr("Output %1 of %2").arg(root.output.pageIndex).arg(root.output.pageCount)
             }
 
             Button {

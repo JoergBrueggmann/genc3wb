@@ -113,7 +113,7 @@ Window {
                             Label {
                                 id: inputLabel
 
-                                text: qsTr("Input %1 of %2").arg(nodeWindow.node.inputPage + 1).arg(nodeWindow.node.inputCount)
+                                text: qsTr("Input %1 of %2").arg(nodeWindow.node.inputPage).arg(nodeWindow.node.inputCount)
                             }
 
                             Button {

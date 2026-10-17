@@ -1,5 +1,6 @@
-// The stand-in of the bridged type Workbench for the tests of the code editor: the typing mode, and the
-// insert key, which the test sets and which toggles the typing mode as Workbench::toggled_by_key does.
+// The stand-in of the bridged type Workbench for the tests of the code editor and of the output group: the
+// typing mode, the insert key, which the test sets and which toggles the typing mode as
+// Workbench::toggled_by_key does, and the tab size.
 //
 // Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 // Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -18,6 +19,8 @@ QtObject {
     property int insertModifiers: Qt.NoModifier
     // the number of times the typing mode was toggled by a key
     property int toggles: 0
+    // the tab size of every code editor
+    property int tabSize: 4
 
     // Toggles the typing mode where the key event is the insert key, and yields whether it is; the
     // modifiers kept are those KeyStroke::new keeps: Control, Shift, Alt and Meta.

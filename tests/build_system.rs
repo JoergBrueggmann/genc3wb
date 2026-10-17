@@ -140,7 +140,7 @@ fn content_awaited(runner: &mut NodeRunner, document: &str, expected: &[u8]) -> 
 #[ignore]
 fn build_yields_the_nodes_and_the_laid_out_graph() {
     let directory = case_directory("build", TWO_NODES);
-    write(&directory, "a.gc3", &copy_meta_dsl("a.in", "x.txt"));
+    write(&directory, "a.gc3", COPY_META_DSL);
     write(&directory, "a.in", "hello");
     let (mut builder, started) = started(&directory, no_sinks());
     let built = builder
@@ -183,7 +183,7 @@ fn build_yields_the_nodes_and_the_laid_out_graph() {
 #[ignore]
 fn faulty_edit_fails_with_the_fault_and_its_correction_succeeds_again() {
     let directory = case_directory("edit", TWO_NODES);
-    write(&directory, "a.gc3", &copy_meta_dsl("a.in", "x.txt"));
+    write(&directory, "a.gc3", COPY_META_DSL);
     write(&directory, "a.in", "hello");
     let (mut builder, _) = started(&directory, no_sinks());
     let faulty = TWO_NODES.replace("node b", "nod b");
@@ -223,17 +223,17 @@ const PRODUCED_META_DSL: &str = "meta compiler-compiler network n.gc3n\n\
     node b\n  inputs\n    b.in\n  outputs\n    out.txt\n";
 
 /// A *meta compiler DSL* of `a` whose *output* is the *meta compiler DSL* of `b`: a generator
-/// emitting the text of [`copy_meta_dsl`] for `b.in` and `out.txt` as a literal, so that `b`
-/// copies its *input* to its *output*.
+/// emitting the text of [`COPY_META_DSL`] as a literal, so that `b` copies its *input* to its
+/// *output*.
 fn producing_meta_dsl() -> String {
-    let produced = copy_meta_dsl("b.in", "out.txt")
+    let produced = COPY_META_DSL
         .replace('\\', "\\\\")
         .replace('"', "\\\"")
         .replace('\n', "\\n");
     format!(
-        "syntax\n    root = chars, EOS\n    chars = ch, {{ ch }}\n    \
-         ch = 'h' | 'e' | 'l' | 'o' | 'w' | 'r' | 'd' | ' '\n\
-         generator gen input \"a.in\" output \"b.gc3\"\n    root -> \"{produced}\"\n"
+        "syntax\n    Root = Chars, EOS\n    Chars = Ch, {{ Ch }}\n    \
+         Ch = 'h' | 'e' | 'l' | 'o' | 'w' | 'r' | 'd' | ' '\n\
+         generator\n    Root -> \"{produced}\"\n"
     )
 }
 
@@ -244,24 +244,21 @@ const CHAIN: &str = "meta compiler-compiler network n.gc3n\n\
     node b\n  inputs\n    x.txt\n  outputs\n    y.txt\n\
     node c\n  inputs\n    y.txt\n  outputs\n    z.txt\n";
 
-/// Yields a *meta compiler DSL* whose *input* is copied to its *output*: a syntax matching the
-/// letters of 'hello world', and a generator emitting the matched text.
-fn copy_meta_dsl(input: &str, output: &str) -> String {
-    format!(
-        "syntax\n    root = chars, EOS\n    chars = ch, {{ ch }}\n    \
-         ch = 'h' | 'e' | 'l' | 'o' | 'w' | 'r' | 'd' | ' '\n\
-         generator copy input \"{input}\" output \"{output}\"\n    root -> flat(#1)\n"
-    )
-}
+/// A *meta compiler DSL* whose *input* is copied to its *output*: a syntax matching the letters
+/// of 'hello world', and a generator emitting the matched text; it names no file, the *node*
+/// does.
+const COPY_META_DSL: &str = "syntax\n    Root = Chars, EOS\n    Chars = Ch, { Ch }\n    \
+    Ch = 'h' | 'e' | 'l' | 'o' | 'w' | 'r' | 'd' | ' '\n\
+    generator\n    Root -> flat(#0)\n";
 
 /// Writes the files of the chain of [`CHAIN`] into a directory unique to `case`: the three
 /// *meta compiler DSLs*, each copying its *input* to its *output*, and the *source input*
 /// 'a.in' holding 'hello'.
 fn chain_directory(case: &str) -> PathBuf {
     let directory = case_directory(case, CHAIN);
-    write(&directory, "a.gc3", &copy_meta_dsl("a.in", "x.txt"));
-    write(&directory, "b.gc3", &copy_meta_dsl("x.txt", "y.txt"));
-    write(&directory, "c.gc3", &copy_meta_dsl("y.txt", "z.txt"));
+    write(&directory, "a.gc3", COPY_META_DSL);
+    write(&directory, "b.gc3", COPY_META_DSL);
+    write(&directory, "c.gc3", COPY_META_DSL);
     write(&directory, "a.in", "hello");
     directory
 }
@@ -273,7 +270,7 @@ fn chain_directory(case: &str) -> PathBuf {
 #[ignore]
 fn node_is_attached_to_and_answers_a_change_with_diagnostics_and_the_store_writes_its_output() {
     let directory = case_directory("node", ONE_NODE);
-    write(&directory, "a.gc3", &copy_meta_dsl("a.in", "x.txt"));
+    write(&directory, "a.gc3", COPY_META_DSL);
     write(&directory, "a.in", "hello");
     let (mut builder, started) = started(&directory, no_sinks());
     let (told, _states) = channel();
@@ -323,7 +320,7 @@ fn node_is_attached_to_and_answers_a_change_with_diagnostics_and_the_store_write
 fn diagnostics_of_an_empty_input_are_told_and_taken_without_an_edit() {
     // the syntax asks for one character at least, and the file of the input is empty
     let directory = case_directory("empty", ONE_NODE);
-    write(&directory, "a.gc3", &copy_meta_dsl("a.in", "x.txt"));
+    write(&directory, "a.gc3", COPY_META_DSL);
     write(&directory, "a.in", "");
     let (builder, started) = started(&directory, no_sinks());
     let (told, states) = channel();
@@ -355,10 +352,10 @@ fn diagnostics_of_an_empty_input_are_told_and_taken_without_an_edit() {
 
 /// A *meta compiler DSL* whose *input* is octets beginning with the octet `0xFF`, and whose
 /// *binary output* is the complement of every octet after it.
-const COMPLEMENT_META_DSL: &str = "syntax\n    root = 0xFF, octets, EOS\n    \
-    octets = octets, octet | octet\n    octet = bits 8\n\
-    generator complement input \"a.in\" output \"x.txt\" binary\n    root -> #2\n    \
-    octets -> #1 ++ [#2] | -> [#1]\n    octet :: U8\n    octet -> fromInteger(255 - #1)\n";
+const COMPLEMENT_META_DSL: &str = "syntax\n    Root = 0xFF, Octets, EOS\n    \
+    Octets = Octets, Octet | Octet\n    Octet = bits 8\n\
+    generator binary\n    Root -> #1\n    \
+    Octets -> #0 ++ [#1] | -> [#0]\n    Octet :: U8\n    Octet -> fromInteger(255 - #0)\n";
 
 // FR-107, FR-109, FR-111, FR-167, FR-169, FR-170, FR-210, IR-027, IR-028
 // needs the service executable genc3d of genc³ 0.30.2.1 or later, named by the environment
@@ -437,7 +434,7 @@ fn octets_are_served_as_a_binary_document_with_octet_deltas_stores_and_diagnosti
 #[ignore]
 fn store_fails_where_the_directory_of_the_network_was_deleted_and_created_anew() {
     let directory = case_directory("lost", ONE_NODE);
-    write(&directory, "a.gc3", &copy_meta_dsl("a.in", "x.txt"));
+    write(&directory, "a.gc3", COPY_META_DSL);
     write(&directory, "a.in", "hello");
     let (mut builder, started) = started(&directory, no_sinks());
     let (told, _states) = channel();
@@ -622,7 +619,7 @@ fn activation_fails_while_a_node_is_invalid_and_succeeds_once_it_is_corrected() 
                 .any(|state| state.name == "a" && state.mode.is_none())
     });
     let refused = builder.activate();
-    write(&directory, "a.gc3", &copy_meta_dsl("a.in", "x.txt"));
+    write(&directory, "a.gc3", COPY_META_DSL);
     let activated = builder.activate();
     let active = awaited(&network_states, |watched| {
         watched.mode == Some(NetworkMode::Active)
@@ -700,7 +697,7 @@ fn node_held_in_a_valid_network_is_served_and_released() {
     // the network activates at start-up; the deactivation ends the node, which the hold request
     // starts again and serves while the network stays a valid network
     let directory = case_directory("hold", ONE_NODE);
-    write(&directory, "a.gc3", &copy_meta_dsl("a.in", "x.txt"));
+    write(&directory, "a.gc3", COPY_META_DSL);
     write(&directory, "a.in", "hello");
     let (network_told, network_states) = channel();
     let (mut builder, started) = started(&directory, sinks_to(network_told));
@@ -792,17 +789,18 @@ const JOIN: &str = "meta compiler-compiler network n.gc3n\n\
     node join\n  inputs\n    names.txt\n    greeting.txt\n  \
     outputs\n    letters.txt\n    both.txt\n";
 
-/// The *meta compiler DSL* of the *node* `join`, with an *inputs section*: every name of the
-/// first *input* is greeted with the word of the second.
-const JOIN_META_DSL: &str = "inputs\n    FileSum = Names, Greeting\nsyntax\n    \
-    Names = names, EOS\n    names = nameLine, names | ()\n    nameLine! = name, NEWLINE\n    \
-    name! = letter, { letter }\n    letter = 'a' .. 'z' | 'A' .. 'Z'\n    \
-    Greeting = word, [ NEWLINE ], EOS\n    word! = letter, { letter }\n\n\
-    generator\n    FileSum -> text(#1)\n    Names -> text(#1)\n    \
-    names -> text(#1) ++ text(#2) | -> \"\"\n    \
-    nameLine -> flat(@~/Greeting/word) ++ \", \" ++ flat(#1) ++ \"!\\n\"\n\n\
-    generator\n    FileSum -> \"names:\\n\" ++ flat(#1) ++ \"greeting:\\n\" ++ flat(#2)\n";
-
+/// The *meta compiler DSL* of the *node* `join`, with an *input section* of two *parts*: every
+/// name of the first *input* is greeted with the word of the second.
+const JOIN_META_DSL: &str = "input as\n    NamesFile, GreetingFile\nsyntax\n    \
+    Names = NameLines, EOS\n    NameLines = NameLine, NameLines | ()\n    \
+    NameLine! = Name, NEWLINE\n    Name! = Letter, { Letter }\n    \
+    Letter = 'a' .. 'z' | 'A' .. 'Z'\n    \
+    Greeting = Word, [ NEWLINE ], EOS\n    Word! = Letter, { Letter }\n\n\
+    generator from input by (Names, Greeting)\n    input -> text(#0)\n    Names -> text(#0)\n    \
+    NameLines -> text(#0) ++ text(#1) | -> \"\"\n    \
+    NameLine -> flat(@~/Greeting/Word) ++ \", \" ++ flat(#0) ++ \"!\\n\"\n\n\
+    generator from input by (Names, Greeting)\n    \
+    input -> \"names:\\n\" ++ flat(#0) ++ \"greeting:\\n\" ++ flat(#1)\n";
 // FR-225, FR-231, IR-028
 // needs the service executable genc3d of genc³ 0.30.2.1 or later, named by the environment
 // variable GENC3D
@@ -1003,11 +1001,7 @@ fn meta_compiler_dsl_produced_by_another_node_is_received_and_the_network_activa
                 .iter()
                 .any(|(document, _)| document == "b.gc3")
     });
-    let meta_dsl = content_awaited(
-        &mut runner,
-        "b.gc3",
-        copy_meta_dsl("b.in", "out.txt").as_bytes(),
-    );
+    let meta_dsl = content_awaited(&mut runner, "b.gc3", COPY_META_DSL.as_bytes());
     // the store writes the output of b, copied from its input by the produced meta compiler
     // DSL, and the meta compiler DSL file of b, written by a
     let stored = builder.store();
@@ -1037,7 +1031,7 @@ fn meta_compiler_dsl_produced_by_another_node_is_received_and_the_network_activa
             true,
             Ok(()),
             Some("world".to_owned()),
-            Some(copy_meta_dsl("b.in", "out.txt"))
+            Some(COPY_META_DSL.to_owned())
         )
     );
 }

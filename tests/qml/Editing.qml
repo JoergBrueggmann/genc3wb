@@ -1,5 +1,6 @@
-// The stand-in of the bridged type Editing for the tests of the code editor: every function the code
-// editor and the octet view call, yielding a value of the right form for a document of two octets.
+// The stand-in of the bridged type Editing for the tests of the code editor and of the output group: every
+// function the code editor, the octet view and the mode switch call, yielding a value of the right form for
+// a document of two octets.
 //
 // Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 // Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -82,5 +83,9 @@ QtObject {
 
     function typingSpan(cursor: int, anchor: int, count: int, insert: bool): var {
         return [cursor, insert ? 0 : count];
+    }
+
+    function modeSelected(chosen: int, documentIsText: bool): int {
+        return chosen >= 0 ? chosen : (documentIsText ? 0 : 1);
     }
 }
