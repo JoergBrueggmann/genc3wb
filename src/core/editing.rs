@@ -114,6 +114,32 @@ pub fn indentation_of_line(text: &str, cursor: usize) -> String {
         .collect()
 }
 
+// realises FR-492
+/// Yields the number of spaces that reach the next tab stop from the column of the offset
+/// `cursor`, the tab stops lying at every multiple of `tab_size` columns.
+///
+/// * `cursor` is counted in UTF-16 code units from 0, as [`line_span`] counts offsets.
+/// * The column is counted from the start of the line that holds `cursor`: a tab character of
+///   the line ends at its tab stop, every other character takes one column.
+/// * A `tab_size` of 0 is taken as 1, so that one space is yielded.
+pub fn spaces_to_tab_stop(text: &str, cursor: usize, tab_size: usize) -> usize {
+    let tab_size = tab_size.max(1);
+    let mut column = 0;
+    let mut offset = 0;
+    for character in text.chars() {
+        if offset >= cursor {
+            break;
+        }
+        offset += character.len_utf16();
+        column = match character {
+            '\n' => 0,
+            '\t' => (column / tab_size + 1) * tab_size,
+            _ => column + 1,
+        };
+    }
+    tab_size - column % tab_size
+}
+
 // realises FR-145
 /// Yields the offset of a view that shows the span from `start` to `end` of its content, moved
 /// as little as possible from `offset`.
@@ -446,5 +472,20 @@ mod tests {
     fn content_smaller_than_the_view_yields_zero() {
         // FR-145
         assert_eq!(view_offset_showing(30.0, 100.0, 80.0, 10.0, 20.0), 0.0);
+    }
+
+    #[test]
+    fn the_spaces_to_the_next_tab_stop_follow_the_column_of_the_cursor() {
+        // FR-492: at the start of a line a whole tab size; after one character one less; after a
+        // tab character a whole tab size again; a line before does not count; a tab size of 0
+        // yields one space
+        assert_eq!(spaces_to_tab_stop("", 0, 4), 4);
+        assert_eq!(spaces_to_tab_stop("a", 1, 4), 3);
+        assert_eq!(spaces_to_tab_stop("abcd", 4, 4), 4);
+        assert_eq!(spaces_to_tab_stop("\tab", 3, 4), 2);
+        assert_eq!(spaces_to_tab_stop("ab\tc", 4, 4), 3);
+        assert_eq!(spaces_to_tab_stop("abcdef\nx", 8, 4), 3);
+        assert_eq!(spaces_to_tab_stop("ab", 2, 0), 1);
+        assert_eq!(spaces_to_tab_stop("ab", 9, 4), 2);
     }
 }

@@ -24,6 +24,13 @@ QtObject {
         return "";
     }
 
+    // the spaces to the next tab stop, counted over spaces and characters of the line alone, as the
+    // tests type no tab character before the cursor
+    function spacesToTabStop(text: string, cursor: int, tabSize: int): int {
+        const lineStart = text.lastIndexOf("\n", cursor - 1) + 1;
+        return tabSize - (cursor - lineStart) % tabSize;
+    }
+
     function viewOffsetShowing(offset: real, view: real, content: real, start: real, end: real): real {
         return offset;
     }

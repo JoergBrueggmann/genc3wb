@@ -1,6 +1,6 @@
-// One input group: file name field, file selector, indicator, the mode switch of an input, code editor with
-// the marks of the diagnostics, which is read-only for an input of a producer, detach button, and the dialogs
-// of that group.
+// One input group: read-only file name field, file selector and new-file button where the user names the
+// file, indicator, the mode switch of an input, code editor with the marks of the diagnostics, which is
+// read-only for an input of a producer, detach button, and the dialogs of that group.
 //
 // Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 // Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -36,13 +36,13 @@ GroupBox {
         RowLayout {
             spacing: 5
 
+            // the file name field accepts no text: the file is named by the dialogs (FR-116)
             TextField {
                 id: pathField
 
                 Layout.fillWidth: true
                 text: root.group?.path ?? ""
-                readOnly: !(root.group?.selectable ?? false)
-                onEditingFinished: root.group.path = pathField.text
+                readOnly: true
             }
 
             ToolButton {
@@ -51,6 +51,15 @@ GroupBox {
                 text: "..."
                 visible: root.group?.selectable ?? false
                 onClicked: fileDialog.open()
+            }
+
+            // the new-file button: a new network file holding the network template (FR-482)
+            ToolButton {
+                id: newButton
+
+                text: "+"
+                visible: root.group?.selectable ?? false
+                onClicked: newFileDialog.open()
             }
 
             ModeSwitch {
@@ -87,6 +96,7 @@ GroupBox {
             idleTime: Workbench.idleTime
             longIdleTime: Workbench.longIdleTime
             tabSize: Workbench.tabSize
+            tabsToSpaces: Workbench.tabsToSpaces
             onTextEdited: {
                 if (editor.mode === 0) {
                     root.group.text = editor.text;
@@ -122,6 +132,26 @@ GroupBox {
         onRejected: root.group.answerSave(false)
     }
 
+    // the file dialog of the operating system for a new network file, which asks before a file that exists is
+    // replaced (FR-482); the file named is written with the network template and named (FR-484)
+    FileDialog {
+        id: newFileDialog
+
+        title: root.group?.caption ?? ""
+        fileMode: FileDialog.SaveFile
+        defaultSuffix: "gc3n"
+        nameFilters: [root.group?.fileFilter ?? ""]
+        onAccepted: root.group.createFile(PathOfUrl.path(newFileDialog.selectedFile))
+    }
+
+    // names the file that could not be written and the reason (FR-485)
+    MessageDialog {
+        id: creationFailedDialog
+
+        title: root.group?.caption ?? ""
+        buttons: MessageDialog.Ok
+    }
+
     Connections {
         target: root.group
 
@@ -131,6 +161,11 @@ GroupBox {
 
         function onDocumentChanged() {
             modeSwitch.chosen = -1;
+        }
+
+        function onFileCreationFailed(message) {
+            creationFailedDialog.text = message;
+            creationFailedDialog.open();
         }
     }
 }

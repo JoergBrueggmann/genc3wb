@@ -1,5 +1,6 @@
-// The modal settings dialog: the idle time and the long idle time of every code editor, in seconds with one
-// decimal, the automatic setting, and the tab size of every code editor.
+// The modal settings dialog, in three parts: the automatic setting with the idle time and the long idle time
+// of every code editor, in seconds with one decimal; the tab size and the spaces setting of every code editor;
+// and the silent creation setting of the input creation confirmation dialog.
 //
 // Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 // Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -33,6 +34,8 @@ Dialog {
         longIdleTimeBox.value = Workbench.longIdleTime / 100;
         automaticBox.checked = Workbench.automatic;
         tabSizeBox.value = Workbench.tabSize;
+        spacesBox.checked = Workbench.tabsToSpaces;
+        silentBox.checked = Workbench.silentCreation;
         errorLabel.text = "";
     }
 
@@ -52,7 +55,7 @@ Dialog {
             text: qsTr("OK")
             onClicked: {
                 if (Workbench.trySetSettings(idleTimeBox.value * 100, longIdleTimeBox.value * 100, automaticBox.checked,
-                                             tabSizeBox.value)) {
+                                             tabSizeBox.value, spacesBox.checked, silentBox.checked)) {
                     settingsDialog.accept();
                 }
             }
@@ -62,8 +65,15 @@ Dialog {
     ColumnLayout {
         spacing: 5
 
+        CheckBox {
+            id: automaticBox
+
+            text: qsTr("Set the times automatically from the processing time")
+            checked: Workbench.automatic
+        }
+
         GridLayout {
-            id: layout
+            id: timesLayout
 
             columns: 3
             // a label, its field and the text beside it belong together
@@ -119,6 +129,26 @@ Dialog {
 
                 text: qsTr("Seconds until the error message of a failed build is shown")
             }
+        }
+
+        // the line between the times and the settings of the code editor: 8 pixels from the
+        // content on each side, the spacing of the column and its margins
+        Rectangle {
+            id: editorSeparator
+
+            Layout.fillWidth: true
+            Layout.topMargin: 3
+            Layout.bottomMargin: 3
+            implicitHeight: 1
+            color: settingsDialog.palette.mid
+        }
+
+        GridLayout {
+            id: editorLayout
+
+            columns: 3
+            columnSpacing: 3
+            rowSpacing: 5
 
             Label {
                 id: tabSizeLabel
@@ -144,11 +174,31 @@ Dialog {
             }
         }
 
+        // the spaces setting (FR-492)
         CheckBox {
-            id: automaticBox
+            id: spacesBox
 
-            text: qsTr("Set the times automatically from the processing time")
-            checked: Workbench.automatic
+            text: qsTr("Converted to spaces")
+            checked: Workbench.tabsToSpaces
+        }
+
+        // the line between the settings of the code editor and the one of the dialog
+        Rectangle {
+            id: creationSeparator
+
+            Layout.fillWidth: true
+            Layout.topMargin: 3
+            Layout.bottomMargin: 3
+            implicitHeight: 1
+            color: settingsDialog.palette.mid
+        }
+
+        // the silent creation setting (FR-490)
+        CheckBox {
+            id: silentBox
+
+            text: qsTr("Disable input creation confirmation dialog")
+            checked: Workbench.silentCreation
         }
 
         Label {

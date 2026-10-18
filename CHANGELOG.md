@@ -11,6 +11,43 @@ and this project adheres to a four-part version number.
 
 At the moment, nothing unreleased here.
 
+## [0.31.0.0] - 2026-10-18
+
+**_Meta_compiler_DSL_created_from_a_template_when_missing_**
+
+Leading work item: definition 0.27.0.0
+
+- Engineer the *change requests* '**_Meta_compiler_DSL_created_from_a_template_when_missing_**', decided by the product owner on 2026-10-18 and reconsidered at the gate of the same day, and '**_Tab_key_converted_to_spaces_**', as genc³wb definition 0.27.0.0 states them: when a *node* is opened or the network activated while the *meta compiler DSL* or an *input* of a *node* concerned does not exist, the *input creation confirmation dialog* names the files and creates them with their folders on 'Create', the *meta compiler DSL* from the *meta DSL template* and an *input* empty, before the *hold request* or the *activate request*; its check box switches the *silent creation setting* on; the settings dialog in three parts with the *spaces setting*, on which the Tab key inserts spaces up to the next tab stop.
+- `core::input_file`: the constant `META_DSL_TEMPLATE`, the types `MissingFile` and `CreationFailure`, the functions `missing_files` and `create_files`.
+- `core::settings`: the keys `tabs_to_spaces` and `silent_creation`, both off by default, with their getters and setters.
+- `core::editing` and `bridge::editing`: `spaces_to_tab_stop`, the slot `spacesToTabStop`.
+- `bridge::network_editor`: the opening of a *node*, the opening of a file and the activation prepare the files of the *nodes* concerned first (`files_to_create`, `prepared`), keep the action pending while a dialog is open, and emit `creationAsked` or `creationFailed`; the slots `answerCreation`, which also switches the *silent creation setting* on, and `answerCreationFailure`.
+- `bridge::workbench`: the properties `tabsToSpaces` and `silentCreation`, `trySetSettings` with both, the slot `announceSettingsStored` in place of `announceSettingsFailure`.
+- 'Main.qml': the *input creation confirmation dialog* with its check box, and the dialog of a failed creation; 'SettingsDialog.qml': the three parts separated by a line, in the order the product owner demanded; 'CodeEditor.qml': the property `tabsToSpaces` and the Tab key, bound in InputGroup.qml, OutputGroup.qml and EditorWindow.qml.
+- 'README.md': reduced to the features of the workbench, in the words of the messaging kit of marketing, on the instruction of the product owner at the gate of 2026-10-18; the description of the use is left to the documentation to be published on sw4sd.com and later on genc3.com, the building from source kept in short; the two features of this version added.
+- Tests: the unit tests of the missing files and their creation, of the two settings and of the spaces to the next tab stop; the QML tests of the Tab key; the integration tests against genc3d of a *node* opened while its *meta compiler DSL* and its *input* are missing, cancelled and confirmed ('meta_dsl_template.rs'), and of the network activated once the files of its *nodes* are created with the check box ('input_creation.rs'); 'network_template.rs' waits for the *build system* it starts before it shuts it down, so that no genc3d process is left behind; `cargo test` passes every test, `GENC3D=<genc3 dist>/bin/genc3d cargo test -- --ignored` the integration tests against genc3d 0.36.0.0.
+- Raise the version in 'Cargo.toml' and 'Cargo.lock' to 0.31.0.
+- A new capability: a minor bump, the major part being 0.
+
+
+## [0.30.0.0] - 2026-10-18
+
+**_Read-only_path_fields_of_the_network_file_and_the_build_system_**
+
+Leading work item: definition 0.26.0.0
+
+- Engineer the *change request* '**_Read-only_path_fields_of_the_network_file_and_the_build_system_**', decided by the product owner on 2026-10-18, as genc³wb definition 0.26.0.0 states it: the file name fields of the *network file* and of the *build system* are read-only, the paths are named by the file selector dialogs alone, and a new-file button creates a gc3n-file holding the *network template* and names it.
+- 'InputGroup.qml': `pathField` read-only, without `onEditingFinished`; the new-file button `newButton` beside the file selector button, the dialog `newFileDialog` for a file to be created, with the suffix 'gc3n' and the file filter of the *network file*, and the dialog `creationFailedDialog` naming a file that could not be written.
+- 'NetworkGraphGroup.qml': `buildSystemField` read-only, without `onTextEdited` and `onEditingFinished`.
+- `core::input_file`: the constant `NETWORK_TEMPLATE` and the function `write_network_template`, which writes it to a path.
+- `bridge::input_group`: the slot `createFile`, which writes the *network template* and names the file as a selected one, and the signal `fileCreationFailed` with the reason where the write fails.
+- `bridge::network_editor`: the slot `tryBuildSystemPath` removed with FR-092.
+- 'README.md': the fields and the new-file button.
+- Tests: the unit tests of the *network template* and of `write_network_template`; the integration test 'network_template.rs', the file created and named through the *input group* and the failure of the write reported; the test of the *editor windows* names the *build system* by the property `buildSystemPath`; `cargo test` passes 446 tests, `GENC3D=<genc3 dist>/bin/genc3d cargo test -- --ignored` the 29 integration tests against genc3d 0.36.0.0.
+- Raise the version in 'Cargo.toml' and 'Cargo.lock' to 0.30.0.
+- Takes a way of naming the paths away and adds the creation of a *network file*: a minor bump, the major part being 0.
+
+
 ## [0.29.0.1] - 2026-10-17
 
 **_Indented_nodes_and_no_network_name_in_the_compiler_network_meta_DSL_**

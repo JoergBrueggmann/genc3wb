@@ -19,9 +19,10 @@ use std::fs;
 
 #[test]
 fn the_paths_of_the_compiler_network_editor_are_restored_and_no_path_of_the_node_window() {
-    // FR-090, FR-091, FR-093, FR-094, FR-140, FR-149, FR-200, IR-011, IR-012: the settings file
-    // holds the two times, the automatic setting, the tab size, the positions of the three
-    // splitters, the network file, the build system and the insert key, and nothing else
+    // FR-090, FR-091, FR-093, FR-094, FR-140, FR-149, FR-200, FR-490, FR-492, IR-011, IR-012: the
+    // settings file holds the two times, the automatic setting, the tab size, the spaces
+    // setting, the silent creation setting, the positions of the three splitters, the network
+    // file, the build system and the insert key, and nothing else
     let dir = std::env::temp_dir().join(format!("genc3wb-settings-session-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     let file = dir.join(SETTINGS_FILE_NAME);
@@ -36,6 +37,8 @@ fn the_paths_of_the_compiler_network_editor_are_restored_and_no_path_of_the_node
     session
         .set_tab_size(2)
         .expect("the tab size satisfies the constraint");
+    session.set_tabs_to_spaces(true);
+    session.set_silent_creation(true);
     session.set_node_left_width(640);
     session.set_network_left_width(300);
     session.save(&file).expect("the settings can be stored");
@@ -51,18 +54,22 @@ fn the_paths_of_the_compiler_network_editor_are_restored_and_no_path_of_the_node
             restored.long_idle_time(),
             restored.automatic(),
             restored.tab_size(),
+            restored.tabs_to_spaces(),
+            restored.silent_creation(),
             restored.node_left_width(),
             restored.node_upper_height(),
             restored.network_left_width()
         ),
         (
-            10,
+            12,
             "/tmp/n.gc3n",
             Settings::default_build_system_path().as_str(),
             4200,
             9000,
             false,
             2,
+            true,
+            true,
             640,
             DEFAULT_NODE_UPPER_HEIGHT,
             300

@@ -9,7 +9,7 @@ use crate::bridge::node_editor::NodeEditor;
 use crate::core::api_message::{NetworkMode, NodeDescription, NodeState, marks_of_diagnostics};
 use crate::core::build_system::{BuildError, BuildSession, Watched};
 use crate::core::executable;
-use crate::core::input_file::InputKind;
+use crate::core::input_file::{InputKind, MissingFile, create_files, missing_files};
 use crate::core::network_builder::{BuildOutcome, BuiltGraph, NetworkBuilder, StateSinks};
 use crate::core::network_graph::{
     FileRole, GraphFile, GraphLayout, file_index_of_vertex, files_of_node, node_index_of_vertex,
@@ -145,8 +145,34 @@ struct PendingHold {
     window: bool,
 }
 
+// realises FR-487 to FR-491
+/// An action of the user that waits for the answer of a dialog on the files of its *nodes*: the
+/// opening of a *node* for a *node window*, the opening of a file for an *editor window*, or the
+/// activation of the network.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PendingAction {
+    /// a *node window* of the *node* of that name
+    Node { name: String },
+    /// an *editor window* on the file of that *document identifier*
+    File { identifier: String },
+    /// the *activate request* of the *activation switch*
+    Activation,
+}
+
+// realises FR-487 to FR-491
+/// What an action may do about the files of its *nodes* that do not exist.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CreationPolicy {
+    /// ask the user before the files are created, unless the *silent creation setting* is on
+    Ask,
+    /// create the files, the user having confirmed it
+    Create,
+    /// create nothing: the user chose to continue without the files
+    Skip,
+}
+
 // realises FR-001, FR-064, FR-085, FR-109, FR-229, FR-241, FR-252, FR-258, FR-259, FR-269,
-// FR-270, FR-273, FR-274, FR-281, FR-285, FR-290 to FR-293
+// FR-270, FR-273, FR-274, FR-281, FR-285, FR-290 to FR-293, FR-487 to FR-491
 /// The group for the *network graph* as the *front end* binds to it.
 #[derive(Default)]
 pub struct NetworkEditor {
@@ -197,6 +223,10 @@ pub struct NetworkEditor {
     /// the *nodes* whose *hold request* awaits its *response*, in the order of the requests,
     /// each with whether a *node window* is wanted for it (FR-281, FR-285, FR-294, FR-295)
     holds_pending: Vec<PendingHold>,
+    /// the action that waits for the answer of the *input creation confirmation dialog* or of
+    /// the dialog of a failed creation, with the files to be created; `None` where none does
+    /// (FR-488 to FR-491)
+    creation_pending: Option<(PendingAction, Vec<MissingFile>)>,
     /// the *node editors*: one per *node* held, by a *node window* or by *editor windows*,
     /// named by its *node*, and those whose *node* was released, unnamed, kept for the next
     /// *node* held (FR-001, FR-085, FR-296)
@@ -214,7 +244,7 @@ pub struct NetworkEditor {
     network_input: Option<QmlMethodInvoker>,
 }
 
-// realises FR-064 to FR-069, FR-078 to FR-083, FR-085 to FR-089, FR-091, FR-092, FR-102 to FR-105,
+// realises FR-064 to FR-069, FR-078 to FR-083, FR-085 to FR-089, FR-091, FR-102 to FR-105,
 // FR-109, FR-128, FR-228, FR-229, FR-235, FR-241, FR-245, FR-252, FR-258 to FR-263, FR-267 to
 // FR-270, FR-273 to FR-275, FR-281 to FR-287, FR-289 to FR-299
 #[qobject(NoQmlElement)]
@@ -382,20 +412,18 @@ impl NetworkEditor {
     #[qsignal(qml_name = "processingMeasured")]
     fn processing_measured(&mut self, processing_time: i32);
 
-    // slots
-    // realises FR-092
-    /// Names `path` as the path of the *build system* where it names an executable file; does
-    /// nothing otherwise, so that the path is used as soon as the user has typed one that works.
-    ///
-    /// # Arguments
-    /// * `path` - the text of the file name field of the *build system*, as the user typed it
-    #[qslot(qml_name = "tryBuildSystemPath")]
-    fn try_build_system_path(&mut self, path: String) {
-        if executable::is_executable(&path) {
-            self.set_build_system_path(path);
-        }
-    }
+    // files of the nodes about to be opened or activated do not exist: the front end presents
+    // the input creation confirmation dialog naming them, the meta compiler DSLs and the inputs
+    // each joined by line feeds, and answers by `answerCreation` (FR-487, FR-488)
+    #[qsignal(qml_name = "creationAsked")]
+    fn creation_asked(&mut self, meta_dsls: String, inputs: String);
 
+    // a folder or a file could not be created: the front end tells the user and answers by
+    // `answerCreationFailure` (FR-491)
+    #[qsignal(qml_name = "creationFailed")]
+    fn creation_failed(&mut self, message: String);
+
+    // slots
     // realises FR-080
     /// Presents the *error message* instead of the *network graph*.
     #[qslot(qml_name = "showError")]
@@ -565,6 +593,43 @@ impl NetworkEditor {
         }
     }
 
+    // realises FR-489
+    /// Answers the *input creation confirmation dialog* of `creation_asked`: where `create`,
+    /// switches the *silent creation setting* on and stores it where `silent`, creates the files
+    /// and carries out the pending action; drops the pending action otherwise, so that no
+    /// *hold request* and no *activate request* is transmitted and no window presented.
+    #[qslot(qml_name = "answerCreation")]
+    fn answer_creation(&mut self, create: bool, silent: bool) {
+        let Some((action, _)) = self.creation_pending.take() else {
+            return;
+        };
+        if !create {
+            return;
+        }
+        if let (true, Some(settings)) = (silent, &self.settings) {
+            let mut settings = settings.borrow_mut();
+            settings.set_silent_creation(true);
+            let _ = settings.store();
+            drop(settings);
+            crate::bridge::workbench::settings_stored();
+        }
+        self.resume(action, CreationPolicy::Create);
+    }
+
+    // realises FR-491
+    /// Answers the dialog of `creation_failed`: where `proceed`, carries out the pending action
+    /// without the files not created, as for files that do not exist; drops the pending action
+    /// otherwise.
+    #[qslot(qml_name = "answerCreationFailure")]
+    fn answer_creation_failure(&mut self, proceed: bool) {
+        let Some((action, _)) = self.creation_pending.take() else {
+            return;
+        };
+        if proceed {
+            self.resume(action, CreationPolicy::Skip);
+        }
+    }
+
     // realises FR-235, IR-036
     /// Opens the *node* of the name `name`, as `open_node` does: the *node* an *origin* names,
     /// whose icon the user activated; does nothing where the *network graph* holds no *node*
@@ -610,15 +675,28 @@ impl NetworkEditor {
         self.node_closed(name);
     }
 
-    // realises FR-259, FR-260
+    // realises FR-259, FR-260, FR-487
     /// Transmits an *activate request* to the *build system*: hands it to the build thread while
     /// a *network mode* is kept, the network is not an *active network* and no *request* of the
-    /// switch awaits its *response*; does nothing otherwise, the switch being disabled or `act`
+    /// switch awaits its *response*, the files of the *nodes* of the network prepared first
+    /// (`activate_preparing`); does nothing otherwise, the switch being disabled or `act`
     /// highlighted then. In an *invalid network* the *build system* refuses the *request*, and
     /// its error response becomes the *error message*.
     #[qslot(qml_name = "activate")]
     fn activate(&mut self) {
+        self.activate_preparing(CreationPolicy::Ask);
+    }
+
+    // realises FR-260, FR-487 to FR-491
+    /// Transmits the *activate request* as `activate` does, the files of every *node* of the
+    /// network prepared first (`prepared`) under `policy`: where the preparation waits for a
+    /// dialog, nothing else happens until its answer resumes the activation.
+    fn activate_preparing(&mut self, policy: CreationPolicy) {
         if !self.switchable() || self.states.is_active() {
+            return;
+        }
+        let names: Vec<String> = self.nodes.iter().map(|node| node.name.clone()).collect();
+        if !self.prepared(&names, PendingAction::Activation, policy) {
             return;
         }
         self.activations_pending += 1;
@@ -917,6 +995,15 @@ impl NetworkEditor {
     /// where the network serves *nodes*, and emits `file_opened`; does nothing for an index that
     /// names no file.
     fn open_file(&mut self, index: usize) {
+        self.open_file_preparing(index, CreationPolicy::Ask);
+    }
+
+    // realises FR-290, FR-294, FR-295, FR-487 to FR-491
+    /// Opens the file of index `index` as `open_file` does, the files of the *nodes* the window
+    /// would hold prepared first (`prepared`) under `policy`, where the network serves *nodes*:
+    /// where the preparation waits for a dialog, nothing else happens until its answer resumes
+    /// the opening.
+    fn open_file_preparing(&mut self, index: usize, policy: CreationPolicy) {
         let Some(file) = self.files.get(index).cloned() else {
             return;
         };
@@ -925,6 +1012,15 @@ impl NetworkEditor {
         if self.file_groups.iter().any(|slot| slot.path == path) {
             self.file_opened(path);
             return;
+        }
+        if self.states.serves_nodes() {
+            let holders = nodes_of_file(&file, &self.nodes);
+            let action = PendingAction::File {
+                identifier: file.identifier.clone(),
+            };
+            if !self.prepared(&holders, action, policy) {
+                return;
+            }
         }
         let (kind, producer) = match &file.role {
             FileRole::SourceInput { meta_dsl: true } => (InputKind::MetaDsl, String::new()),
@@ -1204,6 +1300,14 @@ impl NetworkEditor {
     /// network serves no *nodes*, in an *invalid network* or without a *network mode*, the
     /// status bar showing the *network mode*.
     fn open_node(&mut self, index: usize) {
+        self.open_node_preparing(index, CreationPolicy::Ask);
+    }
+
+    // realises FR-281, FR-487 to FR-491
+    /// Opens the *node* of index `index` as `open_node` does, its files prepared first
+    /// (`prepared`) under `policy`: where the preparation waits for a dialog, nothing else
+    /// happens until its answer resumes the opening.
+    fn open_node_preparing(&mut self, index: usize, policy: CreationPolicy) {
         if !self.states.serves_nodes() {
             return;
         }
@@ -1214,7 +1318,139 @@ impl NetworkEditor {
             return;
         }
         let name = node.name.clone();
-        self.hold(name, true);
+        let action = PendingAction::Node { name: name.clone() };
+        if self.prepared(std::slice::from_ref(&name), action, policy) {
+            self.hold(name, true);
+        }
+    }
+
+    // realises FR-487
+    /// Yields the files of the *nodes* `names` that are to be created: the file of the
+    /// *meta compiler DSL* and of each *input* that no *node* produces, resolved against the
+    /// directory of the *network file*, that does not exist, each path once; a *node* that is
+    /// held or being held contributes none, and a file an *input group* presents, in an
+    /// *editor window* or in a *node editor* that is named, is left out.
+    fn files_to_create(&self, names: &[String]) -> Vec<MissingFile> {
+        let directory = self.network_directory();
+        let resolved = |identifier: &str| path_of_identifier(Path::new(&directory), identifier);
+        let files_of = |name: &str| {
+            self.nodes
+                .iter()
+                .find(|node| node.name == name)
+                .and_then(|node| files_of_node(node, &self.nodes))
+        };
+        let presented: Vec<String> = self
+            .file_groups
+            .iter()
+            .filter(|slot| !slot.path.is_empty())
+            .map(|slot| slot.path.clone())
+            .chain(
+                self.editors
+                    .iter()
+                    .filter(|slot| !slot.name.is_empty())
+                    .filter_map(|slot| files_of(&slot.name))
+                    .flat_map(|files| {
+                        std::iter::once(files.meta_dsl)
+                            .chain(files.inputs)
+                            .map(|file| resolved(&file.identifier))
+                            .collect::<Vec<String>>()
+                    }),
+            )
+            .collect();
+        let mut candidates: Vec<(String, bool)> = Vec::new();
+        for name in names {
+            let held = self.editors.iter().any(|slot| &slot.name == name)
+                || self
+                    .holds_pending
+                    .iter()
+                    .any(|pending| &pending.name == name);
+            let Some(files) = files_of(name).filter(|_| !held) else {
+                continue;
+            };
+            let own = std::iter::once((files.meta_dsl, true))
+                .chain(files.inputs.into_iter().map(|file| (file, false)));
+            for (file, meta_dsl) in own {
+                if file.producer.is_empty() {
+                    let path = resolved(&file.identifier);
+                    if !presented.contains(&path) {
+                        candidates.push((path, meta_dsl));
+                    }
+                }
+            }
+        }
+        missing_files(&candidates)
+    }
+
+    // realises FR-487 to FR-491, IR-210
+    /// Prepares the files of the *nodes* `names` for the action `action`: yields `true` where
+    /// the action proceeds, since no file is to be created (`files_to_create`), the files were
+    /// created (`create_files`), under `Create` or while the *silent creation setting* is on, or
+    /// the user chose to continue without them (`Skip`); yields `false` where the action waits
+    /// for the answer of a dialog, kept as `creation_pending`: `creation_asked` with the files
+    /// under `Ask`, and `creation_failed` where a folder or a file could not be created.
+    fn prepared(
+        &mut self,
+        names: &[String],
+        action: PendingAction,
+        policy: CreationPolicy,
+    ) -> bool {
+        if policy == CreationPolicy::Skip {
+            return true;
+        }
+        let files = self.files_to_create(names);
+        if files.is_empty() {
+            return true;
+        }
+        let silent = self
+            .settings
+            .as_ref()
+            .is_some_and(|settings| settings.borrow().silent_creation());
+        if policy == CreationPolicy::Ask && !silent {
+            let joined = |meta_dsl: bool| {
+                files
+                    .iter()
+                    .filter(|file| file.meta_dsl == meta_dsl)
+                    .map(|file| file.path.as_str())
+                    .collect::<Vec<&str>>()
+                    .join("\n")
+            };
+            let (meta_dsls, inputs) = (joined(true), joined(false));
+            self.creation_pending = Some((action, files));
+            self.creation_asked(meta_dsls, inputs);
+            return false;
+        }
+        match create_files(&files) {
+            Ok(()) => true,
+            Err(failure) => {
+                self.creation_pending = Some((action, files));
+                self.creation_failed(format!("{}: {}", failure.path, failure.reason));
+                false
+            }
+        }
+    }
+
+    // realises FR-489, FR-491
+    /// Resumes the action `action` under `policy`: the *node* of the name or the file of the
+    /// *document identifier* as the *network graph* holds it now, or the activation; nothing
+    /// where the graph holds the *node* or the file no more.
+    fn resume(&mut self, action: PendingAction, policy: CreationPolicy) {
+        match action {
+            PendingAction::Node { name } => {
+                if let Some(index) = self.nodes.iter().position(|node| node.name == name) {
+                    self.open_node_preparing(index, policy);
+                }
+            }
+            PendingAction::File { identifier } => {
+                if let Some(index) = self
+                    .files
+                    .iter()
+                    .position(|file| file.identifier == identifier)
+                {
+                    self.open_file_preparing(index, policy);
+                }
+            }
+            PendingAction::Activation => self.activate_preparing(policy),
+        }
     }
 
     // realises FR-281, FR-284, FR-285, FR-294, FR-295, FR-296

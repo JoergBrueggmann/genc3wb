@@ -148,7 +148,7 @@ ApplicationWindow {{
     }}
 
     Component.onCompleted: {{
-        Workbench.network.tryBuildSystemPath("{build_system}");
+        Workbench.network.buildSystemPath = "{build_system}";
         Workbench.networkInput.path = "{network}";
     }}
 }}

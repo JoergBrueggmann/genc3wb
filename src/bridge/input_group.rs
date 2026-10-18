@@ -6,7 +6,7 @@
 use crate::bridge::document_registry::DocumentRegistry;
 use crate::core::api_message::Marks;
 use crate::core::file_lock::{FileLock, Refusal, Taking};
-use crate::core::input_file::{InputFile, InputKind, ProcessingState};
+use crate::core::input_file::{InputFile, InputKind, ProcessingState, write_network_template};
 use crate::core::launch;
 use crate::core::octet_edit::{digits_of_text, text_of_digits};
 use crate::core::octet_view::{EditorMode, row_count, row_segments, row_text_of_bits};
@@ -95,7 +95,7 @@ impl Default for InputGroup {
 // FR-116, FR-126, FR-127, FR-128, FR-154, FR-156 to FR-159,
 // FR-163 to FR-173, FR-175, FR-177, FR-179 to FR-187, FR-202, FR-203, FR-205, FR-207, FR-208,
 // FR-214, FR-216, FR-217, FR-219, FR-220, FR-238, FR-239, FR-240, FR-246, FR-247, FR-253,
-// FR-277 to FR-280
+// FR-277 to FR-280, FR-482, FR-484, FR-485, IR-209
 #[qobject(NoQmlElement)]
 impl InputGroup {
     qproperty!("caption", Read = caption, Constant);
@@ -190,7 +190,7 @@ impl InputGroup {
         self.kind().file_filter().to_owned()
     }
 
-    // realises FR-007, FR-116
+    // realises FR-007
     fn selectable(&self) -> bool {
         self.kind().is_selectable()
     }
@@ -314,6 +314,9 @@ impl InputGroup {
     #[qsignal(qml_name = "askToSave")]
     fn ask_to_save(&mut self, path: String);
 
+    #[qsignal(qml_name = "fileCreationFailed")]
+    fn file_creation_failed(&mut self, message: String);
+
     #[qsignal(qml_name = "refusalChanged")]
     fn refusal_changed(&mut self);
 
@@ -331,6 +334,26 @@ impl InputGroup {
     #[qslot(qml_name = "nameHanded")]
     fn name_handed(&mut self, path: String) {
         self.apply_path(&path, false);
+    }
+
+    // realises FR-482, FR-484, FR-485, IR-209
+    /// Writes the *network template* to the file at `path` and names the file as `set_path`
+    /// does, so that it is loaded, its path stored and the *build system* started on it; the
+    /// *network file* named already is reloaded without a question, since the user confirmed
+    /// its replacement in the dialog. Where the file cannot be written, emits
+    /// `file_creation_failed` with the file and the reason, and names nothing. Called by the
+    /// dialog of the new-file button.
+    #[qslot(qml_name = "createFile")]
+    fn create_file(&mut self, path: String) {
+        match write_network_template(&path) {
+            Ok(()) if path == self.path() => self.apply_path(&path, true),
+            Ok(()) => self.name_path(path),
+            Err(error) => {
+                self.file_creation_failed(format!(
+                    "The network file could not be created: {error}"
+                ));
+            }
+        }
     }
 
     // realises FR-014

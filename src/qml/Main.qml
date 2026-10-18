@@ -276,6 +276,85 @@ ApplicationWindow {
         }
     }
 
+    // the input creation confirmation dialog: names the files of the nodes about to be opened or
+    // activated that do not exist, each with its path (FR-487, FR-488); Create creates them with
+    // their missing folders and goes on, its check box switching the silent creation setting on,
+    // Cancel leaves the node, the file or the network as it is (FR-489)
+    Dialog {
+        id: creationDialog
+
+        property alias text: creationText.text
+
+        width: Math.min(mainWindow.width - 48, 640)
+        modal: true
+        title: qsTr("Create missing files")
+        anchors.centerIn: parent
+        footer: DialogButtonBox {
+            Button {
+                text: qsTr("Create")
+                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+            }
+            Button {
+                text: qsTr("Cancel")
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
+            }
+        }
+        onAboutToShow: silentBox.checked = false
+        onAccepted: Workbench.network.answerCreation(true, silentBox.checked)
+        onRejected: Workbench.network.answerCreation(false, false)
+
+        ColumnLayout {
+            width: creationDialog.availableWidth
+            spacing: 5
+
+            Label {
+                id: creationText
+
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+            }
+
+            CheckBox {
+                id: silentBox
+
+                text: qsTr("Do not show this dialog again")
+            }
+        }
+    }
+
+    // names the folder or the file that could not be created and the reason (FR-491); Continue
+    // goes on without the files not created, Cancel leaves the node, the file or the network as
+    // it is
+    Dialog {
+        id: creationFailureDialog
+
+        property alias text: creationFailureText.text
+
+        width: Math.min(mainWindow.width - 48, 560)
+        modal: true
+        title: qsTr("Files not created")
+        anchors.centerIn: parent
+        footer: DialogButtonBox {
+            Button {
+                text: qsTr("Continue")
+                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+            }
+            Button {
+                text: qsTr("Cancel")
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
+            }
+        }
+        onAccepted: Workbench.network.answerCreationFailure(true)
+        onRejected: Workbench.network.answerCreationFailure(false)
+
+        Label {
+            id: creationFailureText
+
+            width: creationFailureDialog.availableWidth
+            wrapMode: Text.Wrap
+        }
+    }
+
     SettingsDialog {
         id: settingsDialog
     }
@@ -369,6 +448,26 @@ ApplicationWindow {
 
         function onProcessingMeasured(processingTime) {
             Workbench.reportProcessingTime(processingTime);
+        }
+
+        // files of the nodes about to be opened or activated do not exist (FR-487, FR-488): the
+        // text lists the meta compiler DSLs and the inputs, each a line per path
+        function onCreationAsked(metaDsls, inputs) {
+            let text = qsTr("The following files do not exist yet. Create creates them, with the folders of their paths that are missing, and goes on.");
+            if (metaDsls.length > 0) {
+                text += "\n\n" + qsTr("Meta compiler DSL, from the template:") + "\n" + metaDsls;
+            }
+            if (inputs.length > 0) {
+                text += "\n\n" + qsTr("Input, empty:") + "\n" + inputs;
+            }
+            creationDialog.text = text;
+            creationDialog.open();
+        }
+
+        // a folder or a file could not be created (FR-491)
+        function onCreationFailed(message) {
+            creationFailureDialog.text = qsTr("A file could not be created: %1. Continue goes on without the files not created.").arg(message);
+            creationFailureDialog.open();
         }
     }
 

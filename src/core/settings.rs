@@ -1,5 +1,6 @@
-//! The *settings file*: the two times, the *automatic setting*, the *tab size*, the positions of
-//! the splitters and the paths of *product*, in YAML.
+//! The *settings file*: the two times, the *automatic setting*, the *tab size*, the *spaces
+//! setting*, the *silent creation setting*, the positions of the splitters and the paths of
+//! *product*, in YAML.
 //!
 //! Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 //! Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -44,6 +45,14 @@ pub const MIN_TAB_SIZE: u32 = 1;
 /// The greatest *tab size*.
 pub const MAX_TAB_SIZE: u32 = 16;
 
+// realises FR-094, FR-492
+/// Whether the *spaces setting* is on where the *settings file* does not hold it.
+pub const DEFAULT_TABS_TO_SPACES: bool = false;
+
+// realises FR-094, FR-490
+/// Whether the *silent creation setting* is on where the *settings file* does not hold it.
+pub const DEFAULT_SILENT_CREATION: bool = false;
+
 // realises FR-149
 /// The width of the left part of the *node window*, in pixels, where the *settings file* does not
 /// hold one (FR-146).
@@ -82,9 +91,10 @@ impl fmt::Display for SettingsError {
 
 impl std::error::Error for SettingsError {}
 
-// realises FR-090, FR-091, FR-093, FR-094, FR-133, FR-134, FR-140, FR-149
-/// The *idle time*, the *long idle time*, the *automatic setting*, the *tab size*, the positions
-/// of the splitters and the paths *product* restores between sessions.
+// realises FR-090, FR-091, FR-093, FR-094, FR-133, FR-134, FR-140, FR-149, FR-490, FR-492
+/// The *idle time*, the *long idle time*, the *automatic setting*, the *tab size*, the *spaces
+/// setting*, the *silent creation setting*, the positions of the splitters and the paths
+/// *product* restores between sessions.
 ///
 /// * The two times are held in milliseconds, as the code editors take them; the *settings file*
 ///   and the settings dialog carry them in seconds with one decimal.
@@ -103,6 +113,11 @@ pub struct Settings {
     automatic: bool,
     /// the *tab size* of every code editor, in characters
     tab_size: u32,
+    /// whether the *spaces setting* is on: the Tab key inserts spaces (FR-492)
+    tabs_to_spaces: bool,
+    /// whether the *silent creation setting* is on: the files of a *node* are created without
+    /// the *input creation confirmation dialog* (FR-490)
+    silent_creation: bool,
     /// the width of the left part of the *node window* (FR-146)
     node_left_width: u32,
     /// the height of the *input group* in the left part of the *node window* (FR-147)
@@ -120,14 +135,17 @@ pub struct Settings {
 impl Default for Settings {
     // realises FR-094, FR-140, FR-149
     /// The settings where no *settings file* exists: the two default times, the *automatic
-    /// setting* on, the default *tab size* and positions of the splitters, the *build system* of
-    /// the distribution, and no *network file*.
+    /// setting* on, the default *tab size* and positions of the splitters, the *spaces setting*
+    /// and the *silent creation setting* off, the *build system* of the distribution, and no
+    /// *network file*.
     fn default() -> Self {
         Settings {
             idle_time: DEFAULT_IDLE_TIME,
             long_idle_time: DEFAULT_LONG_IDLE_TIME,
             automatic: DEFAULT_AUTOMATIC,
             tab_size: DEFAULT_TAB_SIZE,
+            tabs_to_spaces: DEFAULT_TABS_TO_SPACES,
+            silent_creation: DEFAULT_SILENT_CREATION,
             node_left_width: DEFAULT_NODE_LEFT_WIDTH,
             node_upper_height: DEFAULT_NODE_UPPER_HEIGHT,
             network_left_width: DEFAULT_NETWORK_LEFT_WIDTH,
@@ -158,6 +176,11 @@ struct Stored {
     automatic: bool,
     #[serde(default = "default_tab_size")]
     tab_size: i64,
+    /// the *spaces setting* and the *silent creation setting* (FR-490, FR-492)
+    #[serde(default = "default_tabs_to_spaces")]
+    tabs_to_spaces: bool,
+    #[serde(default = "default_silent_creation")]
+    silent_creation: bool,
     #[serde(default = "default_node_left_width")]
     node_left_width: i64,
     #[serde(default = "default_node_upper_height")]
@@ -191,6 +214,16 @@ fn default_automatic() -> bool {
 /// The default of the key `tab_size`, for a *settings file* that lacks it.
 fn default_tab_size() -> i64 {
     i64::from(DEFAULT_TAB_SIZE)
+}
+
+/// The default of the key `tabs_to_spaces`, for a *settings file* that lacks it.
+fn default_tabs_to_spaces() -> bool {
+    DEFAULT_TABS_TO_SPACES
+}
+
+/// The default of the key `silent_creation`, for a *settings file* that lacks it.
+fn default_silent_creation() -> bool {
+    DEFAULT_SILENT_CREATION
 }
 
 /// The default of the key `node_left_width`, for a *settings file* that lacks it.
@@ -327,6 +360,8 @@ impl Settings {
             long_idle_time,
             automatic: stored.automatic,
             tab_size: clamped(stored.tab_size, MIN_TAB_SIZE, MAX_TAB_SIZE),
+            tabs_to_spaces: stored.tabs_to_spaces,
+            silent_creation: stored.silent_creation,
             node_left_width: clamped(stored.node_left_width, 0, u32::MAX),
             node_upper_height: clamped(stored.node_upper_height, 0, u32::MAX),
             network_left_width: clamped(stored.network_left_width, 0, u32::MAX),
@@ -357,6 +392,8 @@ impl Settings {
             long_idle_time: seconds_of_milliseconds(self.long_idle_time),
             automatic: self.automatic,
             tab_size: i64::from(self.tab_size),
+            tabs_to_spaces: self.tabs_to_spaces,
+            silent_creation: self.silent_creation,
             node_left_width: i64::from(self.node_left_width),
             node_upper_height: i64::from(self.node_upper_height),
             network_left_width: i64::from(self.network_left_width),
@@ -432,6 +469,30 @@ impl Settings {
         }
         self.tab_size = tab_size;
         Ok(())
+    }
+
+    // realises FR-492
+    /// Yields whether the *spaces setting* is on.
+    pub fn tabs_to_spaces(&self) -> bool {
+        self.tabs_to_spaces
+    }
+
+    // realises FR-099, FR-492
+    /// Switches the *spaces setting*.
+    pub fn set_tabs_to_spaces(&mut self, tabs_to_spaces: bool) {
+        self.tabs_to_spaces = tabs_to_spaces;
+    }
+
+    // realises FR-490
+    /// Yields whether the *silent creation setting* is on.
+    pub fn silent_creation(&self) -> bool {
+        self.silent_creation
+    }
+
+    // realises FR-099, FR-489
+    /// Switches the *silent creation setting*.
+    pub fn set_silent_creation(&mut self, silent_creation: bool) {
+        self.silent_creation = silent_creation;
     }
 
     // realises FR-146, FR-149
@@ -1102,5 +1163,46 @@ mod tests {
         let state = (store.store(), path.is_file());
         let _ = fs::remove_dir_all(&dir);
         assert_eq!(state, (Ok(()), true));
+    }
+
+    #[test]
+    fn default_settings_hold_both_switches_of_the_editor_and_the_dialog_off() {
+        // FR-094: the spaces setting and the silent creation setting are off
+        let settings = Settings::default();
+        assert_eq!(
+            (settings.tabs_to_spaces(), settings.silent_creation()),
+            (DEFAULT_TABS_TO_SPACES, DEFAULT_SILENT_CREATION)
+        );
+        assert_eq!(
+            (DEFAULT_TABS_TO_SPACES, DEFAULT_SILENT_CREATION),
+            (false, false)
+        );
+    }
+
+    #[test]
+    fn the_two_switches_survive_save_and_load_and_default_where_absent() {
+        // FR-093, FR-095, IR-011, IR-012: both keys written and read; a file without them
+        // yields them off
+        let file = case_file("switches");
+        let mut settings = Settings::default();
+        settings.set_tabs_to_spaces(true);
+        settings.set_silent_creation(true);
+        settings.save(&file).expect("the settings can be stored");
+        let content = fs::read_to_string(&file).expect("the settings file was written");
+        let restored = Settings::load(&file).expect("the settings can be restored");
+        fs::write(&file, "tab_size: 2\n").expect("the file can be written");
+        let without = Settings::load(&file).expect("a file without the keys is read");
+        remove_case(&file);
+        assert_eq!(
+            (
+                content.contains("tabs_to_spaces: true"),
+                content.contains("silent_creation: true"),
+                restored.tabs_to_spaces(),
+                restored.silent_creation(),
+                without.tabs_to_spaces(),
+                without.silent_creation()
+            ),
+            (true, true, true, true, false, false)
+        );
     }
 }

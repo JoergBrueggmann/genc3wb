@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-// realises FR-067, FR-092, FR-104
+// realises FR-067, FR-104
 /// Yields whether the file at `path` exists and is executable by the user.
 pub fn is_executable(path: &str) -> bool {
     let path = Path::new(path);
@@ -30,7 +30,7 @@ pub fn is_executable(path: &str) -> bool {
  * independence     : ✅
  * edge cases       : ✅
  * conforms to doc  : ✅
- * covers bridge    : NetworkEditor::set_build_system_path, NetworkEditor::try_build_system_path */
+ * covers bridge    : NetworkEditor::set_build_system_path */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -54,7 +54,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn file_without_execute_permission_is_not_executable() {
-        // FR-092
+        // FR-067
         let dir = std::env::temp_dir().join(format!("genc3wb-executable-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("the directory can be created");

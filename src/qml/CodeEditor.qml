@@ -23,6 +23,9 @@ Frame {
     property int longIdleTime: 16000
     // the tab size: the number of characters a tab character is displayed as wide
     property int tabSize: 4
+    // whether the Tab key inserts spaces up to the next tab stop instead of a tab character, the
+    // spaces setting (FR-492); off where no owner binds it
+    property bool tabsToSpaces: false
     // the index of the editor mode: 0 for txt, 1 for hex, 2 for bin
     property int mode: 0
     // the input group or the output group whose octets hex and bin present; null where the code
@@ -275,7 +278,12 @@ Frame {
                     return;
                 }
                 textArea.remove(textArea.selectionStart, textArea.selectionEnd);
-                textArea.insert(textArea.cursorPosition, "\t");
+                // spaces up to the next tab stop while the spaces setting is on (FR-492), one tab
+                // character otherwise (FR-143)
+                const inserted = root.tabsToSpaces
+                    ? " ".repeat(Editing.spacesToTabStop(textArea.text, textArea.cursorPosition, root.tabSize))
+                    : "\t";
+                textArea.insert(textArea.cursorPosition, inserted);
             }
             Keys.onReturnPressed: event => root.breakLine(event)
             Keys.onEnterPressed: event => root.breakLine(event)

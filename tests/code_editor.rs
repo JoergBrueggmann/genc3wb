@@ -1,5 +1,5 @@
-//! The tests of the insert key at the code editor of the front end and of the position switch, run by the
-//! QML test runner of Qt.
+//! The tests of the insert key and of the Tab key at the code editor of the front end and of the position
+//! switch, run by the QML test runner of Qt.
 //!
 //! Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 //! Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -25,6 +25,9 @@ const INSERT_KEY: (&str, &str) = ("tst_insert_key.qml", "InsertKey");
 /// The QML test file of the position switch, in 'tests/qml', with the name of its test case.
 const POSITION_SWITCH: (&str, &str) = ("tst_position_switch.qml", "PositionSwitch");
 
+/// The QML test file of the Tab key, in 'tests/qml', with the name of its test case.
+const TAB_KEY: (&str, &str) = ("tst_tab_key.qml", "TabKey");
+
 /// The 'qmldir' of the QML module `genc3wb` the test file imports: the components of the code
 /// editor, and the stand-ins as singletons.
 const QMLDIR: &str = "module genc3wb
@@ -45,13 +48,17 @@ fn failures_of(case: &str, test: (&str, &str), function: &str) -> Option<String>
 
 /*  * validated        : ✅
  * completeness     : ✅ txt, hex and bin; a printable key, a command key stroke, Return and Enter
- *                       as the insert key; the position switch tapped, disabled, and its tooltip
+ *                       as the insert key; the Tab key with the spaces setting off and on, with
+ *                       a selection, and in a read-only editor; the position switch tapped,
+ *                       disabled, and its tooltip
  * independence     : ✅ a temporary directory per case; every QML case prepares its items
  * edge cases       : ✅ Return and Enter, which have key handlers of their own in txt; a tap on
  *                       the highlighted position, which moves the highlight not
- * conforms to doc  : ✅ FR-193, the key handlers of CodeEditor.qml and OctetView.qml; FR-259,
+ * conforms to doc  : ✅ FR-193, the key handlers of CodeEditor.qml and OctetView.qml; FR-143,
+ *                       FR-492, the Tab key of CodeEditor.qml; FR-259,
  *                       FR-265, FR-266, FR-272, IR-031, IR-039, PositionSwitch.qml
- * covers bridge    : Workbench::toggled_by_key, by a stand-in that toggles as it does */
+ * covers bridge    : Workbench::toggled_by_key, by a stand-in that toggles as it does;
+ *                    Editing::spaces_to_tab_stop, by a stand-in counting over the line */
 
 // The cases need the QML test runner of the Qt installation whose qmake the build finds.
 
@@ -154,6 +161,58 @@ fn tooltip_of_a_position_switch_is_the_text_given() {
             "position-switch-tooltip",
             POSITION_SWITCH,
             "test_tooltip_is_the_text_given"
+        ),
+        None
+    );
+}
+
+// FR-143
+#[test]
+fn tab_key_inserts_a_tab_character_while_the_spaces_setting_is_off() {
+    assert_eq!(
+        failures_of(
+            "tab-off",
+            TAB_KEY,
+            "test_tab_inserts_a_tab_character_while_the_setting_is_off"
+        ),
+        None
+    );
+}
+
+// FR-492
+#[test]
+fn tab_key_inserts_spaces_to_the_next_tab_stop_while_the_spaces_setting_is_on() {
+    assert_eq!(
+        failures_of(
+            "tab-on",
+            TAB_KEY,
+            "test_tab_inserts_spaces_to_the_next_tab_stop_while_the_setting_is_on"
+        ),
+        None
+    );
+}
+
+// FR-492
+#[test]
+fn tab_key_replaces_the_selection_by_the_spaces() {
+    assert_eq!(
+        failures_of(
+            "tab-selection",
+            TAB_KEY,
+            "test_tab_replaces_the_selection_by_the_spaces"
+        ),
+        None
+    );
+}
+
+// FR-042, FR-143
+#[test]
+fn tab_key_enters_nothing_into_a_read_only_editor() {
+    assert_eq!(
+        failures_of(
+            "tab-read-only",
+            TAB_KEY,
+            "test_tab_enters_nothing_into_a_read_only_editor"
         ),
         None
     );

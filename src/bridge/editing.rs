@@ -60,6 +60,19 @@ impl Editing {
         editing::indentation_of_line(&text, count_of(cursor))
     }
 
+    // realises FR-492
+    /// Yields the number of spaces that reach the next tab stop from the column of `cursor`, as
+    /// [`editing::spaces_to_tab_stop`] does.
+    #[qslot(qml_name = "spacesToTabStop")]
+    fn spaces_to_tab_stop(&self, text: String, cursor: i32, tab_size: i32) -> i32 {
+        i32::try_from(editing::spaces_to_tab_stop(
+            &text,
+            count_of(cursor),
+            count_of(tab_size),
+        ))
+        .unwrap_or(1)
+    }
+
     // realises FR-145
     /// Yields the offset of a view that shows the span from `start` to `end` of its content, as
     /// [`editing::view_offset_showing`] does.

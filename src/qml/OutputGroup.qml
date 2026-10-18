@@ -122,6 +122,7 @@ GroupBox {
                     Layout.fillHeight: true
                     readOnly: true
                     tabSize: Workbench.tabSize
+                    tabsToSpaces: Workbench.tabsToSpaces
                     text: root.output.fileContent
                     mode: modeSwitch.mode
                     octets: root.output
@@ -180,6 +181,7 @@ GroupBox {
                     Layout.fillHeight: true
                     readOnly: true
                     tabSize: Workbench.tabSize
+                    tabsToSpaces: Workbench.tabsToSpaces
                     text: root.output.diagnostics
                 }
             }

@@ -65,6 +65,7 @@ Window {
             idleTime: Workbench.idleTime
             longIdleTime: Workbench.longIdleTime
             tabSize: Workbench.tabSize
+            tabsToSpaces: Workbench.tabsToSpaces
             onTextEdited: {
                 if (editor.mode === 0) {
                     editorWindow.group.text = editor.text;

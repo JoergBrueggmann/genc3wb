@@ -98,13 +98,14 @@ pub fn file_opened(path: String) {
     });
 }
 
-// realises FR-480
-/// Schedules `announceSettingsFailure` of the *workbench object*, where the *front end* is up,
-/// so that the status bar follows a store of the settings made by another *bridged type*.
+// realises FR-480, FR-489
+/// Schedules `announceSettingsStored` of the *workbench object*, where the *front end* is up,
+/// so that the status bar and the settings dialog follow a store of the settings made by another
+/// *bridged type*.
 pub fn settings_stored() {
     LAUNCH.with(|launch| {
         if let Some(invoker) = &launch.borrow().invoker {
-            invoke_method!(invoker, "announceSettingsFailure");
+            invoke_method!(invoker, "announceSettingsStored");
         }
     });
 }
@@ -167,7 +168,7 @@ impl Default for Workbench {
 
 // realises FR-001, FR-063, FR-095, FR-099, FR-130 to FR-135, FR-140, FR-141, FR-146 to FR-149,
 // FR-192 to FR-194, FR-198 to FR-200, FR-214, FR-221, FR-224, FR-255 to FR-257, FR-476, FR-477,
-// FR-480
+// FR-480, FR-489, FR-490, FR-492
 #[qobject(Singleton)]
 impl Workbench {
     qproperty!("networkInput", Read = network_input, Constant);
@@ -194,6 +195,19 @@ impl Workbench {
     );
     // the tab size in characters (FR-140, FR-142)
     qproperty!("tabSize", Read = tab_size, Notify = tab_size_changed);
+    // the spaces setting: whether the Tab key inserts spaces (FR-492)
+    qproperty!(
+        "tabsToSpaces",
+        Read = tabs_to_spaces,
+        Notify = tabs_to_spaces_changed
+    );
+    // the silent creation setting: whether the files of a node are created without the dialog
+    // (FR-490)
+    qproperty!(
+        "silentCreation",
+        Read = silent_creation,
+        Notify = silent_creation_changed
+    );
     // the positions of the splitters in pixels: the size of the left or upper part (FR-149)
     qproperty!(
         "nodeLeftWidth",
@@ -267,6 +281,16 @@ impl Workbench {
         self.settings.borrow().tab_size()
     }
 
+    // realises FR-095, FR-492
+    fn tabs_to_spaces(&self) -> bool {
+        self.settings.borrow().tabs_to_spaces()
+    }
+
+    // realises FR-095, FR-490
+    fn silent_creation(&self) -> bool {
+        self.settings.borrow().silent_creation()
+    }
+
     // realises FR-146, FR-149
     fn node_left_width(&self) -> u32 {
         self.settings.borrow().node_left_width()
@@ -302,6 +326,12 @@ impl Workbench {
 
     #[qsignal(qml_name = "tabSizeChanged")]
     fn tab_size_changed(&mut self);
+
+    #[qsignal(qml_name = "tabsToSpacesChanged")]
+    fn tabs_to_spaces_changed(&mut self);
+
+    #[qsignal(qml_name = "silentCreationChanged")]
+    fn silent_creation_changed(&mut self);
 
     #[qsignal(qml_name = "splittersChanged")]
     fn splitters_changed(&mut self);
@@ -365,11 +395,13 @@ impl Workbench {
     }
 
     // slots
-    // realises FR-099, FR-100, FR-132, FR-133, FR-134, FR-135, FR-140, FR-141, FR-255, FR-257
-    /// Sets the two times of every code editor, in milliseconds, the *automatic setting* and the
-    /// *tab size*, in characters, and stores them; yields whether the values satisfy the
-    /// constraints, and emits `settings_rejected` with the message naming the violated one where
-    /// they do not, nothing being set then.
+    // realises FR-099, FR-100, FR-132, FR-133, FR-134, FR-135, FR-140, FR-141, FR-255, FR-257,
+    // FR-490, FR-492
+    /// Sets the two times of every code editor, in milliseconds, the *automatic setting*, the
+    /// *tab size*, in characters, the *spaces setting* and the *silent creation setting*, and
+    /// stores them; yields whether the values satisfy the constraints, and emits
+    /// `settings_rejected` with the message naming the violated one where they do not, nothing
+    /// being set then.
     ///
     /// * The *tab size* is checked first, then the two times.
     /// * With the *automatic setting* on, the times are left as they are, since the next
@@ -381,6 +413,8 @@ impl Workbench {
         long_idle_time: i32,
         automatic: bool,
         tab_size: i32,
+        tabs_to_spaces: bool,
+        silent_creation: bool,
     ) -> bool {
         let idle_time = u32::try_from(idle_time).unwrap_or(0);
         let long_idle_time = u32::try_from(long_idle_time).unwrap_or(0);
@@ -400,15 +434,25 @@ impl Workbench {
             }
         }
         let changed_tab_size = self.tab_size() != tab_size;
+        let changed_tabs_to_spaces = self.tabs_to_spaces() != tabs_to_spaces;
+        let changed_silent_creation = self.silent_creation() != silent_creation;
         {
             let mut settings = self.settings.borrow_mut();
             settings.set_automatic(automatic);
             let _ = settings.set_tab_size(tab_size);
+            settings.set_tabs_to_spaces(tabs_to_spaces);
+            settings.set_silent_creation(silent_creation);
         }
         self.store();
         self.times_changed();
         if changed_tab_size {
             self.tab_size_changed();
+        }
+        if changed_tabs_to_spaces {
+            self.tabs_to_spaces_changed();
+        }
+        if changed_silent_creation {
+            self.silent_creation_changed();
         }
         true
     }
@@ -467,7 +511,7 @@ impl Workbench {
     // realises FR-476, FR-477, IR-207
     /// Keeps the invoker of the *workbench object* in the state of the module, so that
     /// `file_opened` reaches `open_handed_file` in the *start-up phase* and `settings_stored`
-    /// reaches `announce_settings_failure`, and starts the *start-up phase*, which lasts
+    /// reaches `announce_settings_stored`, and starts the *start-up phase*, which lasts
     /// `START_UP_GRACE` from now, or ends at once where the command line handed the file, since
     /// no file-open event of the launch follows then; called by the *front end* once the main
     /// window is completed. A file the operating system handed over before is named then.
@@ -501,11 +545,20 @@ impl Workbench {
         invoke_method!(invoker, "nameHanded", path);
     }
 
+    // realises FR-480, FR-489
+    /// Takes a store of the settings made by another *bridged type*: emits
+    /// `silent_creation_changed`, since the network editor switches that setting on from the
+    /// *input creation confirmation dialog* (FR-489), and announces the failure of the write
+    /// (`announce_settings_failure`). Scheduled by `settings_stored`.
+    #[qslot(qml_name = "announceSettingsStored")]
+    fn announce_settings_stored(&mut self) {
+        self.silent_creation_changed();
+        self.announce_settings_failure();
+    }
+
     // realises FR-480
     /// Emits `settings_failure_changed` where the failure of the last write of the *settings
-    /// file* differs from the one announced last; scheduled by `settings_stored` after a store
-    /// made by another *bridged type*.
-    #[qslot(qml_name = "announceSettingsFailure")]
+    /// file* differs from the one announced last.
     fn announce_settings_failure(&mut self) {
         let failure = self.settings_failure();
         if failure != self.announced_failure {

@@ -43,13 +43,14 @@ GroupBox {
                     text: qsTr("Build system")
                 }
 
+                // the file name field accepts no text: the build system is named by the file selector
+                // (FR-481)
                 TextField {
                     id: buildSystemField
 
                     Layout.fillWidth: true
                     text: root.network.buildSystemPath
-                    onTextEdited: root.network.tryBuildSystemPath(buildSystemField.text)
-                    onEditingFinished: root.network.buildSystemPath = buildSystemField.text
+                    readOnly: true
                 }
             }
 

@@ -49,9 +49,9 @@ impl InputKind {
         }
     }
 
-    // realises FR-007, FR-116
-    /// Yields whether the user names the file of this kind, by the file name field and the file
-    /// selector: for the *network file* alone; the files of a *node* are named from the
+    // realises FR-007
+    /// Yields whether the user names the file of this kind, by the file selector and the new-file
+    /// button: for the *network file* alone; the files of a *node* are named from the
     /// *node description*.
     pub fn is_selectable(self) -> bool {
         match self {
@@ -59,6 +59,124 @@ impl InputKind {
             InputKind::Network => true,
         }
     }
+}
+
+// realises FR-483
+/// The *network template*: the text a new *network file* is created with, a network of two
+/// *nodes* with a comment line, the *nodes* indented by a tab and their items by two and three,
+/// UTF-8 with line feeds.
+pub const NETWORK_TEMPLATE: &str = concat!(
+    "// a basic template with two nodes\n",
+    "meta compiler-compiler network\n",
+    "\n",
+    "\tnode A\n",
+    "\t\tinputs\n",
+    "\t\t\t../src/inputOfA.txt\n",
+    "\t\toutputs\n",
+    "\t\t\t../src/connectionAToB.txt\n",
+    "\n",
+    "\tnode B\n",
+    "\t\tinputs\n",
+    "\t\t\t../src/connectionAToB.txt\n",
+    "\t\toutputs\n",
+    "\t\t\t../src/outputOfB.txt\n",
+);
+
+// realises FR-484, FR-485, IR-209
+/// Writes the *network template* to the file at `path`, creating the file or replacing its
+/// content.
+///
+/// # Errors
+/// Returns [`InputFileError::Io`] with the path and the reason of the operating system where
+/// the file cannot be written.
+pub fn write_network_template(path: &str) -> Result<(), InputFileError> {
+    fs::write(path, NETWORK_TEMPLATE).map_err(|error| InputFileError::Io {
+        path: path.to_owned(),
+        reason: error.to_string(),
+    })
+}
+
+// realises FR-486
+/// The *meta DSL template*: the text the file of a *meta compiler DSL* is created with when its
+/// *node* is opened or activated while the file does not exist; a syntax taking every
+/// UTF-8 character and a generator rendering the symbol tree, the rules indented by a tab, UTF-8
+/// with line feeds.
+pub const META_DSL_TEMPLATE: &str = concat!(
+    "syntax // takes all UTF-8 characters\n",
+    "\tAll = {.}\n",
+    "generator // creates a symbol tree from the syntax above\n",
+    "\tAll -> str(symbol)\n",
+);
+
+// realises FR-487
+/// A file of a *node* that does not exist and is to be created: the file of its
+/// *meta compiler DSL*, created from the *meta DSL template*, or the file of an *input* that no
+/// *node* produces, created empty.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MissingFile {
+    /// the path of the file, resolved against the directory of the *network file*
+    pub path: String,
+    /// whether the file is a *meta compiler DSL*, and an *input* otherwise
+    pub meta_dsl: bool,
+}
+
+// realises FR-489, FR-491
+/// Why a folder or a file could not be created: its path and the reason of the operating system.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CreationFailure {
+    /// the path of the folder or the file
+    pub path: String,
+    /// the reason of the operating system
+    pub reason: String,
+}
+
+// realises FR-487
+/// Yields, of the files `candidates`, each a path with whether it is a *meta compiler DSL*, those
+/// that do not exist, in their order, a path named twice taken once.
+pub fn missing_files(candidates: &[(String, bool)]) -> Vec<MissingFile> {
+    let mut missing: Vec<MissingFile> = Vec::new();
+    for (path, meta_dsl) in candidates {
+        if Path::new(path).exists() || missing.iter().any(|file| &file.path == path) {
+            continue;
+        }
+        missing.push(MissingFile {
+            path: path.clone(),
+            meta_dsl: *meta_dsl,
+        });
+    }
+    missing
+}
+
+// realises FR-489, FR-490, FR-491, IR-210
+/// Creates every file of `files`, its missing folders first: the *meta DSL template* is written
+/// into a *meta compiler DSL*, nothing into an *input*; a file that exists meanwhile is left as
+/// it is.
+///
+/// # Errors
+/// Returns [`CreationFailure`] with the path of the first folder or file that could not be
+/// created and the reason of the operating system; the files before it are created.
+pub fn create_files(files: &[MissingFile]) -> Result<(), CreationFailure> {
+    for file in files {
+        let path = Path::new(&file.path);
+        if path.exists() {
+            continue;
+        }
+        if let Some(folder) = path
+            .parent()
+            .filter(|folder| !folder.as_os_str().is_empty() && !folder.exists())
+        {
+            fs::create_dir_all(folder).map_err(|error| CreationFailure {
+                path: folder.to_string_lossy().into_owned(),
+                reason: error.to_string(),
+            })?;
+        }
+        let content = if file.meta_dsl { META_DSL_TEMPLATE } else { "" };
+        fs::write(path, content).map_err(|error| CreationFailure {
+            path: file.path.clone(),
+            reason: error.to_string(),
+        })?;
+    }
+    Ok(())
 }
 
 // realises FR-018, FR-019, FR-020, FR-021
@@ -395,7 +513,8 @@ impl InputFile {
  *                    InputGroup::set_text, InputGroup::answer_save,
  *                    InputGroup::idle_expired, InputGroup::is_text, InputGroup::replace_digits,
  *                    InputGroup::undo, InputGroup::redo, InputGroup::digits_text,
- *                    InputGroup::long_idle_expired */
+ *                    InputGroup::long_idle_expired, InputGroup::create_file,
+ *                    NetworkEditor::files_to_create, NetworkEditor::prepared */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -786,6 +905,176 @@ mod tests {
                 file.octets()
             ),
             ("Output", "All files (*)", Ok(true), &[0xff, 0x00][..])
+        );
+    }
+
+    #[test]
+    fn the_network_template_is_a_network_of_two_nodes_indented_by_tabs() {
+        // FR-483: the comment line, the network line, the nodes indented by one tab, their items
+        // by two and three, every line ended by a line feed
+        let lines: Vec<&str> = NETWORK_TEMPLATE.split_inclusive('\n').collect();
+        assert_eq!(
+            (
+                lines.len(),
+                lines[0],
+                lines[1],
+                lines[3],
+                lines[5],
+                lines[9],
+                lines[13],
+                NETWORK_TEMPLATE.ends_with('\n'),
+                NETWORK_TEMPLATE.contains("\r")
+            ),
+            (
+                14,
+                "// a basic template with two nodes\n",
+                "meta compiler-compiler network\n",
+                "\tnode A\n",
+                "\t\t\t../src/inputOfA.txt\n",
+                "\tnode B\n",
+                "\t\t\t../src/outputOfB.txt\n",
+                true,
+                false
+            )
+        );
+    }
+
+    #[test]
+    fn a_network_file_is_created_with_the_template_and_replaced_by_it() {
+        // FR-484, IR-209: the file is written with the template, and a file that exists is
+        // replaced by it
+        let dir = CaseDir::new("create");
+        let path = dir.path("new.gc3n");
+        let created = write_network_template(&path);
+        let content_created = fs::read(&path).expect("the created file is read");
+        fs::write(&path, "edited").expect("the file can be written");
+        let replaced = write_network_template(&path);
+        let content_replaced = fs::read(&path).expect("the replaced file is read");
+        let mut file = InputFile::new(InputKind::Network);
+        let loaded = file.load(&path);
+        assert_eq!(
+            (
+                created,
+                content_created.as_slice(),
+                replaced,
+                content_replaced.as_slice(),
+                loaded,
+                file.text()
+            ),
+            (
+                Ok(()),
+                NETWORK_TEMPLATE.as_bytes(),
+                Ok(()),
+                NETWORK_TEMPLATE.as_bytes(),
+                Ok(true),
+                NETWORK_TEMPLATE
+            )
+        );
+    }
+
+    #[test]
+    fn the_meta_dsl_template_takes_every_character_and_renders_the_tree() {
+        // FR-486: the syntax line with its comment, the rule indented by a tab, the generator
+        // line with its comment, the rendering rule
+        assert_eq!(
+            META_DSL_TEMPLATE,
+            "syntax // takes all UTF-8 characters\n\tAll = {.}\n\
+             generator // creates a symbol tree from the syntax above\n\tAll -> str(symbol)\n"
+        );
+    }
+
+    #[test]
+    fn the_files_that_do_not_exist_are_yielded_once_each_in_their_order() {
+        // FR-487: a file that exists is passed over, a path named twice is taken once
+        let dir = CaseDir::new("missing");
+        fs::write(dir.path("a.gc3"), "syntax\n").expect("the file can be written");
+        let candidates = [
+            (dir.path("a.gc3"), true),
+            (dir.path("b.gc3"), true),
+            (dir.path("in.txt"), false),
+            (dir.path("in.txt"), false),
+        ];
+        let missing = missing_files(&candidates);
+        assert_eq!(
+            missing,
+            vec![
+                MissingFile {
+                    path: dir.path("b.gc3"),
+                    meta_dsl: true
+                },
+                MissingFile {
+                    path: dir.path("in.txt"),
+                    meta_dsl: false
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn missing_files_are_created_with_their_folders_the_template_and_empty() {
+        // FR-489, IR-210: the meta compiler DSL in a folder that does not exist gets the
+        // template, the input is empty, a file that exists is left as it is
+        let dir = CaseDir::new("create");
+        fs::write(dir.path("kept.txt"), "kept").expect("the file can be written");
+        let files = [
+            MissingFile {
+                path: dir.path("sub/deeper/a.gc3"),
+                meta_dsl: true,
+            },
+            MissingFile {
+                path: dir.path("in.txt"),
+                meta_dsl: false,
+            },
+            MissingFile {
+                path: dir.path("kept.txt"),
+                meta_dsl: false,
+            },
+        ];
+        let created = create_files(&files);
+        let template = fs::read_to_string(dir.path("sub/deeper/a.gc3")).expect("created");
+        let input = fs::read(dir.path("in.txt")).expect("created");
+        let kept = fs::read_to_string(dir.path("kept.txt")).expect("kept");
+        assert_eq!(
+            (created, template.as_str(), input.len(), kept.as_str()),
+            (Ok(()), META_DSL_TEMPLATE, 0, "kept")
+        );
+    }
+
+    #[test]
+    fn a_folder_that_cannot_be_created_is_reported_with_its_path() {
+        // FR-491: the folder lies under a file, so that it cannot be created; the file before it
+        // is created all the same
+        let dir = CaseDir::new("create-failure");
+        fs::write(dir.path("blocking"), "a file, not a folder").expect("the file can be written");
+        let files = [
+            MissingFile {
+                path: dir.path("first.txt"),
+                meta_dsl: false,
+            },
+            MissingFile {
+                path: dir.path("blocking/sub/a.gc3"),
+                meta_dsl: true,
+            },
+        ];
+        let result = create_files(&files);
+        let first = Path::new(&dir.path("first.txt")).exists();
+        assert!(
+            matches!(&result, Err(CreationFailure { path, reason })
+                if path == &dir.path("blocking/sub") && !reason.is_empty())
+                && first,
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn a_network_file_that_cannot_be_written_is_reported_with_its_path() {
+        // FR-485: the path and the reason of the operating system
+        let dir = CaseDir::new("create-failure");
+        let path = dir.path("missing/new.gc3n");
+        let result = write_network_template(&path);
+        assert!(
+            matches!(&result, Err(InputFileError::Io { path: reported, reason }) if reported == &path && !reason.is_empty()),
+            "{result:?}"
         );
     }
 }
