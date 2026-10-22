@@ -19,6 +19,15 @@ GroupBox {
     id: root
 
     required property var output
+    // the code editors of the output pages and of the diagnostics page, reached by the player for
+    // the front-end actions of a playback (FR-507, FR-508)
+    property alias codeEditor: fileContentEditor
+    property alias diagnosticsEditor: diagnosticsEditor
+
+    // Selects the position `index` of the mode switch, as a tap does (FR-507).
+    function selectMode(index: int) {
+        modeSwitch.chosen = index;
+    }
 
     title: qsTr("Outputs")
     padding: 8
@@ -103,6 +112,8 @@ GroupBox {
                         id: modeSwitch
 
                         documentIsText: root.output.isText
+                        // the position the user tapped, for the recorder (FR-524)
+                        onPositionTapped: index => root.output.recordMode(index)
                     }
 
                     // the detach button of the output page: opens the editor window of the output
@@ -123,6 +134,8 @@ GroupBox {
                     readOnly: true
                     tabSize: Workbench.tabSize
                     tabsToSpaces: Workbench.tabsToSpaces
+                    // the focus of the output page, for the recorder (FR-526)
+                    onFocusTaken: root.output.recordFocus(false)
                     text: root.output.fileContent
                     mode: modeSwitch.mode
                     octets: root.output
@@ -182,6 +195,8 @@ GroupBox {
                     readOnly: true
                     tabSize: Workbench.tabSize
                     tabsToSpaces: Workbench.tabsToSpaces
+                    // the focus of the diagnostics page, for the recorder (FR-526)
+                    onFocusTaken: root.output.recordFocus(true)
                     text: root.output.diagnostics
                 }
             }

@@ -27,6 +27,28 @@ Window {
     // closing the window has the network editor close the node editor and release the node
     // (FR-089, FR-105, FR-282)
     onClosing: Workbench.network.closeNode(nodeWindow.node.name)
+    // the window became the active one, for the recorder (FR-526)
+    onActiveChanged: {
+        if (nodeWindow.active) {
+            Workbench.automation.recordWindowFocus("node", nodeWindow.node.name);
+        }
+    }
+
+    // Yields the component that presents the code editor an action of a playback names: the
+    // group of the meta compiler DSL, the group of the input of the number, or the output group
+    // for an output and for the diagnostics page; null where there is none (FR-505 to FR-508)
+    function presenterOf(item: string, index: int): var {
+        if (item === "dsl") {
+            return metaDslGroup;
+        }
+        if (item === "input") {
+            return inputRepeater.itemAt(index);
+        }
+        if (item === "output" || item === "diagnostics") {
+            return outputGroup;
+        }
+        return null;
+    }
 
     // Yields the text of the node mode `mode` for the status line, as the message schema
     // numbers it: 1 invalid, 2 valid, 3 active; empty for 0, where none is told (FR-123)

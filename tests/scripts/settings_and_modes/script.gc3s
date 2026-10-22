@@ -1,0 +1,32 @@
+// The actions that change the settings, the typing mode, the insert key, the editor mode and the
+// digits, the cursor, the selection and the focus, each played and the data verified.
+automation script
+restore "backup" into "work"
+network "work/n.gc3n"
+idle network
+activate
+open node copy
+focus node copy
+focus node copy input 0
+cursor node copy input 0 1:6
+select node copy input 0 1:1 1:6
+typing mode overwrite
+typing mode insert
+insert key "Ctrl+I"
+settings idle 0.4 long idle 1.0 automatic off tab size 2 spaces on silent creation off delay 0
+mode node copy input 0 hex
+digits node copy input 0 hex 0 2 "6C"
+idle node copy input 0
+verify node copy input 0 "expected/lello.gc3v"
+verify node copy output 0 "expected/lello.gc3v"
+undo node copy input 0
+idle node copy input 0
+verify node copy input 0 "expected/hello.gc3v"
+verify node copy output 0 "expected/hello.gc3v"
+mode node copy input 0 txt
+long idle node copy input 0
+verify node copy diagnostics "expected/empty.gc3v"
+focus node copy diagnostics
+focus main
+close node copy
+deactivate

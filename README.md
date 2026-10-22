@@ -77,6 +77,20 @@ on genc3.com.
   good, in itself or in the settings.
 - **Tabs or spaces.** The Tab key inserts a tab character, or spaces up to the
   next tab stop when you prefer them, a setting beside the tab size.
+- **Scripted, for tests and demonstrations.** An automation script, a gc3s-file in
+  a notation genc³ itself parses, plays back the actions of a user: naming and
+  activating the network, opening nodes and files, typing into an editor, the
+  idle expiries, the settings; it restores a backed-up folder as its precondition
+  and verifies what an editor shows against an expected file. Started from the
+  menu 'Automation' with a report dialog, or with `genc3wb --verify <script>`,
+  which writes one report line per action and exits with 0, 1 or 2. A character
+  playback delay in the settings types a demonstration one character at a time.
+- **Recorded as you work.** Every start records what you do that changes data
+  into 'usage.gc3s' in a folder of its own under 'rec' beside 'bin', line by
+  line as it happens, so that a crash leaves the script that led to it; the
+  menu 'Automation' stops it, starts a recording into a file of your choice,
+  backs a folder up to be restored on replay, and stores what the focused
+  editor shows as an expected file to be verified on replay.
 - **At home on the desktop.** A double-click on a gc3n-file opens it with the
   workbench, every network in a workbench of its own, and a lock file beside
   the network file names the workbench that holds it. The settings lie beside

@@ -1,0 +1,4 @@
+syntax // takes all UTF-8 characters
+	All = {.}
+generator // creates a symbol tree from the syntax above
+	All -> str(symbol)

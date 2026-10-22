@@ -1,0 +1,9 @@
+/* genc3 example: a meta compiler DSL produced by a node
+   the output of this node is the meta compiler DSL of the node 'reader' */
+syntax
+    Root = Chars, EOS
+    Chars = { . }
+generator
+    // the text of the meta compiler DSL of 'reader', which copies its input to its output,
+    // accepting the letters this input lists as alternatives
+    Root -> "syntax\n    Root = Chars, EOS\n    Chars = Ch, { Ch }\n    Ch = " ++ flat(#0) ++ " | ' ' | NEWLINE\ngenerator\n    Root -> flat(#0)\n"

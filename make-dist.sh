@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Builds the workbench and assembles the distribution folder 'dist': under 'bin'
-# the executable of the workbench beside the three executables of genc³, so
-# that the workbench finds its settings file 'genc3wb.yaml' and the build system
-# 'genc3d' in the folder of its own executable; the application bundle
+# the executable of the workbench beside the three executables of genc³ and the
+# automation configuration 'automation.gc3', so that the workbench finds its
+# settings file 'genc3wb.yaml', the build system 'genc3d' and the configuration in
+# the folder of its own executable; the application bundle
 # 'genc3wb.app', whose executable is a symbolic link to 'bin/genc3wb' and which
 # declares gc3n-files as the documents it opens, so that a double-click on a
 # gc3n-file opens it with the workbench once the bundle is registered; the
@@ -54,6 +55,8 @@ sVersion="$(grep -m 1 '^version = ' Cargo.toml | sed -E 's/^version = "([^"+]*)(
 rm -rf "$sDist"
 mkdir -p "$sDist/bin" || exit 1
 cp target/release/genc3wb "$sDist/bin/" || exit 1
+# the automation configuration, by which gc3 parses an automation script (C-009)
+cp src/automation.gc3 "$sDist/bin/" || exit 1
 cp README.md LICENSE CHANGELOG.md "$sDist/" || exit 1
 
 # the distribution of genc³: its executables into 'bin', the rest under 'genc3'
@@ -200,6 +203,10 @@ if [ ! -x "$sBundle/Contents/MacOS/genc3wb" ]; then
     echo "FAILED: the executable of $sBundle does not reach bin/genc3wb" >&2
     nStatus=1
 fi
+if [ ! -f "$sDist/bin/automation.gc3" ]; then
+    echo "FAILED: $sDist/bin/automation.gc3 is missing" >&2
+    nStatus=1
+fi
 if ! plutil -lint "$sBundle/Contents/Info.plist" > /dev/null 2>&1; then
     echo "FAILED: the Info.plist of $sBundle is malformed" >&2
     nStatus=1
@@ -215,7 +222,7 @@ if [ $? -ne 1 ]; then
 fi
 
 if [ "$nStatus" -eq 0 ]; then
-    echo "OK: $sDist holds the workbench and the build system under bin, the bundle genc3wb.app and register.command"
+    echo "OK: $sDist holds the workbench, the build system and the automation configuration under bin, the bundle genc3wb.app and register.command"
 fi
 
 exit "$nStatus"

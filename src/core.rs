@@ -4,6 +4,7 @@
 //! Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
 
 pub mod api_message;
+pub mod automation;
 pub mod build_system;
 pub mod document_store;
 pub mod editing;
@@ -19,6 +20,7 @@ pub mod node_state;
 pub mod octet_edit;
 pub mod octet_view;
 pub mod output;
+pub mod recording;
 pub mod settings;
 pub mod text_increment;
 pub mod version;

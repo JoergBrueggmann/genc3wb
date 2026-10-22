@@ -1,0 +1,21 @@
+// Recorded by genc³wb 0.33.0.0 on 2026-10-19 at 07:35:12
+automation script
+network "work/n.gc3n"
+restore "backup" into "work"
+idle network
+deactivate
+activate
+open node copy
+focus node copy input 0
+cursor node copy input 0 1:12
+edit node copy input 0 1:12 0 "ddd"
+idle node copy input 0
+verify node copy input 0 "script-0.gc3v"
+focus node copy output 0
+verify node copy output 0 "script-1.gc3v"
+close node copy
+focus network
+edit network 7:1 0 "// end\n"
+idle network
+verify network "script-2.gc3v"
+deactivate

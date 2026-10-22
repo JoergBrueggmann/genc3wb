@@ -1,5 +1,6 @@
-//! The launch of *product*: the folder of its executable, the *handed file* of its command line,
-//! a second *product* started on a gc3n-file, and the working directory of a *network file*.
+//! The launch of *product*: the folder of its executable, the *handed file* or the script of the
+//! switch `--verify` of its command line, a second *product* started on a gc3n-file, and the
+//! working directory of a *network file*.
 //!
 //! Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 //! Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -8,7 +9,20 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 /// The usage line written with the message of a refused argument.
-const USAGE: &str = "usage: genc3wb [<path of a gc3n-file>]";
+const USAGE: &str = "usage: genc3wb [<path of a gc3n-file> | --verify <path of a gc3s-file>]";
+
+/// The switch of a *verification run* (FR-517).
+const VERIFY_SWITCH: &str = "--verify";
+
+// realises IR-206, FR-517
+/// What the command line of *product* names: at most one of the two.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Arguments {
+    /// the *handed file*, a gc3n-file
+    pub handed: Option<String>,
+    /// the gc3s-file of the switch `--verify`, the script of a *verification run*
+    pub verify: Option<String>,
+}
 
 // realises FR-094, IR-011
 /// Yields the folder of the executable of this process, the symbolic links of its path resolved,
@@ -22,28 +36,46 @@ pub fn executable_folder() -> PathBuf {
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
 }
 
-// realises IR-206
-/// Yields the *handed file* the command line `args` names, the program name left out: `None` for
-/// no argument and the path for one.
+// realises IR-206, FR-517
+/// Yields what the command line `args` names, the program name left out: nothing for no
+/// argument, the *handed file* for one path, and the gc3s-file of a *verification run* for
+/// `--verify` followed by a path.
 ///
 /// * An argument of the form `-psn_…`, by which older versions of macOS named the process of an
 ///   application it launched, is passed over.
 ///
 /// # Errors
-/// Returns the message for standard error where there are more arguments than one, or the one
-/// begins with `-`.
-pub fn handed_file<I: IntoIterator<Item = String>>(args: I) -> Result<Option<String>, String> {
-    let mut args = args.into_iter().filter(|arg| !arg.starts_with("-psn_"));
-    let first = args.next();
-    if args.next().is_some() {
-        return Err(format!("genc3wb: at most one argument is taken\n{USAGE}"));
-    }
-    match first {
-        None => Ok(None),
-        Some(arg) if arg.starts_with('-') => {
-            Err(format!("genc3wb: unknown option '{arg}'\n{USAGE}"))
+/// Returns the message for standard error where there are more arguments than the forms above
+/// take, where an argument begins with `-` and is not the switch, or where the switch has no path.
+pub fn arguments<I: IntoIterator<Item = String>>(args: I) -> Result<Arguments, String> {
+    let args: Vec<String> = args
+        .into_iter()
+        .filter(|arg| !arg.starts_with("-psn_"))
+        .collect();
+    match args.as_slice() {
+        [] => Ok(Arguments::default()),
+        [switch, path] if switch == VERIFY_SWITCH => {
+            if path.starts_with('-') {
+                return Err(format!(
+                    "genc3wb: the switch {VERIFY_SWITCH} needs the path of a gc3s-file\n{USAGE}"
+                ));
+            }
+            Ok(Arguments {
+                handed: None,
+                verify: Some(path.clone()),
+            })
         }
-        Some(arg) => Ok(Some(arg)),
+        [switch] if switch == VERIFY_SWITCH => Err(format!(
+            "genc3wb: the switch {VERIFY_SWITCH} needs the path of a gc3s-file\n{USAGE}"
+        )),
+        [arg] if arg.starts_with('-') => Err(format!("genc3wb: unknown option '{arg}'\n{USAGE}")),
+        [arg] => Ok(Arguments {
+            handed: Some(arg.clone()),
+            verify: None,
+        }),
+        _ => Err(format!(
+            "genc3wb: at most one gc3n-file, or {VERIFY_SWITCH} with one gc3s-file, is taken\n{USAGE}"
+        )),
     }
 }
 
@@ -138,14 +170,46 @@ mod tests {
         // IR-206
         assert_eq!(
             (
-                handed_file(args(&[])),
-                handed_file(args(&["n.gc3n"])),
-                handed_file(args(&["-psn_0_12345", "/tmp/n.gc3n"]))
+                arguments(args(&[])),
+                arguments(args(&["n.gc3n"])),
+                arguments(args(&["-psn_0_12345", "/tmp/n.gc3n"]))
             ),
             (
-                Ok(None),
-                Ok(Some("n.gc3n".to_owned())),
-                Ok(Some("/tmp/n.gc3n".to_owned()))
+                Ok(Arguments::default()),
+                Ok(Arguments {
+                    handed: Some("n.gc3n".to_owned()),
+                    verify: None
+                }),
+                Ok(Arguments {
+                    handed: Some("/tmp/n.gc3n".to_owned()),
+                    verify: None
+                })
+            )
+        );
+    }
+
+    #[test]
+    fn the_verify_switch_names_the_script_and_needs_its_path() {
+        // IR-206, FR-517
+        let named = arguments(args(&["--verify", "s.gc3s"]));
+        let alone = arguments(args(&["--verify"]));
+        let option = arguments(args(&["--verify", "--help"]));
+        let three = arguments(args(&["--verify", "s.gc3s", "n.gc3n"]));
+        assert_eq!(
+            (
+                named,
+                alone.as_ref().err().map(|m| m.contains(USAGE)),
+                option.as_ref().err().map(|m| m.contains(USAGE)),
+                three.as_ref().err().map(|m| m.contains(USAGE))
+            ),
+            (
+                Ok(Arguments {
+                    handed: None,
+                    verify: Some("s.gc3s".to_owned())
+                }),
+                Some(true),
+                Some(true),
+                Some(true)
             )
         );
     }
@@ -153,8 +217,8 @@ mod tests {
     #[test]
     fn two_arguments_and_an_option_are_refused_with_the_usage() {
         // IR-206
-        let two = handed_file(args(&["a.gc3n", "b.gc3n"]));
-        let option = handed_file(args(&["--help"]));
+        let two = arguments(args(&["a.gc3n", "b.gc3n"]));
+        let option = arguments(args(&["--help"]));
         assert_eq!(
             (
                 two.as_ref().err().map(|m| m.contains(USAGE)),

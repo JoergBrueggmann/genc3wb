@@ -18,6 +18,14 @@ Window {
     id: editorWindow
 
     required property var group
+    // the code editor, reached by the player for the front-end actions of a playback (FR-505 to
+    // FR-508)
+    property alias codeEditor: editor
+
+    // Selects the position `index` of the mode switch, as a tap does (FR-507).
+    function selectMode(index: int) {
+        modeSwitch.chosen = index;
+    }
 
     width: 700
     height: 500
@@ -44,6 +52,8 @@ Window {
 
                 visible: editorWindow.group.octetModes
                 documentIsText: editorWindow.group.isText
+                // the position the user tapped, for the recorder (FR-524)
+                onPositionTapped: index => editorWindow.group.recordMode(index)
             }
 
             ProcessingStateIndicator {
@@ -73,6 +83,9 @@ Window {
             }
             onIdleExpired: editorWindow.group.idleExpired()
             onLongIdleExpired: editorWindow.group.longIdleExpired()
+            // the cursor, the selection and the focus, for the recorder (FR-525, FR-526)
+            onCursorMoved: (start, end, cursor) => editorWindow.group.recordCursor(start, end, cursor)
+            onFocusTaken: editorWindow.group.recordFocus()
             markStarts: editorWindow.group.diagnosticStarts
             markEnds: editorWindow.group.diagnosticEnds
             markSeverities: editorWindow.group.diagnosticSeverities

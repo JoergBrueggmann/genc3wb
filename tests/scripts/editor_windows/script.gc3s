@@ -1,0 +1,16 @@
+// An edit in the editor window of the source input reaches the node the window holds, and the
+// editor window of the sink output shows what the node derives, with no node window open.
+automation script
+restore "backup" into "work"
+network "work/n.gc3n"
+idle network
+activate
+open file "work/in.txt"
+open file "work/out.txt"
+edit file "work/in.txt" 1:12 0 "ddd"
+idle file "work/in.txt"
+verify file "work/in.txt" "expected/in.gc3v"
+verify file "work/out.txt" "expected/out.gc3v"
+focus file "work/out.txt"
+close file "work/in.txt"
+close file "work/out.txt"

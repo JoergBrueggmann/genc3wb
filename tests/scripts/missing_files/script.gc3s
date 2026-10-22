@@ -1,0 +1,14 @@
+// A node opened while its meta compiler DSL and its input do not exist: the input creation
+// confirmation dialog is cancelled once and confirmed once, on which the files exist, the meta
+// compiler DSL from the template, and the node window is presented.
+automation script
+restore "backup" into "work"
+network "work/n.gc3n"
+idle network
+open node a
+answer creation cancel
+open node a
+answer creation create
+verify node a dsl "expected/template.gc3v"
+verify node a input 0 "expected/empty.gc3v"
+close node a

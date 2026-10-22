@@ -6,6 +6,7 @@
 use crate::bridge::document_registry::DocumentRegistry;
 use crate::bridge::input_group::InputGroup;
 use crate::bridge::output_group::OutputGroup;
+use crate::core::automation::{EditorItem, EditorName};
 use crate::core::api_message::{
     Diagnostic, NodeMode, bit_marks_of_diagnostics, marks_of_diagnostics, rendering_of_documents,
 };
@@ -17,6 +18,7 @@ use crate::core::network_graph::path_of_identifier;
 use crate::core::node_runner::{NodeAttach, NodeRunner, WatchedDocuments, groups_of_state};
 use crate::core::octet_view::text_of_octets;
 use crate::core::output::file_octets;
+use crate::core::recording::Recorder;
 use crate::core::text_increment::TextIncrement;
 
 use qtbridge::{QmlMethodInvoker, QmlObject, invoke_method, qobject};
@@ -165,6 +167,9 @@ pub struct NodeEditor {
     /// the invoker of the network editor, which transmits the *store request* to the
     /// *build system* (FR-109); wired by the network editor
     network: Option<QmlMethodInvoker>,
+    /// the *recorder*, handed to the *input groups* and the output group; wired by the network
+    /// editor
+    recorder: Option<Rc<RefCell<Recorder>>>,
 }
 
 impl Default for NodeEditor {
@@ -204,6 +209,7 @@ impl Default for NodeEditor {
             commands: None,
             reports: None,
             network: None,
+            recorder: None,
         }
     }
 }
@@ -393,6 +399,7 @@ impl NodeEditor {
                 None,
                 Some(receiver),
                 self.documents.clone(),
+                self.recorder.clone(),
             );
             let invoker = group.borrow().get_qml_method_invoker();
             self.inputs.push((group, invoker));
@@ -401,6 +408,20 @@ impl NodeEditor {
             let produced = self.produced.contains(identifier);
             self.name_document(&self.inputs[index].1, identifier, &directory, produced);
         }
+        // the names of the code editors for the recorder (FR-521 to FR-526)
+        let editor_of = |item: EditorItem| EditorName::Node {
+            name: self.name.clone(),
+            item,
+        };
+        self.meta_dsl
+            .0
+            .borrow_mut()
+            .set_editor_name(Some(editor_of(EditorItem::MetaDsl)));
+        for (index, (group, _)) in self.inputs.iter().enumerate() {
+            let name = (index < inputs.len()).then(|| editor_of(EditorItem::Input(index)));
+            group.borrow_mut().set_editor_name(name);
+        }
+        self.output.0.borrow_mut().set_node_name(&self.name);
         {
             let output = &self.output.1;
             let paths: Vec<String> = outputs
@@ -668,16 +689,20 @@ impl NodeEditor {
         &mut self,
         network: QmlMethodInvoker,
         documents: Rc<RefCell<DocumentRegistry>>,
+        recorder: Rc<RefCell<Recorder>>,
     ) {
         self.network = Some(network);
         self.documents = Some(Rc::clone(&documents));
+        self.recorder = Some(Rc::clone(&recorder));
         let receiver = self.get_qml_method_invoker();
         self.meta_dsl.0.borrow_mut().configure(
             InputKind::MetaDsl,
             None,
             Some(receiver),
             Some(documents),
+            Some(Rc::clone(&recorder)),
         );
+        self.output.0.borrow_mut().configure(recorder);
     }
 
     // realises FR-105
@@ -989,6 +1014,60 @@ impl NodeEditor {
     /// Yields the number of *inputs* of the opened *node*.
     fn input_count_of_node(&self) -> usize {
         self.document_identifiers.len().saturating_sub(1)
+    }
+
+    // realises FR-505 to FR-508, FR-512
+    /// Yields the *input group* of the *meta compiler DSL*; read by the *player*.
+    pub fn meta_dsl_group(&self) -> Rc<RefCell<InputGroup>> {
+        Rc::clone(&self.meta_dsl.0)
+    }
+
+    // realises FR-511
+    /// Yields the *input groups* of the opened *node*: the one of the *meta compiler DSL* and
+    /// those of its *inputs*; read by the *player* to load them anew after `restore`.
+    pub fn input_groups(&self) -> Vec<Rc<RefCell<InputGroup>>> {
+        std::iter::once(Rc::clone(&self.meta_dsl.0))
+            .chain(
+                self.inputs
+                    .iter()
+                    .take(self.input_count_of_node())
+                    .map(|(group, _)| Rc::clone(group)),
+            )
+            .collect()
+    }
+
+    // realises FR-505 to FR-508, FR-512
+    /// Yields the *input group* of the *input* `index`, `None` where the opened *node* has no
+    /// such *input*; read by the *player*.
+    pub fn input_group(&self, index: usize) -> Option<Rc<RefCell<InputGroup>>> {
+        self.inputs
+            .get(index)
+            .filter(|_| index < self.input_count_of_node())
+            .map(|(group, _)| Rc::clone(group))
+    }
+
+    // realises FR-512
+    /// Yields the octets of the *output* `index`: the content the *node* holds where it was
+    /// taken, the octets of its file otherwise (FR-288), and `None` where the opened *node* has
+    /// no such *output*; read by the *player*.
+    pub fn output_octets(&self, index: usize) -> Option<Vec<u8>> {
+        let output = self.output.0.borrow();
+        output
+            .octets_of(index)
+            .or_else(|| output.path_of(index).map(|path| file_octets(&path)))
+    }
+
+    // realises FR-512
+    /// Yields the text of the *diagnostics page*; read by the *player*.
+    pub fn diagnostics_text(&self) -> String {
+        self.output.0.borrow().listing()
+    }
+
+    // realises FR-506
+    /// Yields whether a *request* awaits its *response*, as the property `busy` does; read by
+    /// the network editor for the *settling* of the *player*.
+    pub fn is_busy(&self) -> bool {
+        self.requests_pending > 0
     }
 
     /// Yields the invoker of the *input group* whose document is `identifier`, `None` where the

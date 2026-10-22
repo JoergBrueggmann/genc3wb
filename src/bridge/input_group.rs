@@ -5,11 +5,13 @@
 
 use crate::bridge::document_registry::DocumentRegistry;
 use crate::core::api_message::Marks;
+use crate::core::automation::{Action, DialogAnswer, EditorName, FocusTarget};
 use crate::core::file_lock::{FileLock, Refusal, Taking};
 use crate::core::input_file::{InputFile, InputKind, ProcessingState, write_network_template};
 use crate::core::launch;
 use crate::core::octet_edit::{digits_of_text, text_of_digits};
 use crate::core::octet_view::{EditorMode, row_count, row_segments, row_text_of_bits};
+use crate::core::recording::{Recorder, position_of_utf16_offset};
 use crate::core::settings::SettingsStore;
 use crate::core::text_increment::{IncrementTracker, TextIncrement};
 
@@ -65,6 +67,15 @@ pub struct InputGroup {
     /// *network file*, which receives the path and the expiry of the *long idle time* as well,
     /// and the *node editor* for an *input group* of a *node window*
     receiver: Option<QmlMethodInvoker>,
+    /// how many times the question of FR-014 was asked; read by the *player* (FR-501)
+    save_questions: u32,
+    /// the name of the code editor of this group in an *automation script*, set by the owner of
+    /// the group: the *workbench object* for the *network file*, the *node editor* when a *node*
+    /// is opened, the network editor when a file is opened; `None` while the group presents
+    /// nothing (FR-521 to FR-526)
+    editor_name: Option<EditorName>,
+    /// the *recorder*; wired by the owner
+    recorder: Option<Rc<RefCell<Recorder>>>,
 }
 
 impl Default for InputGroup {
@@ -87,6 +98,9 @@ impl Default for InputGroup {
             network_lock: None,
             refusal: None,
             receiver: None,
+            save_questions: 0,
+            editor_name: None,
+            recorder: None,
         }
     }
 }
@@ -275,6 +289,9 @@ impl InputGroup {
         if path == self.path() {
             return;
         }
+        if self.kind() == InputKind::Network {
+            self.tell(|recorder| recorder.record(&Action::Network(path.clone())));
+        }
         self.name_path(path);
     }
 
@@ -284,8 +301,19 @@ impl InputGroup {
     // a text as the text area holds the text of the document is no edit, and neither is a text
     // set for an input that has a producer.
     fn set_text(&mut self, text: String) {
-        if self.produced || !self.file.borrow_mut().set_text(&text) {
+        if self.produced {
             return;
+        }
+        // the text before the change, for the recorder alone (FR-522)
+        let before = self
+            .recording_editor()
+            .map(|_| self.file.borrow().text().to_owned());
+        if !self.file.borrow_mut().set_text(&text) {
+            return;
+        }
+        if let (Some(before), Some(editor)) = (before, self.recording_editor()) {
+            let after = self.file.borrow().text().to_owned();
+            self.tell(|recorder| recorder.text_changed(&editor, &before, &after));
         }
         self.notify_peers(false);
         self.announce_text();
@@ -327,12 +355,14 @@ impl InputGroup {
     fn increment_provided(&mut self, rendering: String);
 
     // slots
-    // realises FR-476
+    // realises FR-476, FR-520
     /// Names the *handed file* at `path` as the *network file*, as `apply_path` does, without
-    /// storing its path; scheduled by the *workbench object* for a file the operating system
-    /// hands over in the *start-up phase*, before the user edits.
+    /// storing its path, and tells the *recorder*, since a *recording* started before the file
+    /// arrived; scheduled by the *workbench object* for a file the operating system hands over
+    /// in the *start-up phase*, before the user edits.
     #[qslot(qml_name = "nameHanded")]
     fn name_handed(&mut self, path: String) {
+        self.tell(|recorder| recorder.record(&Action::Network(path.clone())));
         self.apply_path(&path, false);
     }
 
@@ -345,6 +375,7 @@ impl InputGroup {
     /// dialog of the new-file button.
     #[qslot(qml_name = "createFile")]
     fn create_file(&mut self, path: String) {
+        self.tell(|recorder| recorder.record(&Action::NewNetwork(path.clone())));
         match write_network_template(&path) {
             Ok(()) if path == self.path() => self.apply_path(&path, true),
             Ok(()) => self.name_path(path),
@@ -356,10 +387,82 @@ impl InputGroup {
         }
     }
 
+    // realises FR-501
+    /// Names `path` as a selection in the file dialog does (`set_path`); scheduled by the
+    /// *player*.
+    #[qslot(qml_name = "namePath")]
+    fn name_path_by_script(&mut self, path: String) {
+        self.set_path(path);
+    }
+
+    // realises FR-507
+    /// Replaces digits as `replace_digits` does, undoes as `undo` does and redoes as `redo` does,
+    /// without yielding the digit of the cursor, which the *player* does not need; scheduled by
+    /// the *player*, since a slot scheduled by an invoker yields nothing.
+    #[qslot(qml_name = "applyDigits")]
+    fn apply_digits(&mut self, mode: i32, start: i32, removed: i32, text: String) {
+        let _ = self.replace_digits(mode, start, removed, text);
+    }
+
+    #[qslot(qml_name = "applyUndo")]
+    fn apply_undo(&mut self) {
+        let _ = self.undo(int_of_mode(EditorMode::Hex));
+    }
+
+    #[qslot(qml_name = "applyRedo")]
+    fn apply_redo(&mut self) {
+        let _ = self.redo(int_of_mode(EditorMode::Hex));
+    }
+
+    // realises FR-525
+    /// Tells the *recorder* the cursor of the code editor at the offset `cursor`, where the
+    /// selection from `start` to `end` is empty, and the selection from its other end to the
+    /// cursor otherwise, the offsets in UTF-16 code units turned into positions of the text of
+    /// the document; called by the *front end*.
+    #[qslot(qml_name = "recordCursor")]
+    fn record_cursor(&mut self, start: i32, end: i32, cursor: i32) {
+        let Some(editor) = self.recording_editor() else {
+            return;
+        };
+        let text = self.file.borrow().text().to_owned();
+        let position = |offset: i32| position_of_utf16_offset(&text, count_of(offset));
+        if start == end {
+            let (line, column) = position(cursor);
+            self.tell(|recorder| recorder.cursor(&editor, line, column));
+        } else {
+            let anchor = if cursor == end { start } else { end };
+            let (from, to) = (position(anchor), position(cursor));
+            self.tell(|recorder| recorder.select(&editor, from, to));
+        }
+    }
+
+    // realises FR-526
+    /// Tells the *recorder* that the code editor of the group received the focus; called by the
+    /// *front end*.
+    #[qslot(qml_name = "recordFocus")]
+    fn record_focus(&mut self) {
+        if let Some(editor) = self.recording_editor() {
+            self.tell(|recorder| recorder.focus(&FocusTarget::Editor(editor)));
+        }
+    }
+
+    // realises FR-524
+    /// Tells the *recorder* that the user selected the position `index` of the *mode switch*;
+    /// called by the *front end*.
+    #[qslot(qml_name = "recordMode")]
+    fn record_mode(&mut self, index: i32) {
+        if let (Some(editor), Some(mode)) = (self.recording_editor(), mode_of(index)) {
+            self.tell(|recorder| recorder.record(&Action::Mode { editor, mode }));
+        }
+    }
+
     // realises FR-014
     /// Answers the question of `ask_to_save`: saves where `save`, then loads the pending path.
     #[qslot(qml_name = "answerSave")]
     fn answer_save(&mut self, save: bool) {
+        if self.pending_path.is_some() {
+            self.tell(|recorder| recorder.record(&Action::Answer(DialogAnswer::Save(save))));
+        }
         if save {
             let _ = self.file.borrow_mut().save();
         }
@@ -386,7 +489,10 @@ impl InputGroup {
         if self.produced {
             return;
         }
-        self.provide(false);
+        let provided = self.provide(false);
+        if let Some(editor) = self.recording_editor() {
+            self.tell(|recorder| recorder.idle(&editor, provided));
+        }
         let saved = {
             let mut file = self.file.borrow_mut();
             if file.has_unsaved_changes() && !file.path().is_empty() {
@@ -412,7 +518,12 @@ impl InputGroup {
         if let (Some(receiver), InputKind::Network) = (&self.receiver, self.kind()) {
             invoke_method!(receiver, "longIdleExpired");
         }
-        if self.file.borrow_mut().complete_placeholders() {
+        let completed = self.file.borrow_mut().complete_placeholders();
+        if let Some(editor) = self.recording_editor() {
+            let text = self.file.borrow().text().to_owned();
+            self.tell(|recorder| recorder.long_idle(&editor, completed, &text));
+        }
+        if completed {
             self.notify_peers(false);
             self.announce_text();
         }
@@ -438,6 +549,18 @@ impl InputGroup {
                     &digits,
                 )
             });
+        if let (Some(_), Some(mode), Some(editor)) =
+            (replaced, mode_of(mode), self.recording_editor())
+        {
+            let action = Action::Digits {
+                editor,
+                mode,
+                start: count_of(start),
+                removed: count_of(removed),
+                text: text.clone(),
+            };
+            self.tell_octet_edit(&action);
+        }
         self.announce_edit(replaced.is_some());
         replaced.map_or(-1, int_of)
     }
@@ -452,6 +575,9 @@ impl InputGroup {
         } else {
             self.file.borrow_mut().undo()
         };
+        if let (Some(_), Some(editor)) = (cursor, self.recording_editor()) {
+            self.tell_octet_edit(&Action::Undo(editor));
+        }
         self.announce_edit(cursor.is_some());
         digit_of_bit(cursor, mode)
     }
@@ -466,6 +592,9 @@ impl InputGroup {
         } else {
             self.file.borrow_mut().redo()
         };
+        if let (Some(_), Some(editor)) = (cursor, self.recording_editor()) {
+            self.tell_octet_edit(&Action::Redo(editor));
+        }
         self.announce_edit(cursor.is_some());
         digit_of_bit(cursor, mode)
     }
@@ -538,6 +667,24 @@ impl InputGroup {
     /// edited.
     #[qslot(qml_name = "followDocument")]
     fn follow_document(&mut self) {
+        self.announce_text();
+        self.announce_state();
+    }
+
+    // realises FR-511
+    /// Loads the document anew from its file, which `restore` of a *playback* replaced: the
+    /// changes not saved are discarded, the text and the *processing state* are announced, and
+    /// the other *presenters* of a *shared document* follow; the *provided text* is kept, so that
+    /// the next *text increment* carries the difference to the *node*. Nothing for a group that
+    /// presents no file or an *input* of a *producer*. Scheduled by the *player*.
+    #[qslot(qml_name = "reload")]
+    fn reload(&mut self) {
+        let path = self.path();
+        if path.is_empty() || self.produced {
+            return;
+        }
+        let _ = self.file.borrow_mut().load(&path);
+        self.notify_peers(false);
         self.announce_text();
         self.announce_state();
     }
@@ -687,10 +834,14 @@ impl InputGroup {
         settings: Option<Rc<RefCell<SettingsStore>>>,
         receiver: Option<QmlMethodInvoker>,
         documents: Option<Rc<RefCell<DocumentRegistry>>>,
+        recorder: Option<Rc<RefCell<Recorder>>>,
     ) {
         self.file = Rc::new(RefCell::new(InputFile::new(kind)));
         self.settings = settings;
         self.receiver = receiver;
+        if recorder.is_some() {
+            self.recorder = recorder;
+        }
         if let (Some(documents), None) = (&documents, &self.documents) {
             self.presenter = documents
                 .borrow_mut()
@@ -725,6 +876,63 @@ impl InputGroup {
         self.provided_octets.clone().unwrap_or_default()
     }
 
+    // realises FR-512
+    /// Yields the octets of the document; read by the *player*.
+    pub fn document_octets(&self) -> Vec<u8> {
+        self.file.borrow().octets().to_vec()
+    }
+
+    // realises FR-505, FR-508
+    /// Yields the text of the document, as the property `text` does; read by the *player*.
+    pub fn document_text(&self) -> String {
+        self.file.borrow().text().to_owned()
+    }
+
+    // realises FR-501
+    /// Yields how many times the question of FR-014 was asked; read by the *player*.
+    pub fn save_questions(&self) -> u32 {
+        self.save_questions
+    }
+
+    // realises FR-521 to FR-526
+    /// Names the code editor of the group for the *recorder*, `None` where the group presents
+    /// nothing; set by the owner of the group.
+    pub fn set_editor_name(&mut self, name: Option<EditorName>) {
+        self.editor_name = name;
+    }
+
+    // realises FR-520, FR-528, FR-530
+    /// Yields the path of the document, as the property `path` does; read by the *workbench
+    /// object* and the *player* for the *recording*.
+    pub fn document_path(&self) -> String {
+        self.path()
+    }
+
+    /// Yields the name of the code editor where a *recording* runs that is not suspended, so
+    /// that nothing is prepared for the *recorder* otherwise.
+    fn recording_editor(&self) -> Option<EditorName> {
+        let recorder = self.recorder.as_ref()?;
+        if !recorder.borrow().is_running() {
+            return None;
+        }
+        self.editor_name.clone()
+    }
+
+    /// Tells the *recorder* by `telling`, where one is wired; the borrow ends before anything
+    /// is emitted.
+    fn tell(&self, telling: impl FnOnce(&mut Recorder)) {
+        if let Some(recorder) = &self.recorder {
+            telling(&mut recorder.borrow_mut());
+        }
+    }
+
+    // realises FR-524
+    /// Tells the *recorder* an edit of *digits*, an undo or a redo, with the text after it.
+    fn tell_octet_edit(&self, action: &Action) {
+        let text = self.file.borrow().text().to_owned();
+        self.tell(|recorder| recorder.record_octet_edit(action, &text));
+    }
+
     /// Yields which file this group edits.
     fn kind(&self) -> InputKind {
         self.file.borrow().kind()
@@ -739,10 +947,11 @@ impl InputGroup {
     ///   *text increment* that changes nothing, so that the receiver transmits the open request
     ///   of a document that is empty as well (FR-242); that one is no *text increment* of the
     ///   code editor, and is neither written nor announced.
-    fn provide(&mut self, registering: bool) {
+    /// * Yields whether something was provided, a *text increment* or octets, which the
+    ///   *recorder* records as the expiry of the *idle time* (FR-523).
+    fn provide(&mut self, registering: bool) -> bool {
         if !self.file.borrow().is_text() {
-            self.provide_octets();
-            return;
+            return self.provide_octets();
         }
         let text = self.file.borrow().text().to_owned();
         let increment = match self.tracker.provide(&text) {
@@ -756,7 +965,7 @@ impl InputGroup {
                 increment
             }
             None if registering => TextIncrement::default(),
-            None => return,
+            None => return false,
         };
         self.provided_octets = None;
         if let Some(receiver) = &self.receiver {
@@ -768,23 +977,24 @@ impl InputGroup {
                 i32::try_from(increment.range).unwrap_or(i32::MAX),
                 increment.text
             );
-        }
+        }        true
     }
 
     // realises FR-167, FR-168
     /// Provides the octets where they differ from those provided before: the *provided text*
     /// becomes empty, and `applyOctets` of the receiver is scheduled with the
     /// *document identifier* where one is wired.
-    fn provide_octets(&mut self) {
+    fn provide_octets(&mut self) -> bool {
         let octets = self.file.borrow().octets().to_vec();
         if self.provided_octets.as_deref() == Some(octets.as_slice()) {
-            return;
+            return false;
         }
         self.provided_octets = Some(octets);
         self.tracker = IncrementTracker::default();
         if let Some(receiver) = &self.receiver {
             invoke_method!(receiver, "applyOctets", self.identifier.clone());
         }
+        true
     }
 
     // realises FR-278, FR-279
@@ -852,6 +1062,7 @@ impl InputGroup {
     fn name_path(&mut self, path: String) {
         if self.file.borrow().has_unsaved_changes() && self.is_sole_presenter() {
             self.pending_path = Some(path.clone());
+            self.save_questions = self.save_questions.wrapping_add(1);
             self.ask_to_save(path);
             return;
         }
@@ -936,7 +1147,7 @@ impl InputGroup {
         self.announce_state();
         self.announce_path();
         if !self.identifier.is_empty() && !self.produced {
-            self.provide(true);
+            let _ = self.provide(true);
         }
     }
 
@@ -1015,4 +1226,9 @@ fn count_of(value: i32) -> usize {
 /// Yields `value` as the integer QML takes; the greatest one where it is larger.
 fn int_of(value: usize) -> i32 {
     i32::try_from(value).unwrap_or(i32::MAX)
+}
+
+/// Yields the index of an *editor mode* as the bridge carries it.
+fn int_of_mode(mode: EditorMode) -> i32 {
+    i32::try_from(mode.index()).unwrap_or(0)
 }

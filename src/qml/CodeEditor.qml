@@ -33,6 +33,13 @@ Frame {
     property var octets: null
     // whether the octets carry marks of diagnostics
     property bool octetsMarked: false
+    // whether the two timers are held: while an edit of a playback is typed and after it, until
+    // the user edits, so that the idle time and the long idle time do not expire by themselves
+    // (FR-505)
+    property bool held: false
+    // the characters of a played edit still to be entered, and the function called after the last
+    property string pendingText: ""
+    property var playedDone: null
     // the marks of the diagnostics: per diagnostic its start and its end as offsets of the text,
     // the index of its severity, and its message text
     property var markStarts: []
@@ -50,6 +57,41 @@ Frame {
     signal textEdited()
     signal idleExpired()
     signal longIdleExpired()
+    // the selection and the cursor of the text area changed by the user, as offsets in UTF-16 code
+    // units, emitted in the turn of the event loop after the change and not at all where the text
+    // changed in the same turn, so that a move the typing makes is not recorded (FR-525)
+    signal cursorMoved(int start, int end, int cursor)
+    // the text area or the octet view received the active focus (FR-526)
+    signal focusTaken()
+
+    // whether the text changed in this turn of the event loop, and whether a cursor move of this
+    // turn waits to be emitted (FR-525)
+    property bool textChangedNow: false
+    property bool cursorPending: false
+
+    // Notes a cursor or selection change of the text area for `flushCursor`, unless the text changed
+    // in the same turn or the editor is read-only or not in txt (FR-525).
+    function noteCursor() {
+        if (root.textChangedNow || textArea.readOnly || root.mode !== 0) {
+            return;
+        }
+        root.cursorPending = true;
+        Qt.callLater(root.flushCursor);
+    }
+
+    // Emits the cursor move noted in this turn, once, with the selection and the cursor of now.
+    function flushCursor() {
+        if (!root.cursorPending) {
+            return;
+        }
+        root.cursorPending = false;
+        root.cursorMoved(textArea.selectionStart, textArea.selectionEnd, textArea.cursorPosition);
+    }
+
+    // Clears the note that the text changed in this turn.
+    function clearTextChangedNow() {
+        root.textChangedNow = false;
+    }
 
     // Yields the line, counted from 0, at `y` of the content of the flickable.
     function lineAt(y: real): int {
@@ -92,6 +134,7 @@ Frame {
 
     // Inserts a line break and the indentation of the line of the cursor in place of the selection.
     function breakLine(event: KeyEvent) {
+        root.held = false;
         if (root.toggledBy(event)) {
             return;
         }
@@ -104,6 +147,49 @@ Frame {
         const inserted = "\n" + Editing.indentationOfLine(textArea.text, position);
         textArea.insert(position, inserted);
         textArea.cursorPosition = position + inserted.length;
+    }
+
+    // Replaces the text between the offsets `start` and `end` by `text`, typed one character after
+    // another with `delay` milliseconds between two, the cursor after the character entered, and
+    // calls `done` after the last; with the delay 0 the whole text is entered at once. The two
+    // timers are stopped and held meanwhile (FR-505).
+    function playEdit(start: int, end: int, text: string, delay: int, done: var) {
+        root.held = true;
+        idleTimer.stop();
+        longIdleTimer.stop();
+        textArea.remove(start, end);
+        textArea.cursorPosition = start;
+        if (delay <= 0) {
+            textArea.insert(start, text);
+            textArea.cursorPosition = start + text.length;
+            done();
+            return;
+        }
+        root.pendingText = text;
+        root.playedDone = done;
+        typingTimer.interval = delay;
+        typingTimer.start();
+    }
+
+    // Places the cursor at the offset (FR-508).
+    function placeCursor(offset: int) {
+        textArea.cursorPosition = offset;
+    }
+
+    // Selects the text between the two offsets, the cursor at `end` (FR-508).
+    function selectRange(start: int, end: int) {
+        textArea.select(start, end);
+    }
+
+    // Gives the active focus to the text area, its window raised and activated (FR-508).
+    function takeFocus() {
+        const window = root.Window.window;
+        if (window) {
+            window.show();
+            window.raise();
+            window.requestActivate();
+        }
+        textArea.forceActiveFocus();
     }
 
     // Moves the cursor by the height of the view, down or up; with Shift the selection is extended.
@@ -260,8 +346,14 @@ Frame {
                 }
             }
             onTextChanged: {
-                idleTimer.restart();
-                longIdleTimer.restart();
+                if (!root.held) {
+                    idleTimer.restart();
+                    longIdleTimer.restart();
+                }
+                // a cursor move of this turn is the typing's, not the user's (FR-525)
+                root.textChangedNow = true;
+                root.cursorPending = false;
+                Qt.callLater(root.clearTextChangedNow);
                 root.textEdited();
             }
             onCursorRectangleChanged: {
@@ -269,7 +361,16 @@ Frame {
                     Qt.callLater(root.showCursor);
                 }
             }
+            onCursorPositionChanged: root.noteCursor()
+            onSelectionStartChanged: root.noteCursor()
+            onSelectionEndChanged: root.noteCursor()
+            onActiveFocusChanged: {
+                if (textArea.activeFocus) {
+                    root.focusTaken();
+                }
+            }
             Keys.onTabPressed: event => {
+                root.held = false;
                 if (root.toggledBy(event)) {
                     return;
                 }
@@ -288,6 +389,8 @@ Frame {
             Keys.onReturnPressed: event => root.breakLine(event)
             Keys.onEnterPressed: event => root.breakLine(event)
             Keys.onPressed: event => {
+                // the user edits again: the timers run as usual (FR-505)
+                root.held = false;
                 if (root.toggledBy(event)) {
                     return;
                 }
@@ -331,8 +434,38 @@ Frame {
         editable: !textArea.readOnly
         // an edit of a digit restarts the two timers as an edit of the text does
         onEdited: {
+            root.held = false;
             idleTimer.restart();
             longIdleTimer.restart();
+        }
+        onActiveFocusChanged: {
+            if (octetView.activeFocus) {
+                root.focusTaken();
+            }
+        }
+    }
+
+    // enters the next character of a played edit every `delay` milliseconds while characters
+    // remain, a surrogate pair as one, and calls the function given after the last (FR-505)
+    Timer {
+        id: typingTimer
+
+        repeat: true
+        onTriggered: {
+            if (root.pendingText.length === 0) {
+                typingTimer.stop();
+                const done = root.playedDone;
+                root.playedDone = null;
+                if (done) {
+                    done();
+                }
+                return;
+            }
+            const character = String.fromCodePoint(root.pendingText.codePointAt(0));
+            root.pendingText = root.pendingText.substring(character.length);
+            const position = textArea.cursorPosition;
+            textArea.insert(position, character);
+            textArea.cursorPosition = position + character.length;
         }
     }
 

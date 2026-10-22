@@ -1,6 +1,6 @@
-// The modal settings dialog, in three parts: the automatic setting with the idle time and the long idle time
+// The modal settings dialog, in four parts: the automatic setting with the idle time and the long idle time
 // of every code editor, in seconds with one decimal; the tab size and the spaces setting of every code editor;
-// and the silent creation setting of the input creation confirmation dialog.
+// the silent creation setting of the input creation confirmation dialog; and the character playback delay.
 //
 // Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 // Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -36,6 +36,7 @@ Dialog {
         tabSizeBox.value = Workbench.tabSize;
         spacesBox.checked = Workbench.tabsToSpaces;
         silentBox.checked = Workbench.silentCreation;
+        delayBox.value = Workbench.playbackDelay;
         errorLabel.text = "";
     }
 
@@ -55,7 +56,7 @@ Dialog {
             text: qsTr("OK")
             onClicked: {
                 if (Workbench.trySetSettings(idleTimeBox.value * 100, longIdleTimeBox.value * 100, automaticBox.checked,
-                                             tabSizeBox.value, spacesBox.checked, silentBox.checked)) {
+                                             tabSizeBox.value, spacesBox.checked, silentBox.checked, delayBox.value)) {
                     settingsDialog.accept();
                 }
             }
@@ -199,6 +200,47 @@ Dialog {
 
             text: qsTr("Disable input creation confirmation dialog")
             checked: Workbench.silentCreation
+        }
+
+        // the line between the setting of the dialog and the one of the playback
+        Rectangle {
+            id: delaySeparator
+
+            Layout.fillWidth: true
+            Layout.topMargin: 3
+            Layout.bottomMargin: 3
+            implicitHeight: 1
+            color: settingsDialog.palette.mid
+        }
+
+        // the character playback delay (FR-518)
+        GridLayout {
+            id: delayLayout
+
+            columns: 3
+            columnSpacing: 3
+            rowSpacing: 5
+
+            Label {
+                id: delayLabel
+
+                text: qsTr("Character playback delay")
+            }
+
+            SpinBox {
+                id: delayBox
+
+                from: 0
+                to: 10
+                editable: true
+                value: Workbench.playbackDelay
+            }
+
+            Label {
+                id: delayUnit
+
+                text: qsTr("Tenths of a second between two characters of a playback")
+            }
         }
 
         Label {

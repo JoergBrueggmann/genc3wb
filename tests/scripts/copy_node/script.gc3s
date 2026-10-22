@@ -1,0 +1,18 @@
+// The node copy copies its input to its output: the network is restored from the backup, named
+// and activated, the node window opened, three letters typed into the input, and the output
+// verified after the idle expiry, in the node window and in the editor window of the file.
+automation script
+restore "backup" into "work"
+network "work/n.gc3n"
+idle network
+activate
+open node copy
+edit node copy input 0 1:12 0 "ddd"
+idle node copy input 0
+verify node copy input 0 "expected/in.gc3v"
+verify node copy output 0 "expected/out.gc3v"
+open file "work/out.txt"
+verify file "work/out.txt" "expected/out.gc3v"
+close file "work/out.txt"
+close node copy
+deactivate

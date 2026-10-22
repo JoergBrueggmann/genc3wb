@@ -7,6 +7,7 @@ use crate::bridge::document_registry::DocumentRegistry;
 use crate::bridge::input_group::InputGroup;
 use crate::bridge::node_editor::NodeEditor;
 use crate::core::api_message::{NetworkMode, NodeDescription, NodeState, marks_of_diagnostics};
+use crate::core::automation::{Action, DialogAnswer, EditorName};
 use crate::core::build_system::{BuildError, BuildSession, Watched};
 use crate::core::executable;
 use crate::core::input_file::{InputKind, MissingFile, create_files, missing_files};
@@ -17,6 +18,7 @@ use crate::core::network_graph::{
 };
 use crate::core::node_state::{NodeStates, StoreGate};
 use crate::core::output::file_octets;
+use crate::core::recording::Recorder;
 use crate::core::settings::SettingsStore;
 use crate::core::text_increment::TextIncrement;
 
@@ -171,11 +173,38 @@ enum CreationPolicy {
     Skip,
 }
 
+// realises FR-501 to FR-504, FR-510, FR-514
+/// An event of the *journal*: what the *player* waits for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Event {
+    /// `node_opened` was emitted for the *node*
+    NodeOpened(String),
+    /// `node_closed` was emitted for the *node*
+    NodeClosed(String),
+    /// `file_opened` was emitted for the resolved path
+    FileOpened(String),
+    /// `file_closed` was emitted for the resolved path
+    FileClosed(String),
+    /// the *input creation confirmation dialog* was asked
+    CreationAsked,
+    /// the dialog of a failed creation was asked; carries its message
+    CreationFailed(String),
+    /// the *activate request* or the *deactivate request* was acknowledged
+    Activated,
+    Deactivated,
+    /// a *request* of the network editor was answered with an error response or its connection
+    /// failed; carries the *error message*
+    Failed(String),
+}
+
 // realises FR-001, FR-064, FR-085, FR-109, FR-229, FR-241, FR-252, FR-258, FR-259, FR-269,
 // FR-270, FR-273, FR-274, FR-281, FR-285, FR-290 to FR-293, FR-487 to FR-491
 /// The group for the *network graph* as the *front end* binds to it.
 #[derive(Default)]
 pub struct NetworkEditor {
+    /// the *journal*: the events since the network editor was created, in their order, appended
+    /// where the signal is emitted or the report taken (FR-501 to FR-504)
+    journal: Vec<Event>,
     /// the path of the *build system*
     build_system_path: String,
     /// whether the named *build system* is executable
@@ -242,6 +271,10 @@ pub struct NetworkEditor {
     /// the invoker of the *input group* of the *network file*, which receives the marks of the
     /// *diagnostics* of a *build*
     network_input: Option<QmlMethodInvoker>,
+    /// the *recorder*, told the actions of the user the network editor takes and handed to the
+    /// *node editors* and the *input groups* of the *editor windows*; wired by the *workbench
+    /// object*
+    recorder: Option<Rc<RefCell<Recorder>>>,
 }
 
 // realises FR-064 to FR-069, FR-078 to FR-083, FR-085 to FR-089, FR-091, FR-102 to FR-105,
@@ -371,6 +404,7 @@ impl NetworkEditor {
         if build_system_path == self.build_system_path {
             return;
         }
+        self.tell(|recorder| recorder.record(&Action::BuildSystem(build_system_path.clone())));
         self.build_system_path = build_system_path;
         if let Some(settings) = &self.settings {
             let mut settings = settings.borrow_mut();
@@ -442,6 +476,14 @@ impl NetworkEditor {
             self.showing_error = false;
             self.view_changed();
         }
+    }
+
+    // realises FR-501
+    /// Names the *build system* at `path`, as a selection in its file dialog does
+    /// (`set_build_system_path`); scheduled by the *player*.
+    #[qslot(qml_name = "nameBuildSystem")]
+    fn name_build_system(&mut self, path: String) {
+        self.set_build_system_path(path);
     }
 
     // realises FR-085, FR-086, FR-087, FR-088, FR-102, FR-103, FR-104, FR-290, FR-291, FR-298,
@@ -516,7 +558,10 @@ impl NetworkEditor {
         slot.producer.clear();
         let held = std::mem::take(&mut slot.nodes);
         slot.group.borrow_mut().release_document();
+        slot.group.borrow_mut().set_editor_name(None);
+        self.tell(|recorder| recorder.record(&Action::CloseFile(path.clone())));
         self.release_unheld(held);
+        self.journal.push(Event::FileClosed(path.clone()));
         self.file_closed(path);
     }
 
@@ -603,6 +648,9 @@ impl NetworkEditor {
         let Some((action, _)) = self.creation_pending.take() else {
             return;
         };
+        self.tell(|recorder| {
+            recorder.record(&Action::Answer(DialogAnswer::Creation { create, silent }));
+        });
         if !create {
             return;
         }
@@ -625,6 +673,9 @@ impl NetworkEditor {
         let Some((action, _)) = self.creation_pending.take() else {
             return;
         };
+        self.tell(|recorder| {
+            recorder.record(&Action::Answer(DialogAnswer::CreationFailure(proceed)));
+        });
         if proceed {
             self.resume(action, CreationPolicy::Skip);
         }
@@ -671,7 +722,9 @@ impl NetworkEditor {
             return;
         };
         slot.window = false;
+        self.tell(|recorder| recorder.record(&Action::CloseNode(name.clone())));
         self.release_unheld(vec![name.clone()]);
+        self.journal.push(Event::NodeClosed(name.clone()));
         self.node_closed(name);
     }
 
@@ -695,6 +748,9 @@ impl NetworkEditor {
         if !self.switchable() || self.states.is_active() {
             return;
         }
+        if policy == CreationPolicy::Ask {
+            self.tell(|recorder| recorder.record(&Action::Activate));
+        }
         let names: Vec<String> = self.nodes.iter().map(|node| node.name.clone()).collect();
         if !self.prepared(&names, PendingAction::Activation, policy) {
             return;
@@ -713,6 +769,7 @@ impl NetworkEditor {
         if !self.switchable() || !self.states.is_active() {
             return;
         }
+        self.tell(|recorder| recorder.record(&Action::Deactivate));
         self.deactivations_pending += 1;
         self.send(Command::Deactivate);
         self.mode_changed();
@@ -861,7 +918,7 @@ impl NetworkEditor {
                     }
                     self.take_outcome(outcome.graph);
                 }
-                Report::NotStarted(message) => self.take_outcome(Err(message)),
+                Report::NotStarted(message) => self.take_failure(message),
                 Report::Stored {
                     outcome,
                     deferred,
@@ -892,26 +949,28 @@ impl NetworkEditor {
                     self.mode_changed();
                     match outcome {
                         Ok(()) => self.present_node(&name, window),
-                        Err(message) => self.take_outcome(Err(message)),
+                        Err(message) => self.take_failure(message),
                     }
                 }
                 Report::Released(outcome) => {
                     if let Err(message) = outcome {
-                        self.take_outcome(Err(message));
+                        self.take_failure(message);
                     }
                 }
                 Report::Activated(outcome) => {
                     self.activations_pending = self.activations_pending.saturating_sub(1);
                     self.mode_changed();
-                    if let Err(message) = outcome {
-                        self.take_outcome(Err(message));
+                    match outcome {
+                        Ok(()) => self.journal.push(Event::Activated),
+                        Err(message) => self.take_failure(message),
                     }
                 }
                 Report::Deactivated(outcome) => {
                     self.deactivations_pending = self.deactivations_pending.saturating_sub(1);
                     self.mode_changed();
-                    if let Err(message) = outcome {
-                        self.take_outcome(Err(message));
+                    match outcome {
+                        Ok(()) => self.journal.push(Event::Deactivated),
+                        Err(message) => self.take_failure(message),
                     }
                 }
                 Report::Watched(states, mode) => {
@@ -957,12 +1016,116 @@ impl NetworkEditor {
         settings: Rc<RefCell<SettingsStore>>,
         documents: Rc<RefCell<DocumentRegistry>>,
         network_input: QmlMethodInvoker,
+        recorder: Rc<RefCell<Recorder>>,
     ) {
         self.settings = Some(settings);
         self.documents = Some(documents);
         self.network_input = Some(network_input);
+        self.recorder = Some(recorder);
         self.create_editor();
         self.create_file_group();
+    }
+
+    // realises FR-501 to FR-504, FR-510, FR-514
+    /// Yields the number of events of the *journal*; read by the *player*.
+    pub fn journal_len(&self) -> usize {
+        self.journal.len()
+    }
+
+    /// Tells the *recorder* by `telling`, where one is wired; the borrow ends before anything
+    /// is emitted or scheduled.
+    fn tell(&self, telling: impl FnOnce(&mut Recorder)) {
+        if let Some(recorder) = &self.recorder {
+            telling(&mut recorder.borrow_mut());
+        }
+    }
+
+    // realises FR-501 to FR-504, FR-510, FR-514
+    /// Yields the events of the *journal* from the index `mark` on; read by the *player*.
+    pub fn journal_since(&self, mark: usize) -> &[Event] {
+        self.journal.get(mark..).unwrap_or(&[])
+    }
+
+    // realises FR-501, FR-504, FR-506, FR-510
+    /// Yields whether nothing is pending: no *build*, no *activate request*, no *deactivate
+    /// request* and no *hold request* awaits its *response*, and no named *node editor* is busy;
+    /// read by the *player* for the *settling*.
+    pub fn is_quiet(&self) -> bool {
+        self.builds_pending == 0
+            && self.activations_pending == 0
+            && self.deactivations_pending == 0
+            && self.holds_pending.is_empty()
+            && !self
+                .editors
+                .iter()
+                .any(|slot| !slot.name.is_empty() && slot.editor.borrow().is_busy())
+    }
+
+    // realises FR-502, FR-504
+    /// Yields the *network mode* kept as the property `networkMode` does, and whether the
+    /// *activation switch* is enabled as `switchable` does; read by the *player*.
+    pub fn kept_mode(&self) -> i32 {
+        self.network_mode()
+    }
+
+    pub fn is_switchable(&self) -> bool {
+        self.switchable()
+    }
+
+    // realises FR-502, FR-514
+    /// Yields whether the *network graph* holds a *node* of the name `name`.
+    pub fn has_node(&self, name: &str) -> bool {
+        self.nodes.iter().any(|node| node.name == name)
+    }
+
+    // realises FR-503, FR-514
+    /// Yields the path of the file of the *network graph* whose resolved path, its segments `.`
+    /// and `..` resolved, equals `path`, in the form the *editor windows* are keyed by; `None`
+    /// where the graph holds no such file. Read by the *player*.
+    pub fn resolved_file_path(&self, path: &str) -> Option<String> {
+        let directory = self.network_directory();
+        self.files
+            .iter()
+            .map(|file| path_of_identifier(Path::new(&directory), &file.identifier))
+            .find(|candidate| crate::core::automation::resolved(Path::new(""), candidate) == path)
+    }
+
+    // realises FR-505 to FR-508, FR-512, FR-514
+    /// Yields the *node editor* named `name`, `None` where none is; read by the *player*.
+    pub fn node_editor_named(&self, name: &str) -> Option<Rc<RefCell<NodeEditor>>> {
+        self.editors
+            .iter()
+            .find(|slot| !slot.name.is_empty() && slot.name == name)
+            .map(|slot| Rc::clone(&slot.editor))
+    }
+
+    // realises FR-511
+    /// Yields every named *node editor* and the *input group* of every *editor window*
+    /// presented; read by the *player* to load their documents anew after `restore`.
+    pub fn named_node_editors(&self) -> Vec<Rc<RefCell<NodeEditor>>> {
+        self.editors
+            .iter()
+            .filter(|slot| !slot.name.is_empty())
+            .map(|slot| Rc::clone(&slot.editor))
+            .collect()
+    }
+
+    pub fn file_groups(&self) -> Vec<Rc<RefCell<InputGroup>>> {
+        self.file_groups
+            .iter()
+            .filter(|slot| !slot.path.is_empty())
+            .map(|slot| Rc::clone(&slot.group))
+            .collect()
+    }
+
+    // realises FR-505 to FR-508, FR-512, FR-514
+    /// Yields the *input group* of the *editor window* on the file at `path`, as
+    /// `resolved_file_path` yields it, `None` where none is presented; read by the *player*.
+    pub fn file_group_named(&self, path: &str) -> Option<Rc<RefCell<InputGroup>>> {
+        self.file_groups
+            .iter()
+            .find(|slot| !slot.path.is_empty() && slot.path == path)
+            .map(|slot| Rc::clone(&slot.group))
     }
 
     // realises FR-290, FR-291
@@ -972,9 +1135,13 @@ impl NetworkEditor {
     fn create_file_group(&mut self) -> usize {
         let group = InputGroup::default_with_attached_qobject();
         let invoker = group.borrow().get_qml_method_invoker();
-        group
-            .borrow_mut()
-            .configure(InputKind::Input, None, None, self.documents.clone());
+        group.borrow_mut().configure(
+            InputKind::Input,
+            None,
+            None,
+            self.documents.clone(),
+            self.recorder.clone(),
+        );
         self.file_groups.push(FileSlot {
             path: String::new(),
             producer: String::new(),
@@ -1009,7 +1176,11 @@ impl NetworkEditor {
         };
         let directory = self.network_directory();
         let path = path_of_identifier(Path::new(&directory), &file.identifier);
+        if policy == CreationPolicy::Ask {
+            self.tell(|recorder| recorder.record(&Action::OpenFile(path.clone())));
+        }
         if self.file_groups.iter().any(|slot| slot.path == path) {
+            self.journal.push(Event::FileOpened(path.clone()));
             self.file_opened(path);
             return;
         }
@@ -1044,9 +1215,16 @@ impl NetworkEditor {
             let slot = &mut self.file_groups[index];
             slot.path.clone_from(&path);
             slot.producer = producer;
+            slot.group.borrow_mut().configure(
+                kind,
+                None,
+                None,
+                self.documents.clone(),
+                self.recorder.clone(),
+            );
             slot.group
                 .borrow_mut()
-                .configure(kind, None, None, self.documents.clone());
+                .set_editor_name(Some(EditorName::File { path: path.clone() }));
             invoke_method!(
                 &slot.invoker,
                 "nameDocument",
@@ -1072,6 +1250,7 @@ impl NetworkEditor {
             }
         }
         self.hold_nodes_of_file(index);
+        self.journal.push(Event::FileOpened(path.clone()));
         self.file_opened(path);
     }
 
@@ -1146,10 +1325,12 @@ impl NetworkEditor {
     fn create_editor(&mut self) -> usize {
         let editor = NodeEditor::default_with_attached_qobject();
         let invoker = editor.borrow().get_qml_method_invoker();
-        if let Some(documents) = &self.documents {
-            editor
-                .borrow_mut()
-                .configure(self.get_qml_method_invoker(), Rc::clone(documents));
+        if let (Some(documents), Some(recorder)) = (&self.documents, &self.recorder) {
+            editor.borrow_mut().configure(
+                self.get_qml_method_invoker(),
+                Rc::clone(documents),
+                Rc::clone(recorder),
+            );
         }
         self.editors.push(NodeSlot {
             name: String::new(),
@@ -1219,6 +1400,7 @@ impl NetworkEditor {
             identifiers(&files.outputs)
         );
         if window {
+            self.journal.push(Event::NodeOpened(files.name.clone()));
             self.node_opened(files.name);
         }
     }
@@ -1275,6 +1457,7 @@ impl NetworkEditor {
         for (name, window) in named {
             self.unname_editor(&name);
             if window {
+                self.journal.push(Event::NodeClosed(name.clone()));
                 self.node_closed(name);
             }
         }
@@ -1318,6 +1501,9 @@ impl NetworkEditor {
             return;
         }
         let name = node.name.clone();
+        if policy == CreationPolicy::Ask {
+            self.tell(|recorder| recorder.record(&Action::OpenNode(name.clone())));
+        }
         let action = PendingAction::Node { name: name.clone() };
         if self.prepared(std::slice::from_ref(&name), action, policy) {
             self.hold(name, true);
@@ -1416,6 +1602,7 @@ impl NetworkEditor {
             };
             let (meta_dsls, inputs) = (joined(true), joined(false));
             self.creation_pending = Some((action, files));
+            self.journal.push(Event::CreationAsked);
             self.creation_asked(meta_dsls, inputs);
             return false;
         }
@@ -1423,7 +1610,9 @@ impl NetworkEditor {
             Ok(()) => true,
             Err(failure) => {
                 self.creation_pending = Some((action, files));
-                self.creation_failed(format!("{}: {}", failure.path, failure.reason));
+                let message = format!("{}: {}", failure.path, failure.reason);
+                self.journal.push(Event::CreationFailed(message.clone()));
+                self.creation_failed(message);
                 false
             }
         }
@@ -1463,6 +1652,7 @@ impl NetworkEditor {
         if let Some(slot) = self.editors.iter_mut().find(|slot| slot.name == name) {
             if window {
                 slot.window = true;
+                self.journal.push(Event::NodeOpened(name.clone()));
                 self.node_opened(name);
             }
             return;
@@ -1481,6 +1671,16 @@ impl NetworkEditor {
         });
         self.send(Command::Hold { name });
         self.mode_changed();
+    }
+
+    // realises FR-261, FR-268, FR-286, FR-287, FR-514
+    /// Holds `message` as the *error message*, as `take_outcome` does for a failed *build*, and
+    /// notes the failure in the *journal*: a *build system* not started, or an *activate
+    /// request*, a *deactivate request*, a *hold request* or a *release request* answered with an
+    /// error response or whose connection failed.
+    fn take_failure(&mut self, message: String) {
+        self.journal.push(Event::Failed(message.clone()));
+        self.take_outcome(Err(message));
     }
 
     // realises FR-078, FR-079, FR-245

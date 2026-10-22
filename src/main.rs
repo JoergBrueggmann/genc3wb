@@ -11,10 +11,17 @@ use genc3wb::core::launch;
 use qtbridge::{QApp, include_bytes_qml};
 
 fn main() {
-    // the handed file of the command line, or a refused argument (IR-206)
-    match launch::handed_file(std::env::args().skip(1)) {
-        Ok(Some(path)) => workbench::hand_file(path),
-        Ok(None) => {}
+    // the handed file or the script of the switch --verify of the command line, or a refused
+    // argument (IR-206, FR-517)
+    match launch::arguments(std::env::args().skip(1)) {
+        Ok(arguments) => {
+            if let Some(path) = arguments.handed {
+                workbench::hand_file(path);
+            }
+            if let Some(path) = arguments.verify {
+                workbench::verify_script(path);
+            }
+        }
         Err(message) => {
             eprintln!("{message}");
             std::process::exit(1);
@@ -39,6 +46,7 @@ fn main() {
     include_bytes_qml!("qml/EditorWindow.qml", "genc3wb");
     include_bytes_qml!("qml/InfoDialog.qml", "genc3wb");
     include_bytes_qml!("qml/SettingsDialog.qml", "genc3wb");
+    include_bytes_qml!("qml/BackupDialog.qml", "genc3wb");
     include_bytes_qml!("qml/PathOfUrl.qml", "genc3wb");
     include_bytes_qml!("qml/icons/indicatorUntouched.png", "genc3wb");
     include_bytes_qml!("qml/icons/indicatorChanged.png", "genc3wb");

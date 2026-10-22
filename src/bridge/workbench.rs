@@ -5,13 +5,18 @@
 //! Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 //! Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
 
+use crate::bridge::automation::Automation;
 use crate::bridge::document_registry::DocumentRegistry;
 use crate::bridge::input_group::InputGroup;
 use crate::bridge::network_editor::NetworkEditor;
+use crate::core::automation::{Action, EditorName, SettingsValues};
 use crate::core::input_file::InputKind;
 use crate::core::key_stroke::KeyStroke;
 use crate::core::launch;
-use crate::core::settings::{Settings, SettingsStore, tab_size_violation, times_of_processing};
+use crate::core::recording::{AUTOMATIC_FILE_NAME, Recorder, local_time_name, start_folder};
+use crate::core::settings::{
+    Settings, SettingsStore, playback_delay_violation, tab_size_violation, times_of_processing,
+};
 use crate::core::version::version_of_package;
 
 use qtbridge::{QmlMethodInvoker, QmlObject, invoke_method, qobject};
@@ -38,6 +43,8 @@ const START_UP_GRACE: Duration = Duration::from_secs(2);
 struct Launch {
     /// the *handed file* not taken by the *workbench object* yet
     handed: Option<String>,
+    /// the gc3s-file of the switch `--verify` not taken by the *workbench object* yet (FR-517)
+    verify: Option<String>,
     /// whether the command line handed the file, after which no file-open event of the launch
     /// is to be expected
     by_command_line: bool,
@@ -67,6 +74,18 @@ pub fn hand_file(path: String) {
     LAUNCH.with(|launch| {
         let mut launch = launch.borrow_mut();
         launch.handed = Some(path);
+        launch.by_command_line = true;
+    });
+}
+
+// realises FR-517, IR-206
+/// Leaves `path` as the gc3s-file of a *verification run* for the *workbench object*, which plays
+/// it once the main window is up; called by 'main.rs' before the *front end* is loaded. No
+/// file-open event of the launch is expected then.
+pub fn verify_script(path: String) {
+    LAUNCH.with(|launch| {
+        let mut launch = launch.borrow_mut();
+        launch.verify = Some(path);
         launch.by_command_line = true;
     });
 }
@@ -122,11 +141,15 @@ pub struct Workbench {
     network_input: Rc<RefCell<InputGroup>>,
     /// the group for the *network graph*
     network: Rc<RefCell<NetworkEditor>>,
+    /// the *player* (FR-500)
+    automation: Rc<RefCell<Automation>>,
     /// the *typing mode*: whether typing inserts, and overwrites otherwise (FR-192)
     insert_mode: bool,
     /// the failure of the last write of the *settings file* as announced last, so that the
     /// signal is emitted where it changed (FR-480)
     announced_failure: String,
+    /// the *recorder*, shared with every *bridged type* that takes an action of the user
+    recorder: Rc<RefCell<Recorder>>,
 }
 
 impl Default for Workbench {
@@ -134,34 +157,72 @@ impl Default for Workbench {
     /// *document registry*, the network editor and the *input group* of the *network file*, and
     /// wires them: the network editor with the settings, the *document registry* and that
     /// *input group*, and that *input group* with the network editor, both with their paths, the
-    /// *handed file* in place of the stored path of the *network file* where there is one; the
-    /// network editor creates the *node editors*.
+    /// *handed file* in place of the stored path of the *network file* where there is one, and
+    /// no *network file* at all for a *verification run* (FR-517); the network editor creates the
+    /// *node editors*; the *player* with the settings, the network editor, that *input group* and
+    /// the gc3s-file of the switch.
     fn default() -> Self {
         let settings = Rc::new(RefCell::new(SettingsStore::open(&Settings::default_path())));
-        let handed = LAUNCH.with(|launch| launch.borrow_mut().handed.take());
+        let (handed, verify) = LAUNCH.with(|launch| {
+            let mut launch = launch.borrow_mut();
+            (launch.handed.take(), launch.verify.take())
+        });
+        let handed = if verify.is_some() {
+            Some(String::new())
+        } else {
+            handed
+        };
         let documents = Rc::new(RefCell::new(DocumentRegistry::new()));
+        let recorder = Rc::new(RefCell::new(Recorder::default()));
         let network = NetworkEditor::default_with_attached_qobject();
         let network_input = InputGroup::default_with_attached_qobject();
         network.borrow_mut().configure(
             Rc::clone(&settings),
             Rc::clone(&documents),
             network_input.borrow().get_qml_method_invoker(),
+            Rc::clone(&recorder),
         );
         network_input.borrow_mut().configure(
             InputKind::Network,
             Some(Rc::clone(&settings)),
             Some(network.borrow().get_qml_method_invoker()),
             None,
+            Some(Rc::clone(&recorder)),
         );
+        network_input
+            .borrow_mut()
+            .set_editor_name(Some(EditorName::Network));
         network.borrow_mut().load_initial();
         network_input.borrow_mut().load_initial(handed.as_deref());
+        let automation = Automation::default_with_attached_qobject();
+        automation.borrow_mut().configure(
+            Rc::clone(&settings),
+            Rc::clone(&network),
+            Rc::clone(&network_input),
+            Rc::clone(&recorder),
+            verify.clone(),
+        );
+        // the automatic recording of every start but a verification run (FR-520)
+        if verify.is_none() {
+            let time = local_time_name();
+            let path = start_folder(&launch::executable_folder(), &time).join(AUTOMATIC_FILE_NAME);
+            let network_path = network_input.borrow().document_path();
+            let _ = recorder.borrow_mut().start(
+                &path,
+                &version_of_package(env!("CARGO_PKG_VERSION")),
+                &time,
+                &network_path,
+            );
+        }
         Workbench {
             settings,
             documents,
             network_input,
             network,
+            automation,
             insert_mode: true,
             announced_failure: String::new(),
+            recorder,
         }
     }
 }
@@ -173,6 +234,8 @@ impl Default for Workbench {
 impl Workbench {
     qproperty!("networkInput", Read = network_input, Constant);
     qproperty!("network", Read = network, Constant);
+    // the player (FR-500)
+    qproperty!("automation", Read = automation, Constant);
     qproperty!("idleTime", Read = idle_time, Notify = times_changed);
     qproperty!(
         "longIdleTime",
@@ -208,6 +271,12 @@ impl Workbench {
         Read = silent_creation,
         Notify = silent_creation_changed
     );
+    // the character playback delay in tenths of a second (FR-518)
+    qproperty!(
+        "playbackDelay",
+        Read = playback_delay,
+        Notify = playback_delay_changed
+    );
     // the positions of the splitters in pixels: the size of the left or upper part (FR-149)
     qproperty!(
         "nodeLeftWidth",
@@ -241,6 +310,16 @@ impl Workbench {
         Rc::clone(&self.network)
     }
 
+    // realises FR-500
+    fn automation(&self) -> Rc<RefCell<Automation>> {
+        Rc::clone(&self.automation)
+    }
+
+    // realises FR-095, FR-518
+    fn playback_delay(&self) -> u32 {
+        self.settings.borrow().playback_delay()
+    }
+
     // realises FR-192
     fn insert_mode(&self) -> bool {
         self.insert_mode
@@ -258,6 +337,9 @@ impl Workbench {
             return;
         }
         self.insert_mode = insert_mode;
+        self.recorder
+            .borrow_mut()
+            .record(&Action::TypingMode(insert_mode));
         self.insert_mode_changed();
     }
 
@@ -333,6 +415,9 @@ impl Workbench {
     #[qsignal(qml_name = "silentCreationChanged")]
     fn silent_creation_changed(&mut self);
 
+    #[qsignal(qml_name = "playbackDelayChanged")]
+    fn playback_delay_changed(&mut self);
+
     #[qsignal(qml_name = "splittersChanged")]
     fn splitters_changed(&mut self);
 
@@ -394,19 +479,64 @@ impl Workbench {
         self.take_insert_key(KeyStroke::default_insert_key());
     }
 
+    // realises FR-509
+    /// Takes the key stroke named `name` as the insert key, as `set_insert_key` does; a name that
+    /// names none sets nothing, the *player* having checked the name before. Scheduled by the
+    /// *player*; it yields nothing, since a slot scheduled by an invoker yields nothing.
+    #[qslot(qml_name = "setInsertKeyNamed")]
+    fn set_insert_key_named(&mut self, name: String) {
+        if let Some(insert_key) = KeyStroke::of_name(&name) {
+            self.take_insert_key(insert_key);
+        }
+    }
+
+    // realises FR-509
+    /// Sets the *typing mode*, as `set_insert_mode` does; scheduled by the *player*.
+    #[qslot(qml_name = "setTypingMode")]
+    fn set_typing_mode(&mut self, insert: bool) {
+        self.set_insert_mode(insert);
+    }
+
+    // realises FR-509
+    /// Sets the settings as `try_set_settings` does, the *player* having checked the constraints
+    /// before; scheduled by the *player*, which is why it yields nothing.
+    #[qslot(qml_name = "applySettings")]
+    #[allow(clippy::too_many_arguments)] // the values of the settings dialog, as the player hands them
+    fn apply_settings(
+        &mut self,
+        idle_time: i32,
+        long_idle_time: i32,
+        automatic: bool,
+        tab_size: i32,
+        tabs_to_spaces: bool,
+        silent_creation: bool,
+        playback_delay: i32,
+    ) {
+        let _ = self.try_set_settings(
+            idle_time,
+            long_idle_time,
+            automatic,
+            tab_size,
+            tabs_to_spaces,
+            silent_creation,
+            playback_delay,
+        );
+    }
+
     // slots
     // realises FR-099, FR-100, FR-132, FR-133, FR-134, FR-135, FR-140, FR-141, FR-255, FR-257,
-    // FR-490, FR-492
+    // FR-490, FR-492, FR-518
     /// Sets the two times of every code editor, in milliseconds, the *automatic setting*, the
-    /// *tab size*, in characters, the *spaces setting* and the *silent creation setting*, and
-    /// stores them; yields whether the values satisfy the constraints, and emits
-    /// `settings_rejected` with the message naming the violated one where they do not, nothing
-    /// being set then.
+    /// *tab size*, in characters, the *spaces setting*, the *silent creation setting* and the
+    /// *character playback delay*, in tenths of a second, and stores them; yields whether the
+    /// values satisfy the constraints, and emits `settings_rejected` with the message naming the
+    /// violated one where they do not, nothing being set then.
     ///
-    /// * The *tab size* is checked first, then the two times.
+    /// * The *tab size* is checked first, then the two times, then the delay.
     /// * With the *automatic setting* on, the times are left as they are, since the next
     ///   *processing time* sets them (FR-132).
     #[qslot(qml_name = "trySetSettings")]
+    #[allow(clippy::too_many_arguments)] // the values of the settings dialog, as the front end hands them
     fn try_set_settings(
         &mut self,
         idle_time: i32,
@@ -415,11 +545,17 @@ impl Workbench {
         tab_size: i32,
         tabs_to_spaces: bool,
         silent_creation: bool,
+        playback_delay: i32,
     ) -> bool {
         let idle_time = u32::try_from(idle_time).unwrap_or(0);
         let long_idle_time = u32::try_from(long_idle_time).unwrap_or(0);
         let tab_size = u32::try_from(tab_size).unwrap_or(0);
+        let playback_delay = u32::try_from(playback_delay).unwrap_or(u32::MAX);
         if let Some(message) = tab_size_violation(tab_size) {
+            self.settings_rejected(message);
+            return false;
+        }
+        if let Some(message) = playback_delay_violation(playback_delay) {
             self.settings_rejected(message);
             return false;
         }
@@ -436,12 +572,14 @@ impl Workbench {
         let changed_tab_size = self.tab_size() != tab_size;
         let changed_tabs_to_spaces = self.tabs_to_spaces() != tabs_to_spaces;
         let changed_silent_creation = self.silent_creation() != silent_creation;
+        let changed_playback_delay = self.playback_delay() != playback_delay;
         {
             let mut settings = self.settings.borrow_mut();
             settings.set_automatic(automatic);
             let _ = settings.set_tab_size(tab_size);
             settings.set_tabs_to_spaces(tabs_to_spaces);
             settings.set_silent_creation(silent_creation);
+            let _ = settings.set_playback_delay(playback_delay);
         }
         self.store();
         self.times_changed();
@@ -454,6 +592,20 @@ impl Workbench {
         if changed_silent_creation {
             self.silent_creation_changed();
         }
+        if changed_playback_delay {
+            self.playback_delay_changed();
+        }
+        self.recorder
+            .borrow_mut()
+            .record(&Action::Settings(SettingsValues {
+                idle_time,
+                long_idle_time,
+                automatic,
+                tab_size,
+                tabs_to_spaces,
+                silent_creation,
+                playback_delay,
+            }));
         true
     }
 
@@ -508,16 +660,23 @@ impl Workbench {
         self.network_input.borrow_mut().release_lock();
     }
 
-    // realises FR-476, FR-477, IR-207
+    // realises FR-476, FR-477, FR-517, IR-207
     /// Keeps the invoker of the *workbench object* in the state of the module, so that
     /// `file_opened` reaches `open_handed_file` in the *start-up phase* and `settings_stored`
     /// reaches `announce_settings_stored`, and starts the *start-up phase*, which lasts
     /// `START_UP_GRACE` from now, or ends at once where the command line handed the file, since
     /// no file-open event of the launch follows then; called by the *front end* once the main
-    /// window is completed. A file the operating system handed over before is named then.
+    /// window is completed. A file the operating system handed over before is named then. The
+    /// *player* takes the invoker as well, and `startVerification` of it is scheduled, so that a
+    /// *verification run* begins once the main window is up.
     #[qslot(qml_name = "started")]
     fn started(&mut self) {
         let invoker = self.get_qml_method_invoker();
+        self.automation
+            .borrow_mut()
+            .take_workbench_invoker(self.get_qml_method_invoker());
+        let automation_invoker = self.automation.borrow().get_qml_method_invoker();
+        invoke_method!(&automation_invoker, "startVerification");
         let handed = LAUNCH.with(|launch| {
             let mut launch = launch.borrow_mut();
             launch.invoker = Some(invoker);
@@ -611,6 +770,9 @@ impl Workbench {
         if insert_key == self.settings.borrow().insert_key() {
             return;
         }
+        self.recorder
+            .borrow_mut()
+            .record(&Action::InsertKey(insert_key.name()));
         self.settings.borrow_mut().set_insert_key(insert_key);
         self.store();
         self.insert_key_changed();
@@ -619,6 +781,11 @@ impl Workbench {
     /// Yields the settings the groups share.
     pub fn settings(&self) -> Rc<RefCell<SettingsStore>> {
         Rc::clone(&self.settings)
+    }
+
+    /// Yields the *recorder*.
+    pub fn recorder(&self) -> Rc<RefCell<Recorder>> {
+        Rc::clone(&self.recorder)
     }
 
     // realises FR-277

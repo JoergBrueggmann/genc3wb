@@ -1,0 +1,7 @@
+meta compiler-compiler network
+	node copy
+		inputs
+			in.txt
+		outputs
+			out.txt
+// end

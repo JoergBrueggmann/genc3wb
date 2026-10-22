@@ -1,6 +1,8 @@
 // The main window, the compiler network editor: menu bar, status bar, the network file and its graph, the
 // dialog telling a refusal of the network file, the failure of a write of the settings file in the status
-// bar, and the node windows, one per node opened.
+// bar, the node windows, one per node opened, the playback of an automation script: its menu, its
+// dialogs, the timer that steps the player and the dispatch of the front-end actions; and the recording:
+// its menu items, its dialogs and its status text.
 //
 // Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 // Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -9,6 +11,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Dialogs
 import QtQuick.Layouts
 // The types of the module genc3wb are registered by the bridge crate at run time, which writes no type
 // description for qmllint; the import and the unqualified access to the singleton are therefore not linted.
@@ -38,6 +41,14 @@ ApplicationWindow {
     readonly property string networkRefusal: mainWindow.networkHeld.length > 0
                                              ? qsTr("Network not opened: %1").arg(mainWindow.networkHeld)
                                              : ""
+    // the failure of the last start of a recording or write of an expected file, and that a recording
+    // runs, for the status bar (FR-532)
+    readonly property string recordingFailure: Workbench.automation.recordingFailure.length > 0
+                                               ? qsTr("Recording failed: %1").arg(Workbench.automation.recordingFailure)
+                                               : ""
+    readonly property string recordingText: Workbench.automation.recording
+                                            ? qsTr("Recording to %1").arg(Workbench.automation.recordingPath)
+                                            : ""
 
     // Yields that `file` is held by the holder of its lock file, as a phrase without a period,
     // the time in the local time of the user (FR-219); a process number of 0 names no holder.
@@ -114,6 +125,52 @@ ApplicationWindow {
         }
     }
 
+    // Yields the window an action of a playback names: the main window, the node window of the
+    // node, or the editor window on the file at the path; null where none is presented (FR-508).
+    function windowOf(kind: string, name: string): var {
+        if (kind === "main") {
+            return mainWindow;
+        }
+        if (kind === "node") {
+            const index = mainWindow.nodeWindowIndex(name);
+            return index < 0 ? null : nodeWindows.objectAt(index);
+        }
+        if (kind === "file") {
+            const index = mainWindow.fileWindowIndex(name);
+            return index < 0 ? null : fileWindows.objectAt(index);
+        }
+        return null;
+    }
+
+    // Yields the component that presents the code editor an action of a playback names by its
+    // four fields: the input group of the network file, the editor window on the file, or what
+    // the node window yields for the item; null where none is presented (FR-505 to FR-508).
+    function presenterOf(kind: string, name: string, item: string, index: int): var {
+        if (kind === "network") {
+            return networkInputGroup;
+        }
+        if (kind === "file") {
+            return mainWindow.windowOf("file", name);
+        }
+        const window = mainWindow.windowOf("node", name);
+        return window ? window.presenterOf(item, index) : null;
+    }
+
+    // Yields the code editor an action of a playback names, null where none is presented.
+    function editorOf(kind: string, name: string, item: string, index: int): var {
+        const presenter = mainWindow.presenterOf(kind, name, item, index);
+        if (!presenter) {
+            return null;
+        }
+        return item === "diagnostics" ? presenter.diagnosticsEditor : presenter.codeEditor;
+    }
+
+    // Tells the player that a front-end action is done, or that nothing was found to carry it out
+    // on; deferred, so that the player is not re-entered while its signal is emitted.
+    function frontEndDone(done: bool) {
+        Qt.callLater(() => Workbench.automation.frontEndDone(done));
+    }
+
     // Presents the dialog of FR-219 with `texts`, where one is not empty.
     function tellRefusals(texts: list<string>) {
         const told = texts.filter(text => text.length > 0);
@@ -129,9 +186,17 @@ ApplicationWindow {
         tellRefusals(refusalSentences());
     }
     onClosing: {
-        // shuts every node editor down as well (FR-068, FR-105)
+        // the recording is completed first (FR-529), then every node editor is shut down as well
+        // (FR-068, FR-105)
+        Workbench.automation.stopRecording();
         Workbench.network.shutDown();
         Workbench.releaseLock();
+    }
+    // the main window became the active one, for the recorder (FR-526)
+    onActiveChanged: {
+        if (mainWindow.active) {
+            Workbench.automation.recordWindowFocus("main", "");
+        }
     }
 
     menuBar: MenuBar {
@@ -170,6 +235,56 @@ ApplicationWindow {
             }
         }
 
+        // the menu of the playback and the recording (FR-498)
+        Menu {
+            id: automationMenu
+
+            title: qsTr("&Automation")
+            // whether a code editor holds or held the focus is state of the recorder, read when the
+            // menu is about to show (FR-531)
+            onAboutToShow: storeAction.enabled = Workbench.automation.recording && Workbench.automation.canStore()
+
+            Action {
+                id: playbackAction
+
+                text: qsTr("&Play back script...")
+                enabled: !Workbench.automation.recording && !Workbench.automation.running
+                onTriggered: scriptDialog.open()
+            }
+
+            Action {
+                id: startRecordingAction
+
+                text: qsTr("&Start and create recording file...")
+                enabled: !Workbench.automation.recording && !Workbench.automation.running
+                onTriggered: recordingFileDialog.open()
+            }
+
+            Action {
+                id: stopRecordingAction
+
+                text: qsTr("S&top and save recording...")
+                enabled: Workbench.automation.recording
+                onTriggered: stopRecordingDialog.open()
+            }
+
+            Action {
+                id: backupAction
+
+                text: qsTr("&Backup to restore on replay...")
+                enabled: Workbench.automation.recording
+                onTriggered: backupDialog.open()
+            }
+
+            Action {
+                id: storeAction
+
+                text: qsTr("Store to &verify on replay")
+                enabled: false
+                onTriggered: Workbench.automation.storeFocused()
+            }
+        }
+
         Menu {
             id: helpMenu
 
@@ -201,10 +316,12 @@ ApplicationWindow {
             // FR-270, FR-285)
             text: [mainWindow.settingsFailure,
                    mainWindow.networkRefusal,
+                   mainWindow.recordingFailure,
                    !Workbench.network.available
                    ? qsTr("Build system not available on this platform")
                    : Workbench.network.building ? qsTr("Building") : "",
-                   mainWindow.networkModeText(Workbench.network.networkMode)]
+                   mainWindow.networkModeText(Workbench.network.networkMode),
+                   mainWindow.recordingText]
                   .filter(part => part.length > 0).join("  ·  ")
         }
 
@@ -359,6 +476,91 @@ ApplicationWindow {
         id: settingsDialog
     }
 
+    // the file selector dialog of an automation script; its acceptance starts the playback
+    // (FR-499, IR-211)
+    FileDialog {
+        id: scriptDialog
+
+        title: qsTr("Automation script")
+        nameFilters: [qsTr("Automation scripts (*.gc3s)")]
+        onAccepted: Workbench.automation.play(PathOfUrl.path(scriptDialog.selectedFile))
+    }
+
+    // the file dialog of the operating system for the gc3s-file of an individual recording, which asks
+    // before a file that exists is replaced; its acceptance starts the recording (FR-528, IR-217)
+    FileDialog {
+        id: recordingFileDialog
+
+        title: qsTr("Recording file")
+        fileMode: FileDialog.SaveFile
+        defaultSuffix: "gc3s"
+        nameFilters: [qsTr("Automation scripts (*.gc3s)")]
+        onAccepted: Workbench.automation.startRecording(PathOfUrl.path(recordingFileDialog.selectedFile))
+    }
+
+    // asks whether to stop the recording and save it into its file (FR-529)
+    Dialog {
+        id: stopRecordingDialog
+
+        property alias text: stopRecordingText.text
+
+        width: Math.min(mainWindow.width - 48, 560)
+        modal: true
+        title: qsTr("Stop recording")
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        anchors.centerIn: parent
+        onAboutToShow: stopRecordingDialog.text = qsTr("Stop the recording and save it into %1?").arg(Workbench.automation.recordingPath)
+        onAccepted: Workbench.automation.stopRecording()
+
+        Label {
+            id: stopRecordingText
+
+            width: stopRecordingDialog.availableWidth
+            wrapMode: Text.Wrap
+        }
+    }
+
+    // the backup dialog (FR-530)
+    BackupDialog {
+        id: backupDialog
+    }
+
+    // the playback report of a playback started from the menu (FR-515, FR-516)
+    Dialog {
+        id: reportDialog
+
+        width: Math.min(mainWindow.width - 48, 720)
+        height: Math.min(mainWindow.height - 48, 480)
+        modal: true
+        title: qsTr("Playback report")
+        standardButtons: Dialog.Ok
+        anchors.centerIn: parent
+
+        ScrollView {
+            id: reportScroll
+
+            anchors.fill: parent
+
+            TextArea {
+                id: reportArea
+
+                readOnly: true
+                wrapMode: TextEdit.NoWrap
+                font.family: "Courier New"
+            }
+        }
+    }
+
+    // steps the player while a playback runs (FR-500)
+    Timer {
+        id: playerTimer
+
+        interval: 50
+        repeat: true
+        running: Workbench.automation.running
+        onTriggered: Workbench.automation.step()
+    }
+
     InsertKeyDialog {
         id: insertKeyDialog
     }
@@ -476,6 +678,96 @@ ApplicationWindow {
 
         function onRefused() {
             mainWindow.tellRefusals([mainWindow.networkRefusal]);
+        }
+    }
+
+    // the front-end actions of a playback, each carried out on the code editor, the component or
+    // the window named, and the end of a playback (FR-505, FR-507, FR-508, FR-510, FR-516, FR-517)
+    Connections {
+        id: automationConnections
+
+        target: Workbench.automation
+
+        function onEditAsked(kind, name, item, index, start, end, text, delay) {
+            const editor = mainWindow.editorOf(kind, name, item, index);
+            if (!editor) {
+                mainWindow.frontEndDone(false);
+                return;
+            }
+            editor.playEdit(start, end, text, delay, () => mainWindow.frontEndDone(true));
+        }
+
+        function onCursorAsked(kind, name, item, index, offset) {
+            const editor = mainWindow.editorOf(kind, name, item, index);
+            if (editor) {
+                editor.placeCursor(offset);
+            }
+            mainWindow.frontEndDone(editor !== null);
+        }
+
+        function onSelectAsked(kind, name, item, index, start, end) {
+            const editor = mainWindow.editorOf(kind, name, item, index);
+            if (editor) {
+                editor.selectRange(start, end);
+            }
+            mainWindow.frontEndDone(editor !== null);
+        }
+
+        function onFocusAsked(kind, name, item, index, window) {
+            if (window) {
+                const target = mainWindow.windowOf(kind, name);
+                if (target) {
+                    mainWindow.raise(target);
+                }
+                mainWindow.frontEndDone(target !== null);
+                return;
+            }
+            const editor = mainWindow.editorOf(kind, name, item, index);
+            if (editor) {
+                editor.takeFocus();
+            }
+            mainWindow.frontEndDone(editor !== null);
+        }
+
+        function onModeAsked(kind, name, item, index, mode) {
+            const presenter = mainWindow.presenterOf(kind, name, item, index);
+            if (presenter) {
+                presenter.selectMode(mode);
+            }
+            mainWindow.frontEndDone(presenter !== null);
+        }
+
+        function onAnswerAsked(dialog, choice, silent) {
+            if (dialog === "save") {
+                networkInputGroup.answerSave(choice);
+            } else if (dialog === "creation") {
+                silentBox.checked = silent;
+                if (choice) {
+                    creationDialog.accept();
+                } else {
+                    creationDialog.reject();
+                }
+            } else if (dialog === "creation failure") {
+                if (choice) {
+                    creationFailureDialog.accept();
+                } else {
+                    creationFailureDialog.reject();
+                }
+            }
+            mainWindow.frontEndDone(true);
+        }
+
+        // a verification run terminates as the main window does when closed; a playback of the
+        // menu presents the report and leaves the product as it is
+        function onFinished(code) {
+            if (Workbench.automation.verifying) {
+                Workbench.network.shutDown();
+                Workbench.releaseLock();
+                Qt.exit(code);
+                return;
+            }
+            reportArea.text = Workbench.automation.report;
+            reportDialog.open();
         }
     }
 

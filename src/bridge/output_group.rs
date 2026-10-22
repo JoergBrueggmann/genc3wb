@@ -3,10 +3,15 @@
 //! Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 //! Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
 
+use crate::core::automation::{Action, EditorItem, EditorName, FocusTarget};
 use crate::core::octet_view::{EditorMode, is_utf8, row_count, row_text};
 use crate::core::output::OutputPages;
+use crate::core::recording::Recorder;
 
 use qtbridge::qobject;
+
+use std::cell::RefCell;
+use std::rc::Rc;
 
 // realises FR-027
 /// The output group as the *front end* binds to it.
@@ -18,6 +23,11 @@ pub struct OutputGroup {
     revision: i32,
     /// the path of the *output* whose *output page* was presented last; empty before the first
     presented_path: String,
+    /// the name of the opened *node*, by which the code editors of the group are named in an
+    /// *automation script*; set by the *node editor* (FR-524, FR-526)
+    node_name: String,
+    /// the *recorder*; wired by the *node editor*
+    recorder: Option<Rc<RefCell<Recorder>>>,
 }
 
 // realises FR-027, FR-030, FR-032 to FR-036, FR-042, FR-044, FR-102, FR-107, FR-108, FR-110,
@@ -169,6 +179,32 @@ impl OutputGroup {
         }
     }
 
+    // realises FR-526
+    /// Tells the *recorder* that the code editor of the presented *output page*, or of the
+    /// *diagnostics page* where `diagnostics`, received the focus; called by the *front end*.
+    #[qslot(qml_name = "recordFocus")]
+    fn record_focus(&mut self, diagnostics: bool) {
+        let item = if diagnostics {
+            EditorItem::Diagnostics
+        } else {
+            EditorItem::Output(self.pages.current())
+        };
+        if let Some(editor) = self.recording_editor(item) {
+            self.tell(|recorder| recorder.focus(&FocusTarget::Editor(editor)));
+        }
+    }
+
+    // realises FR-524
+    /// Tells the *recorder* that the user selected the position `index` of the *mode switch* of
+    /// the presented *output page*; called by the *front end*.
+    #[qslot(qml_name = "recordMode")]
+    fn record_mode(&mut self, index: i32) {
+        let item = EditorItem::Output(self.pages.current());
+        if let (Some(editor), Some(mode)) = (self.recording_editor(item), mode_of(index)) {
+            self.tell(|recorder| recorder.record(&Action::Mode { editor, mode }));
+        }
+    }
+
     // realises FR-102, FR-110, FR-122
     /// Replaces the pages by those of the *outputs* at `paths`, and emits both signals;
     /// scheduled by the *node editor*.
@@ -255,6 +291,53 @@ impl OutputGroup {
 }
 
 impl OutputGroup {
+    // realises FR-512
+    /// Yields the path of the *output* of the page `index`, `None` where there is no such page;
+    /// read by the *node editor* for the *player*.
+    pub fn path_of(&self, index: usize) -> Option<String> {
+        self.pages.file_at(index).map(|file| file.path.clone())
+    }
+
+    // realises FR-512
+    /// Yields the text of the *diagnostics page*, as the property `diagnostics` does; read by the
+    /// *node editor* for the *player*.
+    pub fn listing(&self) -> String {
+        self.pages.listing()
+    }
+
+    // realises FR-524, FR-526
+    /// Wires the *recorder*; called by the *node editor*.
+    pub fn configure(&mut self, recorder: Rc<RefCell<Recorder>>) {
+        self.recorder = Some(recorder);
+    }
+
+    // realises FR-524, FR-526
+    /// Names the *node* of the group, by which its code editors are named for the *recorder*;
+    /// called by the *node editor* when it opens a *node*.
+    pub fn set_node_name(&mut self, name: &str) {
+        self.node_name = name.to_owned();
+    }
+
+    /// Yields the name of the code editor of `item` where a *node* is named and a *recording*
+    /// runs.
+    fn recording_editor(&self, item: EditorItem) -> Option<EditorName> {
+        let recorder = self.recorder.as_ref()?;
+        if self.node_name.is_empty() || !recorder.borrow().is_running() {
+            return None;
+        }
+        Some(EditorName::Node {
+            name: self.node_name.clone(),
+            item,
+        })
+    }
+
+    /// Tells the *recorder* by `telling`, where one is wired.
+    fn tell(&self, telling: impl FnOnce(&mut Recorder)) {
+        if let Some(recorder) = &self.recorder {
+            telling(&mut recorder.borrow_mut());
+        }
+    }
+
     // realises FR-291
     /// Yields the octets held of the *output* of the page `index`, `None` where there is no such
     /// page or no content was taken yet; read by the *node editor* that owns the group.

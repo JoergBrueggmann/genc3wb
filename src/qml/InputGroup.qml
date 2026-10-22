@@ -21,8 +21,25 @@ GroupBox {
 
     required property var group
     property bool detachable: true
+    // the code editor, reached by the player for the front-end actions of a playback (FR-505 to
+    // FR-508)
+    property alias codeEditor: editor
 
     signal detachRequested()
+
+    // Selects the position `index` of the mode switch, as a tap does (FR-507).
+    function selectMode(index: int) {
+        modeSwitch.chosen = index;
+    }
+
+    // Answers the save dialog as the user's button does (FR-510).
+    function answerSave(save: bool) {
+        if (save) {
+            saveDialog.accept();
+        } else {
+            saveDialog.reject();
+        }
+    }
 
     // an input group whose group is gone, as while the node window rebuilds its input groups for a node
     // of another number of inputs, presents nothing: its bindings read the group through `?.`
@@ -67,6 +84,8 @@ GroupBox {
 
                 visible: root.group?.octetModes ?? false
                 documentIsText: root.group?.isText ?? true
+                // the position the user tapped, for the recorder (FR-524)
+                onPositionTapped: index => root.group.recordMode(index)
             }
 
             ToolButton {
@@ -104,6 +123,9 @@ GroupBox {
             }
             onIdleExpired: root.group.idleExpired()
             onLongIdleExpired: root.group.longIdleExpired()
+            // the cursor, the selection and the focus, for the recorder (FR-525, FR-526)
+            onCursorMoved: (start, end, cursor) => root.group.recordCursor(start, end, cursor)
+            onFocusTaken: root.group.recordFocus()
             markStarts: root.group?.diagnosticStarts ?? []
             markEnds: root.group?.diagnosticEnds ?? []
             markSeverities: root.group?.diagnosticSeverities ?? []

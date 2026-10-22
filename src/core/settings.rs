@@ -53,6 +53,12 @@ pub const DEFAULT_TABS_TO_SPACES: bool = false;
 /// Whether the *silent creation setting* is on where the *settings file* does not hold it.
 pub const DEFAULT_SILENT_CREATION: bool = false;
 
+// realises FR-094, FR-518
+/// The *character playback delay* where the *settings file* holds none, and its greatest value, in
+/// tenths of a second.
+pub const DEFAULT_PLAYBACK_DELAY: u32 = 0;
+pub const MAX_PLAYBACK_DELAY: u32 = 10;
+
 // realises FR-149
 /// The width of the left part of the *node window*, in pixels, where the *settings file* does not
 /// hold one (FR-146).
@@ -118,6 +124,8 @@ pub struct Settings {
     /// whether the *silent creation setting* is on: the files of a *node* are created without
     /// the *input creation confirmation dialog* (FR-490)
     silent_creation: bool,
+    /// the *character playback delay* in tenths of a second, at most `MAX_PLAYBACK_DELAY` (FR-518)
+    playback_delay: u32,
     /// the width of the left part of the *node window* (FR-146)
     node_left_width: u32,
     /// the height of the *input group* in the left part of the *node window* (FR-147)
@@ -146,6 +154,7 @@ impl Default for Settings {
             tab_size: DEFAULT_TAB_SIZE,
             tabs_to_spaces: DEFAULT_TABS_TO_SPACES,
             silent_creation: DEFAULT_SILENT_CREATION,
+            playback_delay: DEFAULT_PLAYBACK_DELAY,
             node_left_width: DEFAULT_NODE_LEFT_WIDTH,
             node_upper_height: DEFAULT_NODE_UPPER_HEIGHT,
             network_left_width: DEFAULT_NETWORK_LEFT_WIDTH,
@@ -181,6 +190,9 @@ struct Stored {
     tabs_to_spaces: bool,
     #[serde(default = "default_silent_creation")]
     silent_creation: bool,
+    /// the *character playback delay* in tenths of a second, read as any integer
+    #[serde(default = "default_playback_delay")]
+    playback_delay: i64,
     #[serde(default = "default_node_left_width")]
     node_left_width: i64,
     #[serde(default = "default_node_upper_height")]
@@ -224,6 +236,11 @@ fn default_tabs_to_spaces() -> bool {
 /// The default of the key `silent_creation`, for a *settings file* that lacks it.
 fn default_silent_creation() -> bool {
     DEFAULT_SILENT_CREATION
+}
+
+/// The default of the key `playback_delay`, for a *settings file* that lacks it.
+fn default_playback_delay() -> i64 {
+    i64::from(DEFAULT_PLAYBACK_DELAY)
 }
 
 /// The default of the key `node_left_width`, for a *settings file* that lacks it.
@@ -288,6 +305,18 @@ pub fn tab_size_violation(tab_size: u32) -> Option<String> {
     }
 }
 
+// realises FR-518
+/// Yields the message naming FR-518 where `delay` exceeds `MAX_PLAYBACK_DELAY`, `None` otherwise.
+pub fn playback_delay_violation(delay: u32) -> Option<String> {
+    if delay <= MAX_PLAYBACK_DELAY {
+        None
+    } else {
+        Some(format!(
+            "The character playback delay is an integer from 0 to {MAX_PLAYBACK_DELAY} tenths of a second."
+        ))
+    }
+}
+
 // realises FR-130
 /// Yields the *idle time* and the *long idle time* the *automatic setting* derives from a
 /// *processing time* in milliseconds: twice the *processing time*, rounded up to the next
@@ -338,8 +367,9 @@ impl Settings {
     /// * The two times are read in seconds and held in milliseconds; where they violate FR-133
     ///   or FR-134, the *idle time* is raised to the least one and the *long idle time* to the
     ///   *idle time* plus one step.
-    /// * A *tab size* outside `MIN_TAB_SIZE..=MAX_TAB_SIZE` is brought to the nearest bound, and a
-    ///   negative position of a splitter to 0.
+    /// * A *tab size* outside `MIN_TAB_SIZE..=MAX_TAB_SIZE` is brought to the nearest bound, a
+    ///   *character playback delay* above `MAX_PLAYBACK_DELAY` to it, and a negative position of a
+    ///   splitter to 0.
     ///
     /// # Errors
     /// Returns [`SettingsError::Io`] where the file exists but cannot be read, and
@@ -362,6 +392,7 @@ impl Settings {
             tab_size: clamped(stored.tab_size, MIN_TAB_SIZE, MAX_TAB_SIZE),
             tabs_to_spaces: stored.tabs_to_spaces,
             silent_creation: stored.silent_creation,
+            playback_delay: clamped(stored.playback_delay, 0, MAX_PLAYBACK_DELAY),
             node_left_width: clamped(stored.node_left_width, 0, u32::MAX),
             node_upper_height: clamped(stored.node_upper_height, 0, u32::MAX),
             network_left_width: clamped(stored.network_left_width, 0, u32::MAX),
@@ -394,6 +425,7 @@ impl Settings {
             tab_size: i64::from(self.tab_size),
             tabs_to_spaces: self.tabs_to_spaces,
             silent_creation: self.silent_creation,
+            playback_delay: i64::from(self.playback_delay),
             node_left_width: i64::from(self.node_left_width),
             node_upper_height: i64::from(self.node_upper_height),
             network_left_width: i64::from(self.network_left_width),
@@ -493,6 +525,26 @@ impl Settings {
     /// Switches the *silent creation setting*.
     pub fn set_silent_creation(&mut self, silent_creation: bool) {
         self.silent_creation = silent_creation;
+    }
+
+    // realises FR-093, FR-095, FR-518
+    /// Yields the *character playback delay* in tenths of a second.
+    pub fn playback_delay(&self) -> u32 {
+        self.playback_delay
+    }
+
+    // realises FR-099, FR-518
+    /// Sets the *character playback delay* in tenths of a second.
+    ///
+    /// # Errors
+    /// Returns [`SettingsError::Constraint`] with the message of `playback_delay_violation` where
+    /// `delay` exceeds `MAX_PLAYBACK_DELAY`, nothing being set then.
+    pub fn set_playback_delay(&mut self, delay: u32) -> Result<(), SettingsError> {
+        if let Some(message) = playback_delay_violation(delay) {
+            return Err(SettingsError::Constraint(message));
+        }
+        self.playback_delay = delay;
+        Ok(())
     }
 
     // realises FR-146, FR-149
