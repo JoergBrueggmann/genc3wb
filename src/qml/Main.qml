@@ -1,7 +1,8 @@
 // The main window, the compiler network editor: menu bar, status bar, the network file and its graph, the
 // dialog telling a refusal of the network file, the failure of a write of the settings file in the status
 // bar, the node windows, one per node opened, the playback of an automation script: its menu, its
-// dialogs, the timer that steps the player and the dispatch of the front-end actions; and the recording:
+// dialogs, the playback delay dialog before the file selector dialog, the timer that steps the player,
+// the dispatch of the front-end actions and the line in progress in the status bar; and the recording:
 // its menu items, its dialogs and its status text.
 //
 // Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
@@ -13,6 +14,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Dialogs
 import QtQuick.Layouts
+import Qt.labs.platform as Platform
 // The types of the module genc3wb are registered by the bridge crate at run time, which writes no type
 // description for qmllint; the import and the unqualified access to the singleton are therefore not linted.
 // qmllint disable import unqualified
@@ -49,6 +51,12 @@ ApplicationWindow {
     readonly property string recordingText: Workbench.automation.recording
                                             ? qsTr("Recording to %1").arg(Workbench.automation.recordingPath)
                                             : ""
+    // the line of the script a playback carries out, for the status bar; never shown with the
+    // recording text, since a playback and a recording never run at the same time (FR-545)
+    readonly property string playbackText: Workbench.automation.currentLineNumber > 0
+                                           ? qsTr("Playback line %1: %2").arg(Workbench.automation.currentLineNumber)
+                                                                          .arg(Workbench.automation.currentLine)
+                                           : ""
 
     // Yields that `file` is held by the holder of its lock file, as a phrase without a period,
     // the time in the local time of the user (FR-219); a process number of 0 names no holder.
@@ -71,13 +79,18 @@ ApplicationWindow {
     // Yields the phrase of the status bar for the network mode `mode`, as the message schema
     // numbers it, 0 where none is kept (FR-258); while an activate request or a deactivate
     // request is pending, that the network is being activated or deactivated (FR-269, FR-270),
-    // and while a hold request is pending, which node is being opened (FR-285).
+    // while the last request failed, why (FR-541), and while a hold request is pending, which
+    // node is being opened (FR-285).
     function networkModeText(mode: int): string {
         if (Workbench.network.activating) {
             return qsTr("Activating network");
         }
         if (Workbench.network.deactivating) {
             return qsTr("Deactivating network");
+        }
+        if (Workbench.network.requestFailure.length > 0) {
+            // the request refused or lost, in place of the mode (FR-541)
+            return qsTr("Request failed: %1").arg(Workbench.network.requestFailure);
         }
         if (Workbench.network.opening.length > 0) {
             return qsTr("Opening node %1").arg(Workbench.network.opening);
@@ -199,35 +212,53 @@ ApplicationWindow {
         }
     }
 
-    menuBar: MenuBar {
+    // the menu bar, built from the types of Qt Labs Platform, since their roles place 'Settings...'
+    // in the application menu of MacOS and keep its twin in the menu 'Settings' (FR-096)
+    Platform.MenuBar {
         id: menuBar
 
-        Menu {
+        window: mainWindow
+
+        Platform.Menu {
             id: settingsMenu
 
             title: qsTr("&Settings")
 
-            Action {
-                id: settingsAction
+            // the preferences item of the application menu of MacOS; the other platforms have no
+            // application menu, so that the entry below stands alone there (FR-096)
+            Platform.MenuItem {
+                id: preferencesAction
 
                 text: qsTr("&Settings...")
+                role: Platform.MenuItem.PreferencesRole
+                visible: Qt.platform.os === "osx"
                 onTriggered: settingsDialog.open()
             }
 
-            Action {
+            // the entry of the menu 'Settings', kept there by its role (FR-096, FR-097)
+            Platform.MenuItem {
+                id: settingsAction
+
+                text: qsTr("&Settings...")
+                role: Platform.MenuItem.NoRole
+                onTriggered: settingsDialog.open()
+            }
+
+            Platform.MenuItem {
                 id: insertKeyAction
 
-                text: qsTr("Insert &key...")
+                text: qsTr("Insert &key settings...")
+                role: Platform.MenuItem.NoRole
                 onTriggered: insertKeyDialog.open()
             }
         }
 
-        Menu {
+        Platform.Menu {
             id: editMenu
 
             title: qsTr("&Edit")
 
-            Action {
+            Platform.MenuItem {
                 id: insertModeAction
 
                 text: Workbench.insertMode ? qsTr("Switch to &overwrite mode") : qsTr("Switch to &insert mode")
@@ -236,7 +267,7 @@ ApplicationWindow {
         }
 
         // the menu of the playback and the recording (FR-498)
-        Menu {
+        Platform.Menu {
             id: automationMenu
 
             title: qsTr("&Automation")
@@ -244,23 +275,42 @@ ApplicationWindow {
             // menu is about to show (FR-531)
             onAboutToShow: storeAction.enabled = Workbench.automation.recording && Workbench.automation.canStore()
 
-            Action {
+            Platform.MenuItem {
                 id: playbackAction
 
                 text: qsTr("&Play back script...")
                 enabled: !Workbench.automation.recording && !Workbench.automation.running
-                onTriggered: scriptDialog.open()
+                // the playback delay dialog first, unless its setting disables it (FR-499, FR-544)
+                onTriggered: {
+                    if (Workbench.playbackDelayDialogDisabled) {
+                        scriptDialog.open();
+                    } else {
+                        playbackDelayDialog.open();
+                    }
+                }
             }
 
-            Action {
+            Platform.MenuItem {
+                id: stopPlaybackAction
+
+                text: qsTr("Sto&p playback")
+                // enabled while a playback runs; the action in progress is completed first (FR-546)
+                enabled: Workbench.automation.running
+                onTriggered: Workbench.automation.stop()
+            }
+
+            Platform.MenuItem {
                 id: startRecordingAction
 
                 text: qsTr("&Start and create recording file...")
+                // enabled once the build of the network file named has answered, so that the
+                // recording saves every file the network works on (FR-528)
                 enabled: !Workbench.automation.recording && !Workbench.automation.running
+                         && (Workbench.networkInput.path === "" || Workbench.network.filesKnown)
                 onTriggered: recordingFileDialog.open()
             }
 
-            Action {
+            Platform.MenuItem {
                 id: stopRecordingAction
 
                 text: qsTr("S&top and save recording...")
@@ -268,15 +318,7 @@ ApplicationWindow {
                 onTriggered: stopRecordingDialog.open()
             }
 
-            Action {
-                id: backupAction
-
-                text: qsTr("&Backup to restore on replay...")
-                enabled: Workbench.automation.recording
-                onTriggered: backupDialog.open()
-            }
-
-            Action {
+            Platform.MenuItem {
                 id: storeAction
 
                 text: qsTr("Store to &verify on replay")
@@ -285,12 +327,12 @@ ApplicationWindow {
             }
         }
 
-        Menu {
+        Platform.Menu {
             id: helpMenu
 
             title: qsTr("&Help")
 
-            Action {
+            Platform.MenuItem {
                 id: infoAction
 
                 text: qsTr("&Info")
@@ -321,7 +363,8 @@ ApplicationWindow {
                    ? qsTr("Build system not available on this platform")
                    : Workbench.network.building ? qsTr("Building") : "",
                    mainWindow.networkModeText(Workbench.network.networkMode),
-                   mainWindow.recordingText]
+                   mainWindow.recordingText,
+                   mainWindow.playbackText]
                   .filter(part => part.length > 0).join("  ·  ")
         }
 
@@ -357,6 +400,8 @@ ApplicationWindow {
             detachable: false
             SplitView.preferredWidth: Workbench.networkLeftWidth
             SplitView.minimumWidth: 240
+            // the close button closes the network (FR-535)
+            onCloseRequested: Workbench.network.closeNetwork()
         }
 
         NetworkGraphGroup {
@@ -476,12 +521,21 @@ ApplicationWindow {
         id: settingsDialog
     }
 
+    // the playback delay dialog, whose acceptance presents the file selector dialog (FR-499,
+    // FR-542, FR-543)
+    PlaybackDelayDialog {
+        id: playbackDelayDialog
+
+        onAccepted: scriptDialog.open()
+    }
+
     // the file selector dialog of an automation script; its acceptance starts the playback
     // (FR-499, IR-211)
     FileDialog {
         id: scriptDialog
 
-        title: qsTr("Automation script")
+        // the title tells that the playback closes the network (FR-499, FR-536)
+        title: qsTr("Play back script - closes the network, unsaved changes are discarded")
         nameFilters: [qsTr("Automation scripts (*.gc3s)")]
         onAccepted: Workbench.automation.play(PathOfUrl.path(scriptDialog.selectedFile))
     }
@@ -520,9 +574,15 @@ ApplicationWindow {
         }
     }
 
-    // the backup dialog (FR-530)
-    BackupDialog {
-        id: backupDialog
+    // asks whether to save the unsaved changes before the network is closed (FR-535)
+    MessageDialog {
+        id: closeSaveDialog
+
+        title: qsTr("Close network")
+        text: qsTr("Save the changes before closing the network?")
+        buttons: MessageDialog.Yes | MessageDialog.No
+        onAccepted: Workbench.network.answerClose(true)
+        onRejected: Workbench.network.answerClose(false)
     }
 
     // the playback report of a playback started from the menu (FR-515, FR-516)
@@ -652,6 +712,11 @@ ApplicationWindow {
             Workbench.reportProcessingTime(processingTime);
         }
 
+        // the network is being closed while unsaved changes exist (FR-535)
+        function onCloseAsked() {
+            closeSaveDialog.open();
+        }
+
         // files of the nodes about to be opened or activated do not exist (FR-487, FR-488): the
         // text lists the meta compiler DSLs and the inputs, each a line per path
         function onCreationAsked(metaDsls, inputs) {
@@ -739,7 +804,16 @@ ApplicationWindow {
 
         function onAnswerAsked(dialog, choice, silent) {
             if (dialog === "save") {
-                networkInputGroup.answerSave(choice);
+                // the dialog of the closing of the network, or the save question of the group (FR-536)
+                if (closeSaveDialog.visible) {
+                    if (choice) {
+                        closeSaveDialog.accept();
+                    } else {
+                        closeSaveDialog.reject();
+                    }
+                } else {
+                    networkInputGroup.answerSave(choice);
+                }
             } else if (dialog === "creation") {
                 silentBox.checked = silent;
                 if (choice) {

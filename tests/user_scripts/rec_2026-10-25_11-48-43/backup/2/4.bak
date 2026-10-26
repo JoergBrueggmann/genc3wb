@@ -1,0 +1,6 @@
+syntax
+    Root = Chars, EOS
+    Chars = Ch, { Ch }
+    Ch = 'h' | 'e' | 'l' | 'o' | 'w' | 'r' | 'd' | 'a' | 't' | ' ' | NEWLINE
+generator
+    Root -> flat(#0)

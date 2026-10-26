@@ -1,0 +1,23 @@
+// The scenario of the software problem report of 2026-10-25: the keyword node of the network
+// file is broken by typed characters, which makes the network invalid and ends its nodes, and
+// mended by deletions, after which the network is valid and not active (FR-534); the text of
+// the network file is verified against the content restored. The network mode is asserted by
+// 'tests/node_keyword.rs', since a script observes contents alone.
+automation script
+init
+restore "backup/n.gc3n" into "work/n.gc3n"
+restore "backup/copy.gc3" into "work/copy.gc3"
+restore "backup/in.txt" into "work/in.txt"
+restore "backup/out.txt" into "work/out.txt"
+network "work/n.gc3n"
+idle network
+activate
+focus network
+cursor network 2:6
+edit network 2:6 0 "xx"
+idle network
+edit network 2:7 1 ""
+idle network
+edit network 2:6 1 ""
+idle network
+verify network "expected/n.gc3v"

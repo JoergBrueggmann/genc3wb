@@ -1,0 +1,16 @@
+// The defined beginning: the settings file saved is applied, the files of the network recovered,
+// one of them removed, the network named and activated, closed, named again and left by init.
+automation script
+init
+settings file "settings.bak"
+restore "backup/n.gc3n" into "work/n.gc3n"
+restore "backup/copy.gc3" into "work/copy.gc3"
+restore "backup/in.txt" into "work/in.txt"
+remove "work/out.txt"
+network "work/n.gc3n"
+idle network
+activate
+close network
+network "work/n.gc3n"
+idle network
+init

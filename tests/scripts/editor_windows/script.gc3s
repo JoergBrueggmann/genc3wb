@@ -1,7 +1,11 @@
 // An edit in the editor window of the source input reaches the node the window holds, and the
 // editor window of the sink output shows what the node derives, with no node window open.
 automation script
-restore "backup" into "work"
+init
+restore "backup/n.gc3n" into "work/n.gc3n"
+restore "backup/copy.gc3" into "work/copy.gc3"
+restore "backup/in.txt" into "work/in.txt"
+restore "backup/out.txt" into "work/out.txt"
 network "work/n.gc3n"
 idle network
 activate

@@ -1,6 +1,7 @@
 // The modal settings dialog, in four parts: the automatic setting with the idle time and the long idle time
 // of every code editor, in seconds with one decimal; the tab size and the spaces setting of every code editor;
-// the silent creation setting of the input creation confirmation dialog; and the character playback delay.
+// the silent creation setting of the input creation confirmation dialog; and the playback delay, whether one
+// is waited and which of the thirteen values, with the playback delay dialog setting.
 //
 // Copyright (c) Jörg Karl-Heinz Walter Brüggmann, 2021-2026
 // Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
@@ -27,8 +28,8 @@ Dialog {
     closePolicy: Popup.NoAutoClose
 
     // the fields take the stored values whenever the dialog opens, so that a rejected
-    // change is not carried into the next one (FR-100); the times are milliseconds at the
-    // workbench object and tenths of a second in the fields
+    // change is not carried into the next one (FR-100); the times and the delay are milliseconds
+    // at the workbench object and tenths of a second in the fields
     onAboutToShow: {
         idleTimeBox.value = Workbench.idleTime / 100;
         longIdleTimeBox.value = Workbench.longIdleTime / 100;
@@ -36,7 +37,9 @@ Dialog {
         tabSizeBox.value = Workbench.tabSize;
         spacesBox.checked = Workbench.tabsToSpaces;
         silentBox.checked = Workbench.silentCreation;
-        delayBox.value = Workbench.playbackDelay;
+        delayOnBox.checked = Workbench.playbackDelayOn;
+        delayBox.value = Workbench.playbackDelayIndex;
+        delayDialogBox.checked = Workbench.playbackDelayDialogDisabled;
         errorLabel.text = "";
     }
 
@@ -56,7 +59,8 @@ Dialog {
             text: qsTr("OK")
             onClicked: {
                 if (Workbench.trySetSettings(idleTimeBox.value * 100, longIdleTimeBox.value * 100, automaticBox.checked,
-                                             tabSizeBox.value, spacesBox.checked, silentBox.checked, delayBox.value)) {
+                                             tabSizeBox.value, spacesBox.checked, silentBox.checked,
+                                             delayOnBox.checked, delayBox.value, delayDialogBox.checked)) {
                     settingsDialog.accept();
                 }
             }
@@ -213,7 +217,16 @@ Dialog {
             color: settingsDialog.palette.mid
         }
 
-        // the character playback delay (FR-518)
+        // whether a playback delay is waited (FR-518)
+        CheckBox {
+            id: delayOnBox
+
+            text: qsTr("Delay")
+            checked: Workbench.playbackDelayOn
+        }
+
+        // the value of the playback delay: the field steps through the thirteen values by their index
+        // and shows the seconds with two decimals (FR-518)
         GridLayout {
             id: delayLayout
 
@@ -224,23 +237,32 @@ Dialog {
             Label {
                 id: delayLabel
 
-                text: qsTr("Character playback delay")
+                text: qsTr("Playback delay")
             }
 
             SpinBox {
                 id: delayBox
 
                 from: 0
-                to: 10
-                editable: true
-                value: Workbench.playbackDelay
+                to: 12
+                enabled: delayOnBox.checked
+                value: Workbench.playbackDelayIndex
+                textFromValue: (value, locale) => (Workbench.playbackDelayOf(value) / 1000).toFixed(2)
             }
 
             Label {
                 id: delayUnit
 
-                text: qsTr("Tenths of a second between two characters of a playback")
+                text: qsTr("Seconds between two actions of a playback")
             }
+        }
+
+        // the playback delay dialog setting (FR-544)
+        CheckBox {
+            id: delayDialogBox
+
+            text: qsTr("Disable playback delay dialog")
+            checked: Workbench.playbackDelayDialogDisabled
         }
 
         Label {

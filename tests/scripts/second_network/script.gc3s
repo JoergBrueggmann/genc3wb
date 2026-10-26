@@ -1,0 +1,23 @@
+// A network file named after another one: the build system activates the second network at
+// its start-up, and no open request with the text of the first may undo it; the node copy of
+// the second network copies an edited input to its output. The network mode is asserted by
+// 'tests/second_network.rs', since a script observes contents alone.
+automation script
+init
+restore "backup/first/first.gc3n" into "work/first/first.gc3n"
+restore "backup/n.gc3n" into "work/n.gc3n"
+restore "backup/copy.gc3" into "work/copy.gc3"
+restore "backup/in.txt" into "work/in.txt"
+restore "backup/out.txt" into "work/out.txt"
+network "work/first/first.gc3n"
+idle network
+network "work/n.gc3n"
+idle network
+activate
+open node copy
+edit node copy input 0 1:12 0 "ddd"
+idle node copy input 0
+verify node copy input 0 "expected/in.gc3v"
+verify node copy output 0 "expected/out.gc3v"
+close node copy
+deactivate

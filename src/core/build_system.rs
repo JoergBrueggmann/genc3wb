@@ -909,8 +909,8 @@ impl BuildSession {
 
     // realises FR-067, FR-228, IR-017
     /// Starts the *build system* `executable` on `network_path` in its *network role*, in the
-    /// directory of the *network file*, without `--startup-inactive`, so that it activates the
-    /// network at start-up where the *network file* is valid (\[AD3\] IR-156), connects to
+    /// directory of the *network file*, with `--startup-inactive`, so that it starts no *node*
+    /// until the *product* transmits the *activate request* of FR-534 (\[AD3\] IR-173), connects to
     /// `socket_path` once it listens, and transmits the one *watch request*, whose
     /// *state responses* `sink` receives.
     ///
@@ -939,6 +939,7 @@ impl BuildSession {
             document.clone(),
             "--socket".to_owned(),
             socket_path.to_string_lossy().into_owned(),
+            "--startup-inactive".to_owned(),
         ];
         let (process, stream) = ServedProcess::start(executable, &directory, &args, socket_path)?;
         let mut conversation = Conversation::new(WatchedConnection::open(stream, sink)?);

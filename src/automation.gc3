@@ -15,8 +15,9 @@ syntax
     Action = Verb, LineEnd
     Verb =
         | Network | BuildSystem | NewNetwork | OpenNode | OpenFile | CloseNode | CloseFile
-        | Activate | Deactivate | Edit | Digits | Cursor | Select | Focus | Idle | LongIdle
-        | Mode | Undo | Redo | Settings | InsertKey | TypingMode | Answer | Restore | Verify
+        | Activate | Deactivate | Edit | Digits | Cursor | Select | Focus | Idle | LongIdle | Delay
+        | Mode | Undo | Redo | SettingsFile | Settings | InsertKey | TypingMode | Answer
+        | Init | CloseNetwork | Remove | Restore | Verify
     Network! = "network", _, Str
     BuildSystem! = "build system", _, Str
     NewNetwork! = "new network", _, Str
@@ -24,6 +25,10 @@ syntax
     OpenFile! = "open file", _, Str
     CloseNode! = "close node", _, Name
     CloseFile! = "close file", _, Str
+    Init! = "init"
+    CloseNetwork! = "close network"
+    SettingsFile! = "settings file", _, Str
+    Remove! = "remove", _, Str
     Activate! = "activate"
     Deactivate! = "deactivate"
     Edit! = "edit", _, Editor, _, Position, _, Number, _, Str
@@ -34,10 +39,13 @@ syntax
     Focus! = "focus", _, Target
     Idle! = "idle", _, Editor
     LongIdle! = "long idle", _, Editor
+    Delay! = "delay", _, Decimal, _, TimeUnit | "delay", _, Decimal
+    TimeUnit = "s" | "ms"
     Mode! = "mode", _, Editor, _, ModeName
     Undo! = "undo", _, Editor
     Redo! = "redo", _, Editor
-    Settings! = "settings", _, "idle", _, Decimal, _, "long idle", _, Decimal, _, "automatic", _, Switch, _, "tab size", _, Number, _, "spaces", _, Switch, _, "silent creation", _, Switch, _, "delay", _, Number
+    Settings! = "settings", _, "idle", _, Decimal, _, "long idle", _, Decimal, _, "automatic", _, Switch, _, "tab size", _, Number, _, "spaces", _, Switch, _, "silent creation", _, Switch, _, "delay", _, DelayValue
+    DelayValue = "off" | Decimal
     InsertKey! = "insert key", _, Str
     TypingMode! = "typing mode", _, Typing
     Typing = "insert" | "overwrite"
@@ -98,6 +106,8 @@ generator
     Focus -> "focus\t" ++ #2
     Idle -> "idle\t" ++ #2
     LongIdle -> "long idle\t" ++ #2
+    Delay -> "delay\t" ++ #2 ++ "\t" ++ #4 | -> "delay\t" ++ #2 ++ "\ts"
+    TimeUnit all -> flat
     Mode -> "mode\t" ++ #2 ++ "\t" ++ #4
     Undo -> "undo\t" ++ #2
     Redo -> "redo\t" ++ #2
@@ -113,6 +123,10 @@ generator
     FailureDialog -> "creation failure\t" ++ #2
     YesNo all -> flat
     Proceed all -> flat
+    Init -> "init"
+    CloseNetwork -> "close network"
+    SettingsFile -> "settings file\t" ++ #2
+    Remove -> "remove\t" ++ #2
     Restore -> "restore\t" ++ #2 ++ "\t" ++ #6
     Verify -> "verify\t" ++ #2 ++ "\t" ++ #4
     Target all -> #0
@@ -131,6 +145,7 @@ generator
     Position -> #0 ++ "\t" ++ #2
     ModeName all -> flat
     Switch all -> flat
+    DelayValue all -> flat
     Decimal all -> flat
     Number all -> flat
     Name all -> flat

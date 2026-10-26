@@ -8,6 +8,7 @@
 
 use crate::core::launch;
 use crate::core::octet_view::EditorMode;
+use crate::core::settings::{PLAYBACK_DELAYS, nearest_playback_delay_index};
 
 use std::fmt;
 use std::fs;
@@ -31,7 +32,11 @@ pub const ACTION_TIMEOUT: Duration = Duration::from_secs(30);
 /// steps of the *player*.
 pub const SETTLING: Duration = Duration::from_millis(100);
 
-/// The suffix of a *lock file*, which `restore` leaves in place.
+// realises FR-547
+/// The longest time a `delay` action waits, in milliseconds.
+pub const MAX_DELAY_ACTION: u32 = 4000;
+
+/// The suffix of a *lock file*, which `restore` never replaces and `remove_file` never deletes.
 const LOCK_SUFFIX: &str = ".lock";
 
 // realises FR-494
@@ -130,8 +135,9 @@ pub struct SettingsValues {
     pub tab_size: u32,
     pub tabs_to_spaces: bool,
     pub silent_creation: bool,
-    /// the *character playback delay* in tenths of a second
-    pub playback_delay: u32,
+    /// the *playback delay*: `None` for no delay, the value in milliseconds otherwise, one of
+    /// `PLAYBACK_DELAYS`, the nearest to the seconds the line carries
+    pub playback_delay: Option<u32>,
 }
 
 // realises FR-495
@@ -166,6 +172,8 @@ pub enum Action {
     },
     Idle(EditorName),
     LongIdle(EditorName),
+    /// a wait of that many milliseconds, from 0 to `MAX_DELAY_ACTION`, written by hand (FR-547)
+    Delay(u32),
     Cursor {
         editor: EditorName,
         line: usize,
@@ -189,10 +197,24 @@ pub enum Action {
     /// whether the *typing mode* is the insert mode
     TypingMode(bool),
     Answer(DialogAnswer),
-    /// make `source` equal to `backup`, both resolved
-    Restore { backup: String, source: String },
+    /// bring *product* to the *defined beginning*
+    Init,
+    /// close the network as the close button does
+    CloseNetwork,
+    /// apply the saved *settings file* at the resolved path for the *playback*
+    SettingsFile(String),
+    /// copy the saved file to the file of the network, both resolved
+    Restore {
+        saved: String,
+        file: String,
+    },
+    /// delete the file of the network at the resolved path
+    Remove(String),
     /// compare the document of the code editor with the *expected file* at the resolved path
-    Verify { editor: EditorName, file: String },
+    Verify {
+        editor: EditorName,
+        file: String,
+    },
 }
 
 // realises FR-496, FR-515
@@ -259,6 +281,8 @@ pub enum Outcome {
     Completed,
     Failed(String),
     Error(String),
+    /// the action completed before the user stopped the *playback* (FR-546)
+    Stopped,
 }
 
 impl Outcome {
@@ -334,7 +358,9 @@ pub fn read_script(path: &Path, gc3: &Path, configuration: &Path) -> Result<Scri
         .wait_with_output()
         .map_err(|error| ScriptError::NotRun(error.to_string()))?;
     if !output.status.success() {
-        let diagnosis = String::from_utf8_lossy(&output.stderr).trim_end().to_owned();
+        let diagnosis = String::from_utf8_lossy(&output.stderr)
+            .trim_end()
+            .to_owned();
         return Err(ScriptError::Faulty(if diagnosis.is_empty() {
             format!("gc3 ended with {}", output.status)
         } else {
@@ -385,7 +411,11 @@ fn action_of_fields(fields: &[&str], folder: &Path) -> Option<Action> {
     let editor = |at: usize| editor_of_fields(fields.get(at..at + 4)?, folder);
     let number = |at: usize| fields.get(at)?.parse::<usize>().ok();
     let text = |at: usize| fields.get(at).map(|field| unescaped(field));
-    let path = |at: usize| fields.get(at).map(|field| resolved(folder, &unescaped(field)));
+    let path = |at: usize| {
+        fields
+            .get(at)
+            .map(|field| resolved(folder, &unescaped(field)))
+    };
     let switch = |at: usize| match *fields.get(at)? {
         "on" => Some(true),
         "off" => Some(false),
@@ -417,6 +447,7 @@ fn action_of_fields(fields: &[&str], folder: &Path) -> Option<Action> {
             text: text(8)?,
         },
         "idle" => Action::Idle(editor(1)?),
+        "delay" => Action::Delay(milliseconds_of_time(fields.get(1)?, fields.get(2)?)?),
         "long idle" => Action::LongIdle(editor(1)?),
         "cursor" => Action::Cursor {
             editor: editor(1)?,
@@ -453,7 +484,12 @@ fn action_of_fields(fields: &[&str], folder: &Path) -> Option<Action> {
             tab_size: u32::try_from(number(4)?).ok()?,
             tabs_to_spaces: switch(5)?,
             silent_creation: switch(6)?,
-            playback_delay: u32::try_from(number(7)?).ok()?,
+            playback_delay: match *fields.get(7)? {
+                "off" => None,
+                seconds => {
+                    Some(PLAYBACK_DELAYS[nearest_playback_delay_index(milliseconds_of(seconds)?)])
+                }
+            },
         }),
         "insert key" => Action::InsertKey(text(1)?),
         "typing mode" => Action::TypingMode(match *fields.get(1)? {
@@ -482,9 +518,13 @@ fn action_of_fields(fields: &[&str], folder: &Path) -> Option<Action> {
             }),
             _ => return None,
         }),
+        "init" => Action::Init,
+        "close network" => Action::CloseNetwork,
+        "settings file" => Action::SettingsFile(path(1)?),
+        "remove" => Action::Remove(path(1)?),
         "restore" => Action::Restore {
-            backup: path(1)?,
-            source: path(2)?,
+            saved: path(1)?,
+            file: path(2)?,
         },
         "verify" => Action::Verify {
             editor: editor(1)?,
@@ -531,6 +571,22 @@ fn octet_mode_of(word: &str) -> Option<EditorMode> {
         "bin" => Some(EditorMode::Bin),
         _ => None,
     }
+}
+
+// realises FR-547
+/// Yields the milliseconds of the time `time` of a `delay` action in the unit `unit`, `s` or
+/// `ms`, read to the millisecond, a finer fraction rounded; `None` for a time that is no number
+/// or no unit.
+fn milliseconds_of_time(time: &str, unit: &str) -> Option<u32> {
+    let factor = match unit {
+        "s" => 1000.0,
+        "ms" => 1.0,
+        _ => return None,
+    };
+    let seconds: f64 = time.parse().ok()?;
+    let milliseconds = (seconds * factor).round();
+    (milliseconds.is_finite() && (0.0..=f64::from(u32::MAX)).contains(&milliseconds))
+        .then_some(milliseconds as u32)
 }
 
 /// Yields the milliseconds of a number of seconds with at most three decimals, as the script
@@ -678,97 +734,55 @@ pub fn offset_after(text: &str, offset: usize, characters: usize) -> usize {
 }
 
 // realises FR-511, IR-214
-/// Makes the folder `source` hold what the folder `backup` holds: creates `source` where it does
-/// not exist, removes every file and folder of `source` that `backup` does not hold, a *lock
-/// file*, whose name ends in `.lock`, excepted, and copies every file and folder of `backup` into
-/// it, replacing files of the same path and creating missing folders; `mirror` with the folders
-/// in that order.
+/// Copies the saved file `saved` to `file`, creating the missing folders and replacing a file
+/// that exists; a *lock file*, whose name ends in `.lock`, and a file that is no regular file,
+/// the socket of a running *build system* among them, is never replaced.
 ///
 /// # Errors
-/// Returns the reason where `backup` is no folder or a file cannot be copied, created or removed.
-pub fn restore(backup: &Path, source: &Path) -> Result<(), String> {
-    mirror(backup, source)
+/// Returns the reason where `saved` does not exist or cannot be copied, or `file` is a file that
+/// is not replaced.
+pub fn restore(saved: &Path, file: &Path) -> Result<(), String> {
+    if !saved.is_file() {
+        return Err(format!(
+            "the saved file '{}' does not exist",
+            saved.display()
+        ));
+    }
+    if is_lock(file) {
+        return Err(format!("'{}' is a lock file", file.display()));
+    }
+    if file.exists() && !file.is_file() {
+        return Err(format!("'{}' is no regular file", file.display()));
+    }
+    if let Some(folder) = file
+        .parent()
+        .filter(|folder| !folder.as_os_str().is_empty())
+    {
+        fs::create_dir_all(folder)
+            .map_err(|error| format!("cannot create '{}': {error}", folder.display()))?;
+    }
+    fs::copy(saved, file)
+        .map(|_| ())
+        .map_err(|error| format!("cannot copy '{}': {error}", saved.display()))
 }
 
-// realises FR-511, FR-530, IR-214, IR-218
-/// Makes the folder `to` hold what the folder `from` holds: creates `to` where it does not
-/// exist, removes every file and folder of `to` that `from` does not hold, and copies every file
-/// and folder of `from` into it, replacing files of the same path and creating missing folders;
-/// a *lock file*, whose name ends in `.lock`, is neither removed from `to` nor copied from
-/// `from`, since a lock is held by the process that took it and is no content, and neither is
-/// a file that is no regular file, a socket of a running *build system* among them.
+// realises FR-538, IR-214
+/// Deletes the file at `path` where it exists, a *lock file* and a file that is no regular file
+/// excepted; nothing where it does not exist.
 ///
 /// # Errors
-/// Returns the reason where `from` is no folder or a file cannot be copied, created or removed.
-pub fn mirror(from: &Path, to: &Path) -> Result<(), String> {
-    if !from.is_dir() {
-        return Err(format!("the folder '{}' does not exist", from.display()));
+/// Returns the reason where the file cannot be deleted.
+pub fn remove_file(path: &Path) -> Result<(), String> {
+    if is_lock(path) || !path.exists() || !path.is_file() {
+        return Ok(());
     }
-    let io = |what: &str, path: &Path, error: std::io::Error| {
-        format!("{what} '{}': {error}", path.display())
-    };
-    let is_lock = |relative: &Path| {
-        relative
-            .file_name()
-            .is_some_and(|name| name.to_string_lossy().ends_with(LOCK_SUFFIX))
-    };
-    fs::create_dir_all(to).map_err(|error| io("cannot create", to, error))?;
-    let mut extras = Vec::new();
-    walk(to, Path::new(""), &mut extras).map_err(|error| io("cannot read", to, error))?;
-    for (relative, is_dir) in extras.iter().rev() {
-        let counterpart = from.join(relative);
-        if is_lock(relative) || counterpart.exists() && counterpart.is_dir() == *is_dir {
-            continue;
-        }
-        let target = to.join(relative);
-        let removed = if *is_dir {
-            fs::remove_dir_all(&target)
-        } else {
-            fs::remove_file(&target)
-        };
-        removed.map_err(|error| io("cannot remove", &target, error))?;
-    }
-    let mut content = Vec::new();
-    walk(from, Path::new(""), &mut content).map_err(|error| io("cannot read", from, error))?;
-    for (relative, is_dir) in content {
-        if is_lock(&relative) {
-            continue;
-        }
-        let source = from.join(&relative);
-        let target = to.join(&relative);
-        if is_dir {
-            fs::create_dir_all(&target).map_err(|error| io("cannot create", &target, error))?;
-        } else {
-            fs::copy(&source, &target).map_err(|error| io("cannot copy", &source, error))?;
-        }
-    }
-    Ok(())
+    fs::remove_file(path).map_err(|error| format!("cannot remove '{}': {error}", path.display()))
 }
 
-/// Collects every folder and every regular file below `root`, as its path relative to `root`
-/// and whether it is a folder, a folder before its content; a socket, a pipe or a device is
-/// neither content nor collected, so that the socket files of a running *build system* beside
-/// a *network file* are neither copied nor removed.
-fn walk(root: &Path, relative: &Path, entries: &mut Vec<(PathBuf, bool)>) -> std::io::Result<()> {
-    let mut names: Vec<_> = fs::read_dir(root.join(relative))?
-        .map(|entry| entry.map(|entry| entry.file_name()))
-        .collect::<Result<_, _>>()?;
-    names.sort();
-    for name in names {
-        let child = relative.join(&name);
-        let Ok(metadata) = fs::metadata(root.join(&child)) else {
-            continue;
-        };
-        let is_dir = metadata.is_dir();
-        if !is_dir && !metadata.is_file() {
-            continue;
-        }
-        entries.push((child.clone(), is_dir));
-        if is_dir {
-            walk(root, &child, entries)?;
-        }
-    }
-    Ok(())
+/// Yields whether the name of the file at `path` ends in the suffix of a *lock file*.
+fn is_lock(path: &Path) -> bool {
+    path.file_name()
+        .is_some_and(|name| name.to_string_lossy().ends_with(LOCK_SUFFIX))
 }
 
 // realises FR-512, FR-513
@@ -776,11 +790,7 @@ fn walk(root: &Path, relative: &Path, entries: &mut Vec<(PathBuf, bool)>) -> std
 /// offset of the first differing octet, counted from 0, as `differs at octet <n>`, or the two
 /// lengths as `<n> octets, <m> expected` where one is the beginning of the other.
 pub fn difference(actual: &[u8], expected: &[u8]) -> Option<String> {
-    if let Some(offset) = actual
-        .iter()
-        .zip(expected)
-        .position(|(a, e)| a != e)
-    {
+    if let Some(offset) = actual.iter().zip(expected).position(|(a, e)| a != e) {
         return Some(format!("differs at octet {offset}"));
     }
     if actual.len() != expected.len() {
@@ -803,6 +813,7 @@ pub fn report_line(step: &Step, outcome: &Outcome) -> String {
             format!("{}: failed: {}: {difference}", step.line, step.text)
         }
         Outcome::Error(reason) => format!("{}: error: {}: {reason}", step.line, step.text),
+        Outcome::Stopped => format!("{}: stopped: {}", step.line, step.text),
     }
 }
 
@@ -812,7 +823,7 @@ pub fn report_line(step: &Step, outcome: &Outcome) -> String {
 pub fn exit_code_of(outcomes: &[Outcome]) -> i32 {
     if outcomes
         .iter()
-        .any(|outcome| matches!(outcome, Outcome::Error(_)))
+        .any(|outcome| matches!(outcome, Outcome::Error(_) | Outcome::Stopped))
     {
         2
     } else if outcomes
@@ -842,7 +853,7 @@ mod tests {
         mode\tnode\tcopy\tinput\t0\thex\ndigits\tnode\tcopy\tinput\t0\thex\t4\t2\tAB\n\
         cursor\tnode\tcopy\tdsl\t\t3\t4\nselect\tfile\tsrc/in.txt\t\t\t1\t1\t2\t5\n\
         focus\tnode\tcopy\twindow\t\nfocus\tmain\t\twindow\t\nfocus\tnode\tcopy\tdiagnostics\t\n\
-        long idle\tnetwork\t\t\t\nsettings\t2.0\t16\toff\t4\ton\toff\t3\ninsert key\tCtrl+I\n\
+        long idle\tnetwork\t\t\t\nsettings\t2.0\t16\toff\t4\ton\toff\t0.28\ninsert key\tCtrl+I\n\
         typing mode\toverwrite\nanswer\tsave\tyes\nanswer\tcreation\tcancel\t\n\
         answer\tcreation failure\tcontinue\nundo\tnode\tcopy\tinput\t0\nredo\tnode\tcopy\tinput\t0\n\
         open file\tsrc/out.txt\nverify\tnode\tcopy\toutput\t0\texpected/out.gc3v\n\
@@ -854,7 +865,7 @@ mod tests {
         edit node copy input 0 1:12 0 \"ddd\\n\\\"q\\\"\"\nidle node copy input 0\n\
         mode node copy input 0 hex\ndigits node copy input 0 hex 4 2 \"AB\"\ncursor node copy dsl 3:4\n\
         select file \"src/in.txt\" 1:1 2:5\nfocus node copy\nfocus main\nfocus node copy diagnostics\n\
-        long idle network\nsettings idle 2.0 long idle 16 automatic off tab size 4 spaces on silent creation off delay 3\n\
+        long idle network\nsettings idle 2.0 long idle 16 automatic off tab size 4 spaces on silent creation off delay 0.28\n\
         insert key \"Ctrl+I\"\ntyping mode overwrite\nanswer save yes\nanswer creation cancel\n\
         answer creation failure continue\nundo node copy input 0\nredo node copy input 0\n\
         open file \"src/out.txt\"\nverify node copy output 0 \"expected/out.gc3v\"\nclose node copy\n\
@@ -887,8 +898,8 @@ mod tests {
             (actions[0], actions[1], actions[2], actions[3], actions[4]),
             (
                 &Action::Restore {
-                    backup: "/scripts/run/backup".to_owned(),
-                    source: "/scripts/run/src".to_owned()
+                    saved: "/scripts/run/backup".to_owned(),
+                    file: "/scripts/run/src".to_owned()
                 },
                 &Action::BuildSystem("/scripts/bin/genc3d".to_owned()),
                 &Action::Network("/scripts/run/src/n.gc3n".to_owned()),
@@ -966,7 +977,7 @@ mod tests {
                     tab_size: 4,
                     tabs_to_spaces: true,
                     silent_creation: false,
-                    playback_delay: 3
+                    playback_delay: Some(283)
                 }),
                 &Action::InsertKey("Ctrl+I".to_owned()),
                 &Action::TypingMode(false)
@@ -984,7 +995,13 @@ mod tests {
             )
         );
         assert_eq!(
-            (actions[25], actions[26], actions[27], actions[28], actions[29]),
+            (
+                actions[25],
+                actions[26],
+                actions[27],
+                actions[28],
+                actions[29]
+            ),
             (
                 &Action::OpenFile("/scripts/run/src/out.txt".to_owned()),
                 &Action::Verify {
@@ -1017,8 +1034,16 @@ mod tests {
     #[test]
     fn a_line_of_the_canonical_form_that_is_not_read_is_the_error() {
         // FR-497
-        let unknown = steps_of_canonical("\nwhistle\tloud\n", "automation script\nwhistle\n", &folder());
-        let short = steps_of_canonical("\nedit\tnode\tcopy\n", "automation script\nedit\n", &folder());
+        let unknown = steps_of_canonical(
+            "\nwhistle\tloud\n",
+            "automation script\nwhistle\n",
+            &folder(),
+        );
+        let short = steps_of_canonical(
+            "\nedit\tnode\tcopy\n",
+            "automation script\nedit\n",
+            &folder(),
+        );
         assert_eq!(
             (unknown, short),
             (
@@ -1123,8 +1148,39 @@ mod tests {
     }
 
     #[test]
+    fn a_delay_is_read_to_the_millisecond_in_seconds_or_milliseconds() {
+        // FR-547: seconds by default and with the unit, milliseconds, a finer fraction rounded,
+        // and a unit or a time that is none
+        let read = |line: &str| {
+            steps_of_canonical(line, "x\n", Path::new("/scripts"))
+                .ok()
+                .map(|steps| steps[0].action.clone())
+        };
+        assert_eq!(
+            (
+                read("delay\t1.5\ts"),
+                read("delay\t250\tms"),
+                read("delay\t0\ts"),
+                read("delay\t0.0005\ts"),
+                read("delay\t0.4\tms"),
+                milliseconds_of_time("1", "min"),
+                milliseconds_of_time("x", "s")
+            ),
+            (
+                Some(Action::Delay(1500)),
+                Some(Action::Delay(250)),
+                Some(Action::Delay(0)),
+                Some(Action::Delay(1)),
+                Some(Action::Delay(0)),
+                None,
+                None
+            )
+        );
+    }
+
+    #[test]
     fn the_report_lines_and_the_exit_code_follow_the_outcomes() {
-        // FR-515, FR-517
+        // FR-515, FR-517, FR-546
         let step = Step {
             line: 7,
             text: "activate".to_owned(),
@@ -1135,22 +1191,31 @@ mod tests {
                 report_line(&step, &Outcome::Completed),
                 report_line(&step, &Outcome::Failed("differs at octet 2".to_owned())),
                 report_line(&step, &Outcome::Error("no node".to_owned())),
+                report_line(&step, &Outcome::Stopped),
                 exit_code_of(&[]),
                 exit_code_of(&[Outcome::Completed]),
                 exit_code_of(&[Outcome::Completed, Outcome::Failed(String::new())]),
-                exit_code_of(&[Outcome::Failed(String::new()), Outcome::Error(String::new())]),
+                exit_code_of(&[
+                    Outcome::Failed(String::new()),
+                    Outcome::Error(String::new())
+                ]),
+                exit_code_of(&[Outcome::Completed, Outcome::Stopped]),
                 Outcome::Completed.continues(),
-                Outcome::Failed(String::new()).continues()
+                Outcome::Failed(String::new()).continues(),
+                Outcome::Stopped.continues()
             ),
             (
                 "7: ok: activate".to_owned(),
                 "7: failed: activate: differs at octet 2".to_owned(),
                 "7: error: activate: no node".to_owned(),
+                "7: stopped: activate".to_owned(),
                 0,
                 0,
                 1,
                 2,
+                2,
                 true,
+                false,
                 false
             )
         );
@@ -1227,44 +1292,84 @@ mod tests {
     }
 
     #[test]
-    fn restoring_makes_the_source_equal_to_the_backup_and_keeps_lock_files() {
-        // FR-511, IR-214
-        let root = std::env::temp_dir().join(format!("genc3wb-auto-restore-{}", std::process::id()));
+    fn restoring_copies_one_saved_file_and_removing_deletes_one_both_sparing_lock_files() {
+        // FR-511, FR-538, IR-214
+        let root =
+            std::env::temp_dir().join(format!("genc3wb-auto-restore-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
-        let backup = root.join("backup");
-        let source = root.join("src");
-        fs::create_dir_all(backup.join("sub")).expect("the backup can be created");
-        fs::create_dir_all(source.join("old")).expect("the source can be created");
-        fs::write(backup.join("a.txt"), "A").expect("written");
-        fs::write(backup.join("sub").join("b.txt"), "B").expect("written");
-        fs::write(source.join("a.txt"), "old A").expect("written");
-        fs::write(source.join("extra.txt"), "gone").expect("written");
-        fs::write(source.join("old").join("x.txt"), "gone").expect("written");
-        fs::write(source.join("n.gc3n.lock"), "held").expect("written");
-        fs::write(backup.join("other.lock"), "stale").expect("written");
-        let restored = restore(&backup, &source);
-        let missing_backup = restore(&root.join("none"), &source);
-        let a = fs::read_to_string(source.join("a.txt")).ok();
-        let b = fs::read_to_string(source.join("sub").join("b.txt")).ok();
-        let extra = source.join("extra.txt").exists();
-        let old = source.join("old").exists();
-        let lock = fs::read_to_string(source.join("n.gc3n.lock")).ok();
-        let stale = source.join("other.lock").exists();
-        let created = restore(&backup, &root.join("fresh")).map(|()| root.join("fresh/a.txt").is_file());
+        let saved = root.join("backup").join("1").join("2.bak");
+        fs::create_dir_all(saved.parent().expect("a parent")).expect("the backup can be created");
+        fs::write(&saved, "A").expect("written");
+        fs::create_dir_all(root.join("src")).expect("the source can be created");
+        fs::write(root.join("src").join("a.txt"), "old A").expect("written");
+        fs::write(root.join("src").join("n.gc3n.lock"), "held").expect("written");
+        let replaced = restore(&saved, &root.join("src").join("a.txt"));
+        let created = restore(&saved, &root.join("src").join("deep").join("b.txt"));
+        let lock_kept = restore(&saved, &root.join("src").join("n.gc3n.lock"));
+        let missing = restore(&root.join("none.bak"), &root.join("src").join("c.txt"));
+        let a = fs::read_to_string(root.join("src").join("a.txt")).ok();
+        let b = fs::read_to_string(root.join("src").join("deep").join("b.txt")).ok();
+        let lock = fs::read_to_string(root.join("src").join("n.gc3n.lock")).ok();
+        let removed = remove_file(&root.join("src").join("a.txt"));
+        let absent = remove_file(&root.join("src").join("none.txt"));
+        let lock_spared = remove_file(&root.join("src").join("n.gc3n.lock"));
+        let gone = root.join("src").join("a.txt").exists();
+        let lock_after = root.join("src").join("n.gc3n.lock").exists();
         let _ = fs::remove_dir_all(&root);
         assert_eq!(
-            (restored, missing_backup.is_err(), a, b, extra, old, lock, stale, created),
+            (
+                replaced,
+                created,
+                lock_kept.is_err(),
+                missing.is_err(),
+                a,
+                b,
+                lock,
+                removed,
+                absent,
+                lock_spared,
+                gone,
+                lock_after
+            ),
             (
                 Ok(()),
+                Ok(()),
+                true,
                 true,
                 Some("A".to_owned()),
-                Some("B".to_owned()),
-                false,
-                false,
+                Some("A".to_owned()),
                 Some("held".to_owned()),
+                Ok(()),
+                Ok(()),
+                Ok(()),
                 false,
-                Ok(true)
+                true
             )
+        );
+    }
+
+    #[test]
+    fn the_new_actions_of_the_beginning_are_read_from_the_canonical_form() {
+        // FR-495, FR-536 to FR-538
+        let steps = steps_of_canonical(
+            "\ninit\nclose network\nsettings file\tbackup/1/1.bak\nremove\tsrc/out.txt\nrestore\tbackup/2/1.bak\tsrc/in.txt\n",
+            "automation script\ninit\nclose network\nsettings file \"backup/1/1.bak\"\nremove \"src/out.txt\"\nrestore \"backup/2/1.bak\" into \"src/in.txt\"\n",
+            &folder(),
+        )
+        .expect("the form is read");
+        let actions: Vec<&Action> = steps.iter().map(|step| &step.action).collect();
+        assert_eq!(
+            actions,
+            vec![
+                &Action::Init,
+                &Action::CloseNetwork,
+                &Action::SettingsFile("/scripts/run/backup/1/1.bak".to_owned()),
+                &Action::Remove("/scripts/run/src/out.txt".to_owned()),
+                &Action::Restore {
+                    saved: "/scripts/run/backup/2/1.bak".to_owned(),
+                    file: "/scripts/run/src/in.txt".to_owned()
+                },
+            ]
         );
     }
 

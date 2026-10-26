@@ -2,7 +2,8 @@
 // confirmation dialog is cancelled once and confirmed once, on which the files exist, the meta
 // compiler DSL from the template, and the node window is presented.
 automation script
-restore "backup" into "work"
+init
+restore "backup/n.gc3n" into "work/n.gc3n"
 network "work/n.gc3n"
 idle network
 open node a

@@ -2,7 +2,11 @@
 // and activated, the node window opened, three letters typed into the input, and the output
 // verified after the idle expiry, in the node window and in the editor window of the file.
 automation script
-restore "backup" into "work"
+init
+restore "backup/n.gc3n" into "work/n.gc3n"
+restore "backup/copy.gc3" into "work/copy.gc3"
+restore "backup/in.txt" into "work/in.txt"
+restore "backup/out.txt" into "work/out.txt"
 network "work/n.gc3n"
 idle network
 activate

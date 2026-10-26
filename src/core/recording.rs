@@ -7,10 +7,11 @@
 //! Author: Jörg Karl-Heinz Walter Brüggmann <info@joerg-brueggmann.de>
 
 use crate::core::automation::{
-    Action, DialogAnswer, EditorItem, EditorName, FocusTarget, SettingsValues, WindowName, mirror,
+    Action, DialogAnswer, EditorItem, EditorName, FocusTarget, SettingsValues, WindowName,
 };
 use crate::core::file_lock::iso_of_unix_seconds;
 use crate::core::octet_view::EditorMode;
+use crate::core::settings::playback_delay_text;
 use crate::core::text_increment::increment_between;
 
 use std::fs::{self, File};
@@ -45,6 +46,34 @@ pub struct Recorder {
     /// the failure of the last start of a *recording* or write of an *expected file*, for the
     /// status bar; empty where the last succeeded (FR-532)
     failure: String,
+    /// the code editor that holds or held the keyboard focus last and its cursor, kept across
+    /// the recordings, so that an *individual recording* records the focus and the cursor it
+    /// finds (FR-540)
+    focused: Option<(EditorName, usize, usize)>,
+}
+
+// realises FR-540
+/// The state an *individual recording* finds, gathered by the *player* from the network editor,
+/// the *workbench object* and the *recorder*, and recorded as the commands that recover it.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct FoundState {
+    /// the *build system* in force, recorded first, since a *playback* names it anew (FR-520)
+    pub build_system: String,
+    /// the *network file* named, empty where none is
+    pub network: String,
+    /// the files the network works on, from the last *network response*, for the backup
+    pub files: Vec<String>,
+    /// whether the network is an *active network*; `None` where no mode is kept
+    pub active: Option<bool>,
+    /// the *nodes* whose *node windows* are presented, in the order they were opened
+    pub node_windows: Vec<String>,
+    /// the files whose *editor windows* are presented, in the order they were opened
+    pub editor_windows: Vec<String>,
+    /// per code editor whose text differs from the content of its file: the editor, the content
+    /// of the file and the text
+    pub edited: Vec<(EditorName, String, String)>,
+    /// whether the *typing mode* is the insert mode
+    pub insert_mode: bool,
 }
 
 // realises FR-519, FR-522, FR-525, FR-529, FR-531
@@ -60,6 +89,13 @@ struct Recording {
     name: String,
     /// the number of *expected files* written by this *recording*
     expected: usize,
+    /// the number of *backup folders* taken by this *recording* (IR-218)
+    backups: usize,
+    /// the `network` or `new network` line held back until the first *build* after the loading
+    /// has answered and the *precondition backup* is saved (FR-539)
+    held: Option<Action>,
+    /// the lines of the actions that arose while a line is held back, written after it
+    deferred: Vec<String>,
     /// the code editors the user edited, in the order of their first edit, each with its
     /// *recorded text* and its current text
     texts: Vec<EditedText>,
@@ -93,7 +129,7 @@ impl Recorder {
         path: &Path,
         version: &str,
         time: &str,
-        network: &str,
+        settings: &Path,
     ) -> Result<(), String> {
         self.stop();
         let created = (|| {
@@ -101,7 +137,8 @@ impl Recorder {
                 fs::create_dir_all(folder)
                     .map_err(|error| format!("cannot create '{}': {error}", folder.display()))?;
             }
-            File::create(path).map_err(|error| format!("cannot create '{}': {error}", path.display()))
+            File::create(path)
+                .map_err(|error| format!("cannot create '{}': {error}", path.display()))
         })();
         let file = match created {
             Ok(file) => file,
@@ -121,6 +158,9 @@ impl Recorder {
             folder,
             name,
             expected: 0,
+            backups: 0,
+            held: None,
+            deferred: Vec::new(),
             texts: Vec::new(),
             pending: None,
             focused: None,
@@ -128,17 +168,191 @@ impl Recorder {
         self.failure.clear();
         self.write_line(&comment_line(version, time));
         self.write_line(HEAD_LINE);
-        if !network.is_empty() {
-            let line = self.line_of(&Action::Network(network.to_owned()));
-            self.write_line(&line);
+        self.write_line("init");
+        if settings.is_file() {
+            match self.save_file(settings) {
+                Ok(saved) => {
+                    let line = self.line_of(&Action::SettingsFile(saved));
+                    self.write_line(&line);
+                }
+                Err(reason) => self.failure = reason,
+            }
         }
         Ok(())
+    }
+
+    // realises FR-539
+    /// Holds the `network` or `new network` line `action` back until `back_up_network`, since
+    /// the files of the network are known once the first *build* has answered; a line held
+    /// before is written first, where a *build* never answered it.
+    pub fn hold_network_line(&mut self, action: &Action) {
+        if !self.active() {
+            return;
+        }
+        self.flush_held();
+        if let Some(recording) = &mut self.recording {
+            recording.held = Some(action.clone());
+        }
+    }
+
+    // realises FR-539, IR-218
+    /// Saves the *precondition backup* of the network: `network_file` and each of `files` that
+    /// exists copied to the next *backup folder* as '<m>.bak', one `restore` line per file that
+    /// exists and one `remove` line per file that does not, in that order, then the line held
+    /// back; a file that cannot be copied gets no line and its reason is kept as the failure.
+    /// Nothing while no line is held back, so that a *build* after an edit saves nothing anew.
+    pub fn back_up_network(&mut self, network_file: &str, files: &[String]) {
+        if !self.active()
+            || self
+                .recording
+                .as_ref()
+                .is_none_or(|recording| recording.held.is_none())
+        {
+            return;
+        }
+        self.flush_edits();
+        self.flush_pending();
+        if let Some(recording) = &mut self.recording {
+            recording.backups += 1;
+        }
+        let mut paths: Vec<String> = Vec::with_capacity(files.len() + 1);
+        paths.push(network_file.to_owned());
+        for file in files {
+            if !paths.contains(file) {
+                paths.push(file.clone());
+            }
+        }
+        for file in paths {
+            let path = Path::new(&file);
+            let action = if path.is_file() {
+                match self.save_file(path) {
+                    Ok(saved) => Action::Restore {
+                        saved,
+                        file: file.clone(),
+                    },
+                    Err(reason) => {
+                        self.failure = reason;
+                        continue;
+                    }
+                }
+            } else if path.exists() {
+                continue;
+            } else {
+                Action::Remove(file.clone())
+            };
+            let line = self.line_of(&action);
+            self.write_now(&line);
+        }
+        self.flush_held();
+    }
+
+    // realises FR-520, FR-528, FR-540
+    /// Records the state an *individual recording* finds: `build system <path>` of the *build
+    /// system* in force, as the *automatic recording* records it at the start, then the backup of
+    /// its network and `network <path>`, `activate` or `deactivate` by `active`, `open node` and
+    /// `open file` per window, `edit` per edited code editor by `increment_between` of the
+    /// content of its file and its text, `typing mode`, and `focus` and `cursor` of the code
+    /// editor kept as focused; nothing beyond the *build system* where `state` names no network.
+    pub fn record_state(&mut self, state: &FoundState) {
+        if !self.active() {
+            return;
+        }
+        if !state.build_system.is_empty() {
+            self.record(&Action::BuildSystem(state.build_system.clone()));
+        }
+        if state.network.is_empty() {
+            return;
+        }
+        self.hold_network_line(&Action::Network(state.network.clone()));
+        self.back_up_network(&state.network, &state.files);
+        match state.active {
+            Some(true) => self.record(&Action::Activate),
+            Some(false) => self.record(&Action::Deactivate),
+            None => {}
+        }
+        for name in &state.node_windows {
+            self.record(&Action::OpenNode(name.clone()));
+        }
+        for path in &state.editor_windows {
+            self.record(&Action::OpenFile(path.clone()));
+        }
+        for (editor, content, text) in &state.edited {
+            let increment = increment_between(content, text);
+            let (line, column) = position_of_offset(content, increment.position);
+            self.record(&Action::Edit {
+                editor: editor.clone(),
+                line,
+                column,
+                range: increment.range,
+                text: increment.text,
+            });
+            self.reset_text(editor, text);
+        }
+        self.record(&Action::TypingMode(state.insert_mode));
+        if let Some((editor, line, column)) = self.focused.clone() {
+            self.record(&Action::Focus(FocusTarget::Editor(editor.clone())));
+            self.record(&Action::Cursor {
+                editor,
+                line,
+                column,
+            });
+        }
+    }
+
+    /// Copies the file at `source` into the current *backup folder* 'backup/<n>' beside the
+    /// gc3s-file as the next '<m>.bak', the folder created where it does not exist, the first
+    /// backup folder taken where none is; yields the absolute path of the copy.
+    ///
+    /// # Errors
+    /// Returns the reason where the folder cannot be created or the file cannot be copied.
+    fn save_file(&mut self, source: &Path) -> Result<String, String> {
+        let Some(recording) = &mut self.recording else {
+            return Err("no recording runs".to_owned());
+        };
+        if recording.backups == 0 {
+            recording.backups = 1;
+        }
+        let folder = recording
+            .folder
+            .join("backup")
+            .join(recording.backups.to_string());
+        fs::create_dir_all(&folder)
+            .map_err(|error| format!("cannot create '{}': {error}", folder.display()))?;
+        let count = fs::read_dir(&folder)
+            .map(|entries| entries.filter_map(Result::ok).count())
+            .unwrap_or(0);
+        let target = folder.join(format!("{}.bak", count + 1));
+        fs::copy(source, &target)
+            .map_err(|error| format!("cannot copy '{}': {error}", source.display()))?;
+        Ok(target.to_string_lossy().into_owned())
+    }
+
+    /// Writes the `network` or `new network` line held back, where there is one, and then the
+    /// lines held back behind it.
+    fn flush_held(&mut self) {
+        let held = self
+            .recording
+            .as_mut()
+            .and_then(|recording| recording.held.take());
+        if let Some(action) = held {
+            let line = self.line_of(&action);
+            self.write_now(&line);
+            let deferred = self
+                .recording
+                .as_mut()
+                .map(|recording| std::mem::take(&mut recording.deferred))
+                .unwrap_or_default();
+            for line in deferred {
+                self.write_now(&line);
+            }
+        }
     }
 
     // realises FR-529
     /// Writes the pending `edit` lines and the pending cursor or selection line and closes the
     /// file; nothing where none runs.
     pub fn stop(&mut self) {
+        self.flush_held();
         if self.recording.is_none() {
             return;
         }
@@ -155,7 +369,9 @@ impl Recorder {
 
     /// Yields the path of the gc3s-file of the *recording* that runs.
     pub fn path(&self) -> Option<&Path> {
-        self.recording.as_ref().map(|recording| recording.path.as_path())
+        self.recording
+            .as_ref()
+            .map(|recording| recording.path.as_path())
     }
 
     /// Yields the failure of the last start of a *recording* or write of an *expected file*,
@@ -224,6 +440,12 @@ impl Recorder {
     /// Holds a cursor line of `editor` back as the pending one, replacing the pending one; the
     /// pending `edit` lines are written first.
     pub fn cursor(&mut self, editor: &EditorName, line: usize, column: usize) {
+        if let Some((focused, kept_line, kept_column)) = &mut self.focused
+            && focused == editor
+        {
+            *kept_line = line;
+            *kept_column = column;
+        }
         self.hold(Action::Cursor {
             editor: editor.clone(),
             line,
@@ -292,6 +514,10 @@ impl Recorder {
         self.record(&Action::Focus(target.clone()));
         if let (FocusTarget::Editor(editor), Some(recording)) = (target, &mut self.recording) {
             recording.focused = Some(editor.clone());
+            match &self.focused {
+                Some((focused, _, _)) if focused == editor => {}
+                _ => self.focused = Some((editor.clone(), 1, 1)),
+            }
         }
     }
 
@@ -301,31 +527,6 @@ impl Recorder {
         self.recording
             .as_ref()
             .and_then(|recording| recording.focused.clone())
-    }
-
-    // realises FR-530, IR-218
-    /// Copies the folder `source` into the folder `backup` by `mirror` and records
-    /// `restore <backup> into <source>`.
-    ///
-    /// # Errors
-    /// Returns the reason where a path is empty, the source folder does not exist or a file
-    /// cannot be copied; nothing is recorded then.
-    pub fn back_up(&mut self, source: &str, backup: &str) -> Result<(), String> {
-        if source.is_empty() {
-            return Err("the source folder is not named".to_owned());
-        }
-        if backup.is_empty() {
-            return Err("the backup folder is not named".to_owned());
-        }
-        if !self.active() {
-            return Err("no recording runs".to_owned());
-        }
-        mirror(Path::new(source), Path::new(backup))?;
-        self.record(&Action::Restore {
-            backup: backup.to_owned(),
-            source: source.to_owned(),
-        });
-        Ok(())
     }
 
     // realises FR-531, IR-218
@@ -387,9 +588,23 @@ impl Recorder {
         line_of(action, folder)
     }
 
-    /// Writes `line` and a line feed to the file and flushes it; a line that cannot be written
-    /// is passed over, the next one being tried again.
+    /// Writes `line` and a line feed to the file and flushes it, or holds it back while a
+    /// `network` line is held back, so that it follows that line (FR-539); a line that cannot be
+    /// written is passed over, the next one being tried again.
     fn write_line(&mut self, line: &str) {
+        if let Some(recording) = &mut self.recording {
+            if recording.held.is_some() {
+                recording.deferred.push(line.to_owned());
+                return;
+            }
+            let _ = writeln!(recording.file, "{line}");
+            let _ = recording.file.flush();
+        }
+    }
+
+    /// Writes `line` and a line feed to the file and flushes it, whether a line is held back or
+    /// not: the `restore` and `remove` lines of a backup and the line held back itself.
+    fn write_now(&mut self, line: &str) {
         if let Some(recording) = &mut self.recording {
             let _ = writeln!(recording.file, "{line}");
             let _ = recording.file.flush();
@@ -531,6 +746,7 @@ pub fn line_of(action: &Action, folder: &Path) -> String {
             text(t)
         ),
         Action::Idle(e) => format!("idle {}", editor(e)),
+        Action::Delay(milliseconds) => format!("delay {milliseconds} ms"),
         Action::LongIdle(e) => format!("long idle {}", editor(e)),
         Action::Cursor {
             editor: e,
@@ -566,9 +782,11 @@ pub fn line_of(action: &Action, folder: &Path) -> String {
             "answer creation failure {}",
             if *proceed { "continue" } else { "cancel" }
         ),
-        Action::Restore { backup, source } => {
-            format!("restore {} into {}", path(backup), path(source))
-        }
+        Action::Init => "init".to_owned(),
+        Action::CloseNetwork => "close network".to_owned(),
+        Action::SettingsFile(p) => format!("settings file {}", path(p)),
+        Action::Restore { saved, file } => format!("restore {} into {}", path(saved), path(file)),
+        Action::Remove(p) => format!("remove {}", path(p)),
         Action::Verify { editor: e, file } => format!("verify {} {}", editor(e), path(file)),
     }
 }
@@ -583,7 +801,9 @@ fn settings_text(values: &SettingsValues, switch: impl Fn(bool) -> &'static str)
         values.tab_size,
         switch(values.tabs_to_spaces),
         switch(values.silent_creation),
-        values.playback_delay
+        values
+            .playback_delay
+            .map_or_else(|| "off".to_owned(), playback_delay_text)
     )
 }
 
@@ -655,8 +875,8 @@ pub fn relative(folder: &Path, path: &str) -> String {
         .zip(goal.iter())
         .take_while(|(a, b)| a == b)
         .count();
-    let mut segments: Vec<String> = std::iter::repeat_n("..".to_owned(), base.len() - common)
-        .collect();
+    let mut segments: Vec<String> =
+        std::iter::repeat_n("..".to_owned(), base.len() - common).collect();
     segments.extend(
         goal[common..]
             .iter()
@@ -735,10 +955,7 @@ pub fn local_time_name() -> String {
             .unwrap_or(0);
         let iso = iso_of_unix_seconds(seconds);
         let (date, clock) = iso.split_once('T').unwrap_or((&iso, ""));
-        format!(
-            "{date}_{}",
-            clock.trim_end_matches('Z').replace(':', "-")
-        )
+        format!("{date}_{}", clock.trim_end_matches('Z').replace(':', "-"))
     })
 }
 
@@ -758,7 +975,7 @@ pub fn comment_line(version: &str, time: &str) -> String {
  * independence     : ✅
  * edge cases       : ✅
  * conforms to doc  : ✅
- * covers bridge    : Automation::start_recording, Automation::stop_recording, Automation::back_up,
+ * covers bridge    : Automation::start_recording, Automation::stop_recording,
  *                    Automation::store_focused, Automation::record_window_focus,
  *                    InputGroup::record_cursor, InputGroup::record_focus, InputGroup::record_mode,
  *                    OutputGroup::record_focus, OutputGroup::record_mode, Workbench::default */
@@ -803,7 +1020,7 @@ mod tests {
             tab_size: 4,
             tabs_to_spaces: true,
             silent_creation: false,
-            playback_delay: 3,
+            playback_delay: Some(283),
         };
         let actions = vec![
             Action::Network("/scripts/run/src/n.gc3n".to_owned()),
@@ -878,9 +1095,14 @@ mod tests {
                 silent: false,
             }),
             Action::Answer(DialogAnswer::CreationFailure(true)),
+            Action::Init,
+            Action::CloseNetwork,
+            Action::Delay(1500),
+            Action::SettingsFile("/scripts/run/backup/1/1.bak".to_owned()),
+            Action::Remove("/scripts/run/src/out.txt".to_owned()),
             Action::Restore {
-                backup: "/scripts/run/backup".to_owned(),
-                source: "/scripts/work/net".to_owned(),
+                saved: "/scripts/run/backup/2/3.bak".to_owned(),
+                file: "/scripts/work/net/letters.txt".to_owned(),
             },
             Action::Verify {
                 editor: EditorName::Node {
@@ -890,7 +1112,10 @@ mod tests {
                 file: "/scripts/run/run-0.gc3v".to_owned(),
             },
         ];
-        let lines: Vec<String> = actions.iter().map(|action| line_of(action, &folder)).collect();
+        let lines: Vec<String> = actions
+            .iter()
+            .map(|action| line_of(action, &folder))
+            .collect();
         assert_eq!(
             lines,
             vec![
@@ -915,7 +1140,7 @@ mod tests {
                 "mode node copy output 1 bin",
                 "undo node copy input 0",
                 "redo node copy input 0",
-                "settings idle 2.0 long idle 16.0 automatic off tab size 4 spaces on silent creation off delay 3",
+                "settings idle 2.0 long idle 16.0 automatic off tab size 4 spaces on silent creation off delay 0.28",
                 "insert key \"Ctrl+I\"",
                 "typing mode overwrite",
                 "answer save yes",
@@ -923,7 +1148,12 @@ mod tests {
                 "answer creation create",
                 "answer creation cancel",
                 "answer creation failure continue",
-                "restore \"backup\" into \"../work/net\"",
+                "init",
+                "close network",
+                "delay 1500 ms",
+                "settings file \"backup/1/1.bak\"",
+                "remove \"src/out.txt\"",
+                "restore \"backup/2/3.bak\" into \"../work/net/letters.txt\"",
                 "verify node copy output 0 \"run-0.gc3v\"",
             ]
         );
@@ -958,7 +1188,13 @@ mod tests {
                 unescaped(&escaped("x\n\t\"\\\r")),
                 resolved(&folder, &relative(&folder, "/scripts/work/net"))
             ),
-            (1, &edit, line.as_str(), "x\n\t\"\\\r".to_owned(), "/scripts/work/net".to_owned())
+            (
+                1,
+                &edit,
+                line.as_str(),
+                "x\n\t\"\\\r".to_owned(),
+                "/scripts/work/net".to_owned()
+            )
         );
     }
 
@@ -1001,48 +1237,82 @@ mod tests {
                 position_of_utf16_offset(text, 7),
                 position_of_utf16_offset(text, 8),
             ),
-            ((1, 1), (1, 3), (2, 1), (2, 4), (3, 2), (2, 3), (2, 4), (2, 5))
+            (
+                (1, 1),
+                (1, 3),
+                (2, 1),
+                (2, 4),
+                (3, 2),
+                (2, 3),
+                (2, 4),
+                (2, 5)
+            )
         );
     }
 
     #[test]
-    fn a_recording_writes_the_head_and_every_action_as_it_arises() {
-        // FR-519, FR-520, FR-521, FR-528, IR-218
+    fn a_recording_writes_the_head_init_the_settings_file_and_every_action_as_it_arises() {
+        // FR-519, FR-520, FR-521, FR-528, FR-537, IR-218
         let root = temp("head");
         let path = root.join("s").join("usage.gc3s");
+        let settings = root.join("genc3wb.yaml");
+        fs::create_dir_all(&root).expect("the root can be created");
+        fs::write(&settings, "tab_size: 4\n").expect("written");
         let mut recorder = Recorder::default();
-        let started = recorder.start(&path, "0.33.0.0", "2026-10-19_10-20-30", &format!("{}/net/n.gc3n", root.display()));
+        let started = recorder.start(&path, "0.33.0.0", "2026-10-19_10-20-30", &settings);
         let running_before = recorder.is_running();
         recorder.record(&Action::Activate);
         let while_running = lines_of(&path);
         recorder.record(&Action::OpenNode("copy".to_owned()));
         recorder.stop();
         let after = lines_of(&path);
-        let empty = recorder.start(&root.join("s").join("other.gc3s"), "0.33.0.0", "t", "");
-        let no_network = lines_of(&root.join("s").join("other.gc3s"));
+        let saved = fs::read_to_string(root.join("s").join("backup").join("1").join("1.bak")).ok();
+        let empty = recorder.start(
+            &root.join("s").join("other.gc3s"),
+            "0.33.0.0",
+            "t",
+            Path::new(""),
+        );
+        let no_settings = lines_of(&root.join("s").join("other.gc3s"));
         recorder.stop();
         let _ = fs::remove_dir_all(&root);
         assert_eq!(
-            (started, running_before, while_running, after, recorder.is_running(), empty, no_network),
+            (
+                started,
+                running_before,
+                while_running,
+                after,
+                saved,
+                recorder.is_running(),
+                empty,
+                no_settings
+            ),
             (
                 Ok(()),
                 true,
                 vec![
                     "// Recorded by genc³wb 0.33.0.0 on 2026-10-19 at 10:20:30".to_owned(),
                     "automation script".to_owned(),
-                    "network \"../net/n.gc3n\"".to_owned(),
+                    "init".to_owned(),
+                    "settings file \"backup/1/1.bak\"".to_owned(),
                     "activate".to_owned(),
                 ],
                 vec![
                     "// Recorded by genc³wb 0.33.0.0 on 2026-10-19 at 10:20:30".to_owned(),
                     "automation script".to_owned(),
-                    "network \"../net/n.gc3n\"".to_owned(),
+                    "init".to_owned(),
+                    "settings file \"backup/1/1.bak\"".to_owned(),
                     "activate".to_owned(),
                     "open node copy".to_owned(),
                 ],
+                Some("tab_size: 4\n".to_owned()),
                 false,
                 Ok(()),
-                vec!["// Recorded by genc³wb 0.33.0.0 on t at ".to_owned(), "automation script".to_owned()],
+                vec![
+                    "// Recorded by genc³wb 0.33.0.0 on t at ".to_owned(),
+                    "automation script".to_owned(),
+                    "init".to_owned(),
+                ],
             )
         );
     }
@@ -1053,7 +1323,9 @@ mod tests {
         let root = temp("edit");
         let path = root.join("s.gc3s");
         let mut recorder = Recorder::default();
-        recorder.start(&path, "v", "t", "").expect("started");
+        recorder
+            .start(&path, "v", "t", Path::new(""))
+            .expect("started");
         let editor = copy_input();
         recorder.text_changed(&editor, "hello world", "hello worldd");
         recorder.text_changed(&editor, "hello worldd", "hello worlddd");
@@ -1067,7 +1339,7 @@ mod tests {
         let lines = lines_of(&path);
         let _ = fs::remove_dir_all(&root);
         assert_eq!(
-            lines[2..],
+            lines[3..],
             [
                 "edit node copy input 0 1:12 0 \"dd\"".to_owned(),
                 "focus main".to_owned(),
@@ -1085,7 +1357,9 @@ mod tests {
         let root = temp("cursor");
         let path = root.join("s.gc3s");
         let mut recorder = Recorder::default();
-        recorder.start(&path, "v", "t", "").expect("started");
+        recorder
+            .start(&path, "v", "t", Path::new(""))
+            .expect("started");
         let editor = copy_input();
         recorder.cursor(&editor, 1, 2);
         recorder.cursor(&editor, 1, 3);
@@ -1110,7 +1384,7 @@ mod tests {
         let lines = lines_of(&path);
         let _ = fs::remove_dir_all(&root);
         assert_eq!(
-            lines[2..],
+            lines[3..],
             [
                 "select node copy input 0 1:1 1:3".to_owned(),
                 "edit node copy input 0 1:3 1 \"x\"".to_owned(),
@@ -1129,7 +1403,9 @@ mod tests {
         let root = temp("store");
         let path = root.join("r").join("demo.gc3s");
         let mut recorder = Recorder::default();
-        recorder.start(&path, "v", "t", "").expect("started");
+        recorder
+            .start(&path, "v", "t", Path::new(""))
+            .expect("started");
         let none_before = recorder.focused_editor();
         let editor = copy_input();
         recorder.focus(&FocusTarget::Editor(editor.clone()));
@@ -1144,7 +1420,15 @@ mod tests {
         let lines = lines_of(&path);
         let _ = fs::remove_dir_all(&root);
         assert_eq!(
-            (none_before, focused, first, second, forgotten, stored, &lines[2..]),
+            (
+                none_before,
+                focused,
+                first,
+                second,
+                forgotten,
+                stored,
+                &lines[3..]
+            ),
             (
                 None,
                 Some(editor.clone()),
@@ -1164,38 +1448,123 @@ mod tests {
     }
 
     #[test]
-    fn a_backup_copies_the_source_and_records_the_restore() {
-        // FR-530, IR-218
+    fn the_network_line_is_held_back_until_the_backup_of_the_files_is_saved() {
+        // FR-539, FR-540, IR-218
         let root = temp("backup");
         let path = root.join("r").join("s.gc3s");
-        let source = root.join("work");
-        fs::create_dir_all(&source).expect("the source can be created");
-        fs::write(source.join("n.gc3n"), "net").expect("written");
-        fs::write(source.join("n.gc3n.lock"), "held").expect("written");
+        let work = root.join("work");
+        fs::create_dir_all(work.join("src")).expect("the work folder can be created");
+        fs::write(work.join("n.gc3n"), "net").expect("written");
+        fs::write(work.join("src").join("in.txt"), "hello").expect("written");
+        fs::write(work.join("n.gc3n.lock"), "held").expect("written");
+        let network = work.join("n.gc3n").to_string_lossy().into_owned();
+        let input = work
+            .join("src")
+            .join("in.txt")
+            .to_string_lossy()
+            .into_owned();
+        let output = work
+            .join("src")
+            .join("out.txt")
+            .to_string_lossy()
+            .into_owned();
         let mut recorder = Recorder::default();
-        recorder.start(&path, "v", "t", "").expect("started");
-        let backup = root.join("r").join("backup");
-        let made = recorder.back_up(
-            &source.to_string_lossy(),
-            &backup.to_string_lossy(),
-        );
-        let missing = recorder.back_up(&root.join("none").to_string_lossy(), &backup.to_string_lossy());
-        let unnamed = recorder.back_up("", &backup.to_string_lossy());
+        recorder
+            .start(&path, "v", "t", Path::new(""))
+            .expect("started");
+        recorder.hold_network_line(&Action::Network(network.clone()));
+        recorder.record(&Action::Focus(FocusTarget::Window(WindowName::Main)));
+        let before_build = lines_of(&path);
+        recorder.back_up_network(&network, &[input.clone(), output.clone(), network.clone()]);
+        // a build after an edit saves nothing anew, since no line is held back
+        recorder.back_up_network(&network, &[input]);
         recorder.stop();
-        let copied = fs::read_to_string(backup.join("n.gc3n")).ok();
-        let lock = backup.join("n.gc3n.lock").exists();
+        let lines = lines_of(&path);
+        let saved_network =
+            fs::read_to_string(root.join("r").join("backup").join("1").join("1.bak")).ok();
+        let saved_input =
+            fs::read_to_string(root.join("r").join("backup").join("1").join("2.bak")).ok();
+        let second_backup = root.join("r").join("backup").join("2").exists();
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(
+            (
+                before_build.len(),
+                &lines[3..],
+                saved_network,
+                saved_input,
+                second_backup
+            ),
+            (
+                3,
+                &[
+                    "restore \"backup/1/1.bak\" into \"../work/n.gc3n\"".to_owned(),
+                    "restore \"backup/1/2.bak\" into \"../work/src/in.txt\"".to_owned(),
+                    "remove \"../work/src/out.txt\"".to_owned(),
+                    "network \"../work/n.gc3n\"".to_owned(),
+                    "focus main".to_owned(),
+                ][..],
+                Some("net".to_owned()),
+                Some("hello".to_owned()),
+                false
+            )
+        );
+    }
+
+    #[test]
+    fn the_state_found_is_recorded_as_the_commands_that_recover_it() {
+        // FR-540
+        let root = temp("state");
+        let path = root.join("r").join("s.gc3s");
+        let work = root.join("work");
+        fs::create_dir_all(&work).expect("the work folder can be created");
+        fs::write(work.join("n.gc3n"), "net").expect("written");
+        fs::write(work.join("in.txt"), "hello").expect("written");
+        let network = work.join("n.gc3n").to_string_lossy().into_owned();
+        let input = work.join("in.txt").to_string_lossy().into_owned();
+        let mut recorder = Recorder::default();
+        recorder
+            .start(&root.join("first.gc3s"), "v", "t", Path::new(""))
+            .expect("started");
+        recorder.focus(&FocusTarget::Editor(copy_input()));
+        recorder.cursor(&copy_input(), 1, 6);
+        recorder.stop();
+        recorder
+            .start(&path, "v", "t", Path::new(""))
+            .expect("started");
+        recorder.record_state(&FoundState {
+            build_system: root
+                .join("bin")
+                .join("genc3d")
+                .to_string_lossy()
+                .into_owned(),
+            network: network.clone(),
+            files: vec![input.clone()],
+            active: Some(true),
+            node_windows: vec!["copy".to_owned()],
+            editor_windows: vec![input.clone()],
+            edited: vec![(copy_input(), "hello".to_owned(), "hello world".to_owned())],
+            insert_mode: false,
+        });
+        recorder.text_changed(&copy_input(), "hello world", "hello worlds");
+        recorder.stop();
         let lines = lines_of(&path);
         let _ = fs::remove_dir_all(&root);
         assert_eq!(
-            (made, missing.is_err(), unnamed.is_err(), copied, lock, &lines[2..]),
-            (
-                Ok(()),
-                true,
-                true,
-                Some("net".to_owned()),
-                false,
-                &["restore \"backup\" into \"../work\"".to_owned()][..]
-            )
+            &lines[3..],
+            &[
+                "build system \"../bin/genc3d\"".to_owned(),
+                "restore \"backup/1/1.bak\" into \"../work/n.gc3n\"".to_owned(),
+                "restore \"backup/1/2.bak\" into \"../work/in.txt\"".to_owned(),
+                "network \"../work/n.gc3n\"".to_owned(),
+                "activate".to_owned(),
+                "open node copy".to_owned(),
+                "open file \"../work/in.txt\"".to_owned(),
+                "edit node copy input 0 1:6 0 \" world\"".to_owned(),
+                "typing mode overwrite".to_owned(),
+                "focus node copy input 0".to_owned(),
+                "cursor node copy input 0 1:6".to_owned(),
+                "edit node copy input 0 1:12 0 \"s\"".to_owned(),
+            ][..]
         );
     }
 
@@ -1207,7 +1576,9 @@ mod tests {
         let mut recorder = Recorder::default();
         recorder.record(&Action::Activate);
         let stored_without = recorder.store_expected(&EditorName::Network, b"x").is_err();
-        recorder.start(&path, "v", "t", "").expect("started");
+        recorder
+            .start(&path, "v", "t", Path::new(""))
+            .expect("started");
         recorder.suspend(true);
         recorder.record(&Action::Activate);
         recorder.text_changed(&EditorName::Network, "a", "ab");
@@ -1216,11 +1587,22 @@ mod tests {
         recorder.record(&Action::Deactivate);
         recorder.stop();
         let lines = lines_of(&path);
-        let failed = recorder.start(&root.join("s.gc3s").join("x").join("y.gc3s"), "v", "t", "");
+        let failed = recorder.start(
+            &root.join("s.gc3s").join("x").join("y.gc3s"),
+            "v",
+            "t",
+            Path::new(""),
+        );
         let failure = recorder.failure().to_owned();
         let _ = fs::remove_dir_all(&root);
         assert_eq!(
-            (stored_without, &lines[2..], failed.is_err(), failure.is_empty(), recorder.is_running()),
+            (
+                stored_without,
+                &lines[3..],
+                failed.is_err(),
+                failure.is_empty(),
+                recorder.is_running()
+            ),
             (true, &["deactivate".to_owned()][..], true, false, false)
         );
     }
@@ -1263,9 +1645,16 @@ mod tests {
             range: 3,
             text: "x\"y\n".to_owned(),
         };
-        fs::write(&path, format!("automation script\n{}\n", line_of(&action, &root))).expect("written");
+        fs::write(
+            &path,
+            format!("automation script\n{}\n", line_of(&action, &root)),
+        )
+        .expect("written");
         let script = read_script(&path, &gc3, &configuration);
         let _ = fs::remove_dir_all(&root);
-        assert_eq!(script.map(|script| script.steps[0].action.clone()), Ok(action));
+        assert_eq!(
+            script.map(|script| script.steps[0].action.clone()),
+            Ok(action)
+        );
     }
 }

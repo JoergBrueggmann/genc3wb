@@ -54,10 +54,18 @@ pub const DEFAULT_TABS_TO_SPACES: bool = false;
 pub const DEFAULT_SILENT_CREATION: bool = false;
 
 // realises FR-094, FR-518
-/// The *character playback delay* where the *settings file* holds none, and its greatest value, in
-/// tenths of a second.
-pub const DEFAULT_PLAYBACK_DELAY: u32 = 0;
-pub const MAX_PLAYBACK_DELAY: u32 = 10;
+/// The thirteen values a *playback delay* may have, in milliseconds: 0.05 · √2ⁿ seconds for n
+/// from 0 to 12, each rounded to the millisecond; and whether a delay is waited and which, where
+/// the *settings file* holds none.
+pub const PLAYBACK_DELAYS: [u32; 13] = [
+    50, 71, 100, 141, 200, 283, 400, 566, 800, 1131, 1600, 2263, 3200,
+];
+pub const DEFAULT_PLAYBACK_DELAY_ON: bool = false;
+pub const DEFAULT_PLAYBACK_DELAY_INDEX: usize = 0;
+
+// realises FR-094, FR-544
+/// Whether the *playback delay dialog setting* is on where the *settings file* does not hold it.
+pub const DEFAULT_PLAYBACK_DELAY_DIALOG_DISABLED: bool = false;
 
 // realises FR-149
 /// The width of the left part of the *node window*, in pixels, where the *settings file* does not
@@ -124,16 +132,21 @@ pub struct Settings {
     /// whether the *silent creation setting* is on: the files of a *node* are created without
     /// the *input creation confirmation dialog* (FR-490)
     silent_creation: bool,
-    /// the *character playback delay* in tenths of a second, at most `MAX_PLAYBACK_DELAY` (FR-518)
-    playback_delay: u32,
+    /// whether a *playback delay* is waited, and the index of its value in `PLAYBACK_DELAYS`,
+    /// kept while none is waited, so that the field shows the value last chosen (FR-518)
+    playback_delay_on: bool,
+    playback_delay_index: usize,
+    /// whether the *playback delay dialog setting* is on: no *playback delay dialog* is presented
+    /// (FR-544)
+    playback_delay_dialog_disabled: bool,
     /// the width of the left part of the *node window* (FR-146)
     node_left_width: u32,
     /// the height of the *input group* in the left part of the *node window* (FR-147)
     node_upper_height: u32,
     /// the width of the *input group* of the *network file* (FR-148)
     network_left_width: u32,
-    /// the path of the *network file*
-    network_path: String,
+    /// the path of the *network file*; `None` where none is named (FR-090, FR-535)
+    network_path: Option<String>,
     /// the path of the *build system*
     build_system_path: String,
     /// the insert key, which toggles the *typing mode* (FR-193)
@@ -154,11 +167,13 @@ impl Default for Settings {
             tab_size: DEFAULT_TAB_SIZE,
             tabs_to_spaces: DEFAULT_TABS_TO_SPACES,
             silent_creation: DEFAULT_SILENT_CREATION,
-            playback_delay: DEFAULT_PLAYBACK_DELAY,
+            playback_delay_on: DEFAULT_PLAYBACK_DELAY_ON,
+            playback_delay_index: DEFAULT_PLAYBACK_DELAY_INDEX,
+            playback_delay_dialog_disabled: DEFAULT_PLAYBACK_DELAY_DIALOG_DISABLED,
             node_left_width: DEFAULT_NODE_LEFT_WIDTH,
             node_upper_height: DEFAULT_NODE_UPPER_HEIGHT,
             network_left_width: DEFAULT_NETWORK_LEFT_WIDTH,
-            network_path: String::new(),
+            network_path: None,
             build_system_path: Settings::default_build_system_path(),
             insert_key: KeyStroke::default_insert_key(),
         }
@@ -190,22 +205,46 @@ struct Stored {
     tabs_to_spaces: bool,
     #[serde(default = "default_silent_creation")]
     silent_creation: bool,
-    /// the *character playback delay* in tenths of a second, read as any integer
-    #[serde(default = "default_playback_delay")]
-    playback_delay: i64,
+    /// the *playback delay* in seconds, one of `PLAYBACK_DELAYS`, present while a delay is
+    /// waited and absent while none is; a value read is brought to the nearest of the thirteen,
+    /// an integer, as a file of a version before 0.38.0 holds it, read as tenths of a second,
+    /// and 0, as a file before 0.39.0 holds it, read as no delay (FR-093, FR-095)
+    #[serde(
+        default,
+        deserialize_with = "seconds_of_stored_delay",
+        skip_serializing_if = "Option::is_none"
+    )]
+    playback_delay: Option<f64>,
+    /// the *playback delay dialog setting* (FR-544)
+    #[serde(default = "default_playback_delay_dialog_disabled")]
+    playback_delay_dialog_disabled: bool,
     #[serde(default = "default_node_left_width")]
     node_left_width: i64,
     #[serde(default = "default_node_upper_height")]
     node_upper_height: i64,
     #[serde(default = "default_network_left_width")]
     network_left_width: i64,
-    #[serde(default)]
-    network_path: String,
+    /// the path of the *network file*: absent, `null` or empty where none is named
+    #[serde(
+        default,
+        deserialize_with = "path_or_none",
+        skip_serializing_if = "Option::is_none"
+    )]
+    network_path: Option<String>,
     #[serde(default = "default_build_system_path")]
     build_system_path: String,
     /// the name of the insert key, as `KeyStroke::name` yields it
     #[serde(default = "default_insert_key")]
     insert_key: String,
+}
+
+/// Reads the key `network_path`: `None` where it holds `null` or the empty text, which a
+/// *settings file* of a version before 0.34.0 holds where no *network file* was named.
+fn path_or_none<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    let value: Option<String> = Option::deserialize(deserializer)?;
+    Ok(value.filter(|path| !path.is_empty()))
 }
 
 /// The default of the key `idle_time`, for a *settings file* that lacks it.
@@ -238,9 +277,25 @@ fn default_silent_creation() -> bool {
     DEFAULT_SILENT_CREATION
 }
 
-/// The default of the key `playback_delay`, for a *settings file* that lacks it.
-fn default_playback_delay() -> i64 {
-    i64::from(DEFAULT_PLAYBACK_DELAY)
+/// Reads the key `playback_delay` in seconds: an integer value, as a *settings file* written
+/// before 0.38.0 holds it, is a number of tenths of a second; a value that is no number is no
+/// delay.
+fn seconds_of_stored_delay<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<f64>, D::Error> {
+    let value = serde_norway::Value::deserialize(deserializer)?;
+    Ok(match value {
+        serde_norway::Value::Number(number) => match number.as_i64() {
+            Some(tenths) => Some(tenths as f64 / 10.0),
+            None => number.as_f64(),
+        },
+        _ => None,
+    })
+}
+
+/// The default of the key `playback_delay_dialog_disabled`, for a *settings file* that lacks it.
+fn default_playback_delay_dialog_disabled() -> bool {
+    DEFAULT_PLAYBACK_DELAY_DIALOG_DISABLED
 }
 
 /// The default of the key `node_left_width`, for a *settings file* that lacks it.
@@ -306,15 +361,40 @@ pub fn tab_size_violation(tab_size: u32) -> Option<String> {
 }
 
 // realises FR-518
-/// Yields the message naming FR-518 where `delay` exceeds `MAX_PLAYBACK_DELAY`, `None` otherwise.
-pub fn playback_delay_violation(delay: u32) -> Option<String> {
-    if delay <= MAX_PLAYBACK_DELAY {
-        None
-    } else {
-        Some(format!(
-            "The character playback delay is an integer from 0 to {MAX_PLAYBACK_DELAY} tenths of a second."
-        ))
+/// Yields the message naming FR-518 where `delay`, no delay or milliseconds, is a value that is
+/// none of `PLAYBACK_DELAYS`, `None` otherwise.
+pub fn playback_delay_violation(delay: Option<u32>) -> Option<String> {
+    match delay {
+        Some(milliseconds) if !PLAYBACK_DELAYS.contains(&milliseconds) => Some(format!(
+            "The playback delay is off or one of {} seconds.",
+            PLAYBACK_DELAYS
+                .iter()
+                .map(|value| playback_delay_text(*value))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+        _ => None,
     }
+}
+
+// realises FR-495, FR-518
+/// Yields a value of `PLAYBACK_DELAYS`, in milliseconds, as seconds rounded to two decimals, as
+/// the `settings` line writes it and the dialogs show it: 71 is `0.07`, 566 is `0.57`, 3200 is
+/// `3.20`; the value read back is brought to the nearest of the thirteen.
+pub fn playback_delay_text(milliseconds: u32) -> String {
+    let hundredths = (milliseconds + 5) / 10;
+    format!("{}.{:02}", hundredths / 100, hundredths % 100)
+}
+
+// realises FR-095, FR-518
+/// Yields the index in `PLAYBACK_DELAYS` of the value nearest to `delay`, in milliseconds, the
+/// smaller one where two are equally near, as a stored value is taken.
+pub fn nearest_playback_delay_index(delay: u32) -> usize {
+    PLAYBACK_DELAYS
+        .iter()
+        .enumerate()
+        .min_by_key(|(_, value)| value.abs_diff(delay))
+        .map_or(0, |(index, _)| index)
 }
 
 // realises FR-130
@@ -368,8 +448,8 @@ impl Settings {
     ///   or FR-134, the *idle time* is raised to the least one and the *long idle time* to the
     ///   *idle time* plus one step.
     /// * A *tab size* outside `MIN_TAB_SIZE..=MAX_TAB_SIZE` is brought to the nearest bound, a
-    ///   *character playback delay* above `MAX_PLAYBACK_DELAY` to it, and a negative position of a
-    ///   splitter to 0.
+    ///   *playback delay* to the nearest of `PLAYBACK_DELAYS`, an absent key and a value that is
+    ///   no positive number read as no delay, and a negative position of a splitter to 0.
     ///
     /// # Errors
     /// Returns [`SettingsError::Io`] where the file exists but cannot be read, and
@@ -385,6 +465,9 @@ impl Settings {
         let idle_time = milliseconds_of_seconds(stored.idle_time).max(MIN_IDLE_TIME);
         let long_idle_time =
             milliseconds_of_seconds(stored.long_idle_time).max(idle_time.saturating_add(TIME_STEP));
+        let playback_delay = stored
+            .playback_delay
+            .filter(|seconds| seconds.is_finite() && *seconds > 0.0);
         Ok(Settings {
             idle_time,
             long_idle_time,
@@ -392,7 +475,11 @@ impl Settings {
             tab_size: clamped(stored.tab_size, MIN_TAB_SIZE, MAX_TAB_SIZE),
             tabs_to_spaces: stored.tabs_to_spaces,
             silent_creation: stored.silent_creation,
-            playback_delay: clamped(stored.playback_delay, 0, MAX_PLAYBACK_DELAY),
+            playback_delay_on: playback_delay.is_some(),
+            playback_delay_index: playback_delay.map_or(DEFAULT_PLAYBACK_DELAY_INDEX, |seconds| {
+                nearest_playback_delay_index(milliseconds_of_seconds(seconds))
+            }),
+            playback_delay_dialog_disabled: stored.playback_delay_dialog_disabled,
             node_left_width: clamped(stored.node_left_width, 0, u32::MAX),
             node_upper_height: clamped(stored.node_upper_height, 0, u32::MAX),
             network_left_width: clamped(stored.network_left_width, 0, u32::MAX),
@@ -425,7 +512,10 @@ impl Settings {
             tab_size: i64::from(self.tab_size),
             tabs_to_spaces: self.tabs_to_spaces,
             silent_creation: self.silent_creation,
-            playback_delay: i64::from(self.playback_delay),
+            playback_delay: self
+                .playback_delay_on
+                .then(|| f64::from(self.playback_delay()) / 1000.0),
+            playback_delay_dialog_disabled: self.playback_delay_dialog_disabled,
             node_left_width: i64::from(self.node_left_width),
             node_upper_height: i64::from(self.node_upper_height),
             network_left_width: i64::from(self.network_left_width),
@@ -528,23 +618,55 @@ impl Settings {
     }
 
     // realises FR-093, FR-095, FR-518
-    /// Yields the *character playback delay* in tenths of a second.
+    /// Yields the *playback delay* in milliseconds: the value chosen while a delay is waited,
+    /// 0 while none is.
     pub fn playback_delay(&self) -> u32 {
-        self.playback_delay
+        if self.playback_delay_on {
+            PLAYBACK_DELAYS[self.playback_delay_index.min(PLAYBACK_DELAYS.len() - 1)]
+        } else {
+            0
+        }
     }
 
-    // realises FR-099, FR-518
-    /// Sets the *character playback delay* in tenths of a second.
+    // realises FR-518, FR-542
+    /// Yields whether a *playback delay* is waited, and the index in `PLAYBACK_DELAYS` of the
+    /// value chosen last, kept while none is waited.
+    pub fn playback_delay_on(&self) -> bool {
+        self.playback_delay_on
+    }
+
+    pub fn playback_delay_index(&self) -> usize {
+        self.playback_delay_index
+    }
+
+    // realises FR-099, FR-518, FR-543
+    /// Sets whether a *playback delay* is waited and the index of its value in
+    /// `PLAYBACK_DELAYS`.
     ///
     /// # Errors
     /// Returns [`SettingsError::Constraint`] with the message of `playback_delay_violation` where
-    /// `delay` exceeds `MAX_PLAYBACK_DELAY`, nothing being set then.
-    pub fn set_playback_delay(&mut self, delay: u32) -> Result<(), SettingsError> {
-        if let Some(message) = playback_delay_violation(delay) {
-            return Err(SettingsError::Constraint(message));
+    /// `index` names no value, nothing being set then.
+    pub fn set_playback_delay(&mut self, on: bool, index: usize) -> Result<(), SettingsError> {
+        if index >= PLAYBACK_DELAYS.len() {
+            return Err(SettingsError::Constraint(
+                playback_delay_violation(Some(u32::MAX)).unwrap_or_default(),
+            ));
         }
-        self.playback_delay = delay;
+        self.playback_delay_on = on;
+        self.playback_delay_index = index;
         Ok(())
+    }
+
+    // realises FR-093, FR-095, FR-544
+    /// Yields whether the *playback delay dialog setting* is on.
+    pub fn playback_delay_dialog_disabled(&self) -> bool {
+        self.playback_delay_dialog_disabled
+    }
+
+    // realises FR-099, FR-543
+    /// Switches the *playback delay dialog setting*.
+    pub fn set_playback_delay_dialog_disabled(&mut self, disabled: bool) {
+        self.playback_delay_dialog_disabled = disabled;
     }
 
     // realises FR-146, FR-149
@@ -583,15 +705,15 @@ impl Settings {
         self.network_left_width = width;
     }
 
-    /// Yields the path of the *network file*, empty where none is stored.
-    pub fn network_path(&self) -> &str {
-        &self.network_path
+    /// Yields the path of the *network file*, `None` where none is named.
+    pub fn network_path(&self) -> Option<&str> {
+        self.network_path.as_deref()
     }
 
     // realises FR-012, FR-091
     /// Sets the path of the *network file*.
-    pub fn set_network_path(&mut self, path: &str) {
-        self.network_path = path.to_owned();
+    pub fn set_network_path(&mut self, path: Option<&str>) {
+        self.network_path = path.filter(|path| !path.is_empty()).map(str::to_owned);
     }
 
     /// Yields the path of the *build system*, empty where none is stored.
@@ -697,7 +819,7 @@ impl DerefMut for SettingsStore {
  * independence     : ✅
  * edge cases       : ✅
  * conforms to doc  : ✅
- * covers bridge    : Workbench::default, Workbench::try_set_settings,
+ * covers bridge    : Workbench::default, Workbench::try_set_settings, Workbench::set_playback_delay,
  *                    Workbench::report_processing_time, Workbench::set_node_left_width,
  *                    Workbench::set_node_upper_height, Workbench::set_network_left_width,
  *                    InputGroup::set_path, NetworkEditor::set_build_system_path */
@@ -741,7 +863,7 @@ mod tests {
                 settings.automatic()
             ),
             (
-                "",
+                None,
                 Settings::default_build_system_path().as_str(),
                 2000,
                 16000,
@@ -754,11 +876,11 @@ mod tests {
     fn the_two_paths_are_held_apart() {
         // FR-091
         let mut settings = Settings::default();
-        settings.set_network_path("n.gc3n");
+        settings.set_network_path(Some("n.gc3n"));
         settings.set_build_system_path("/usr/bin/genc3d");
         assert_eq!(
             (settings.network_path(), settings.build_system_path()),
-            ("n.gc3n", "/usr/bin/genc3d")
+            (Some("n.gc3n"), "/usr/bin/genc3d")
         );
     }
 
@@ -767,7 +889,7 @@ mod tests {
         // FR-090, FR-091, FR-093, IR-011, IR-012
         let file = case_file("roundtrip");
         let mut settings = Settings::default();
-        settings.set_network_path("/tmp/n.gc3n");
+        settings.set_network_path(Some("/tmp/n.gc3n"));
         settings.set_build_system_path("/opt/genc3d");
         settings
             .set_times(1400, 9000)
@@ -858,7 +980,7 @@ mod tests {
                 settings.build_system_path()
             ),
             (
-                "a",
+                Some("a"),
                 DEFAULT_IDLE_TIME,
                 DEFAULT_LONG_IDLE_TIME,
                 DEFAULT_AUTOMATIC,
@@ -1153,9 +1275,9 @@ mod tests {
         let dir = case_dir("store-writes");
         let path = dir.join(SETTINGS_FILE_NAME);
         let mut store = SettingsStore::open(&path);
-        store.set_network_path("n.gc3n");
+        store.set_network_path(Some("n.gc3n"));
         let stored = store.store();
-        let read = Settings::load(&path).map(|settings| settings.network_path().to_owned());
+        let read = Settings::load(&path).map(|settings| settings.network_path().map(str::to_owned));
         let files = fs::read_dir(&dir)
             .map(|entries| entries.count())
             .unwrap_or(0);
@@ -1164,7 +1286,36 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         assert_eq!(
             (stored, read, files, failure),
-            (Ok(()), Ok("n.gc3n".to_owned()), 1, None)
+            (Ok(()), Ok(Some("n.gc3n".to_owned())), 1, None)
+        );
+    }
+
+    #[test]
+    fn no_network_file_is_no_key_in_the_file_and_an_empty_or_null_value_reads_as_none() {
+        // FR-090, FR-093, FR-535
+        let file = case_file("no-network");
+        let mut settings = Settings::default();
+        settings.set_network_path(None);
+        let saved = settings.save(&file);
+        let content = fs::read_to_string(&file).unwrap_or_default();
+        fs::write(&file, "network_path: ''\n").expect("the file can be written");
+        let empty =
+            Settings::load(&file).map(|settings| settings.network_path().map(str::to_owned));
+        fs::write(&file, "network_path: null\n").expect("the file can be written");
+        let null = Settings::load(&file).map(|settings| settings.network_path().map(str::to_owned));
+        fs::write(&file, "network_path: /tmp/n.gc3n\n").expect("the file can be written");
+        let named =
+            Settings::load(&file).map(|settings| settings.network_path().map(str::to_owned));
+        remove_case(&file);
+        assert_eq!(
+            (saved, content.contains("network_path"), empty, null, named),
+            (
+                Ok(()),
+                false,
+                Ok(None),
+                Ok(None),
+                Ok(Some("/tmp/n.gc3n".to_owned()))
+            )
         );
     }
 
@@ -1174,19 +1325,24 @@ mod tests {
         let dir = case_dir("store-last-wins");
         let path = dir.join(SETTINGS_FILE_NAME);
         let mut first = SettingsStore::open(&path);
-        first.set_network_path("first.gc3n");
+        first.set_network_path(Some("first.gc3n"));
         let _ = first.store();
         let mut second = SettingsStore::open(&path);
-        let read = second.network_path().to_owned();
-        second.set_network_path("second.gc3n");
+        let read = second.network_path().map(str::to_owned);
+        second.set_network_path(Some("second.gc3n"));
         let stored = second.store();
-        let on_disk = Settings::load(&path).map(|settings| settings.network_path().to_owned());
+        let on_disk =
+            Settings::load(&path).map(|settings| settings.network_path().map(str::to_owned));
         drop(second);
         drop(first);
         let _ = fs::remove_dir_all(&dir);
         assert_eq!(
-            (read.as_str(), stored, on_disk),
-            ("first.gc3n", Ok(()), Ok("second.gc3n".to_owned()))
+            (read.as_deref(), stored, on_disk),
+            (
+                Some("first.gc3n"),
+                Ok(()),
+                Ok(Some("second.gc3n".to_owned()))
+            )
         );
     }
 
@@ -1255,6 +1411,202 @@ mod tests {
                 without.silent_creation()
             ),
             (true, true, true, true, false, false)
+        );
+    }
+
+    #[test]
+    fn default_settings_hold_no_playback_delay_and_the_playback_delay_dialog_enabled() {
+        // FR-094: no delay, the first value in the field, the playback delay dialog setting off
+        let settings = Settings::default();
+        assert_eq!(
+            (
+                settings.playback_delay_on(),
+                settings.playback_delay_index(),
+                settings.playback_delay(),
+                settings.playback_delay_dialog_disabled(),
+                DEFAULT_PLAYBACK_DELAY_ON,
+                DEFAULT_PLAYBACK_DELAY_INDEX,
+                DEFAULT_PLAYBACK_DELAY_DIALOG_DISABLED
+            ),
+            (false, 0, 0, false, false, 0, false)
+        );
+    }
+
+    #[test]
+    fn the_thirteen_playback_delays_grow_by_the_square_root_of_two_from_50_milliseconds() {
+        // FR-518: 0.05 · √2ⁿ seconds for n from 0 to 12, rounded to the millisecond, and their
+        // texts with two decimals
+        let expected: Vec<u32> = (0..13)
+            .map(|n| (0.05 * 2f64.sqrt().powi(n) * 1000.0).round() as u32)
+            .collect();
+        let texts: Vec<String> = PLAYBACK_DELAYS
+            .iter()
+            .map(|value| playback_delay_text(*value))
+            .collect();
+        assert_eq!(
+            (PLAYBACK_DELAYS.to_vec(), texts.join(" ")),
+            (
+                expected,
+                "0.05 0.07 0.10 0.14 0.20 0.28 0.40 0.57 0.80 1.13 1.60 2.26 3.20".to_owned()
+            )
+        );
+    }
+
+    #[test]
+    fn a_playback_delay_on_is_written_in_seconds_and_one_off_writes_no_key() {
+        // FR-093, FR-095, FR-518, IR-011, IR-012: the key holds the value in seconds while the
+        // delay is on and is absent while it is off; a file without the key reads as off with
+        // the first value in the field
+        let file = case_file("delay");
+        let mut settings = Settings::default();
+        settings
+            .set_playback_delay(true, 7)
+            .expect("the index names a value");
+        settings.set_playback_delay_dialog_disabled(true);
+        settings.save(&file).expect("the settings can be stored");
+        let content_on = fs::read_to_string(&file).expect("the settings file was written");
+        let restored_on = Settings::load(&file).expect("the settings can be restored");
+        settings
+            .set_playback_delay(false, 7)
+            .expect("the index names a value");
+        settings.save(&file).expect("the settings can be stored");
+        let content_off = fs::read_to_string(&file).expect("the settings file was written");
+        let restored_off = Settings::load(&file).expect("the settings can be restored");
+        remove_case(&file);
+        assert_eq!(
+            (
+                content_on.contains("playback_delay: 0.566\n"),
+                content_on.contains("playback_delay_dialog_disabled: true\n"),
+                restored_on.playback_delay_on(),
+                restored_on.playback_delay_index(),
+                restored_on.playback_delay(),
+                restored_on.playback_delay_dialog_disabled()
+            ),
+            (true, true, true, 7, 566, true)
+        );
+        assert_eq!(
+            (
+                content_off.contains("playback_delay:"),
+                content_off.contains("playback_delay_dialog_disabled: true\n"),
+                restored_off.playback_delay_on(),
+                restored_off.playback_delay_index(),
+                restored_off.playback_delay()
+            ),
+            (false, true, false, 0, 0)
+        );
+    }
+
+    #[test]
+    fn a_playback_delay_of_an_earlier_file_is_brought_to_the_nearest_value_and_0_reads_as_off() {
+        // FR-095: 0.3 of a file before 0.39.0 becomes 0.283, the integer 10 of a file before
+        // 0.38.0 is 1.0 seconds and becomes 1.131, 7.5 becomes 3.2, 0 and 0.0 are no delay, and
+        // a value that is no number is no delay
+        let file = case_file("delay-earlier");
+        fs::create_dir_all(file.parent().expect("a parent")).expect("the directory can be created");
+        let read = |content: &str| {
+            fs::write(&file, content).expect("the file can be written");
+            let settings = Settings::load(&file).expect("the file is read");
+            (
+                settings.playback_delay_on(),
+                settings.playback_delay_index(),
+                settings.playback_delay(),
+            )
+        };
+        let tenths_of_a_second = read("playback_delay: 0.3\n");
+        let integer = read("playback_delay: 10\n");
+        let beyond = read("playback_delay: 7.5\n");
+        let zero = read("playback_delay: 0\n");
+        let zero_decimal = read("playback_delay: 0.0\n");
+        let no_number = read("playback_delay: fast\n");
+        remove_case(&file);
+        assert_eq!(
+            (tenths_of_a_second, integer, beyond),
+            ((true, 5, 283), (true, 9, 1131), (true, 12, 3200))
+        );
+        assert_eq!(
+            (zero, zero_decimal, no_number),
+            ((false, 0, 0), (false, 0, 0), (false, 0, 0))
+        );
+    }
+
+    #[test]
+    fn the_nearest_playback_delay_is_the_smaller_one_where_two_are_equally_near() {
+        // FR-095: 60 lies between 50 and 71, 85 between 71 and 100
+        assert_eq!(
+            (
+                nearest_playback_delay_index(0),
+                nearest_playback_delay_index(60),
+                nearest_playback_delay_index(85),
+                nearest_playback_delay_index(1000),
+                nearest_playback_delay_index(u32::MAX)
+            ),
+            (0, 0, 1, 9, 12)
+        );
+    }
+
+    #[test]
+    fn a_playback_delay_is_set_by_its_switch_and_its_index() {
+        // FR-518, FR-543: on with the last index, off keeping the index
+        let mut settings = Settings::default();
+        let on = settings.set_playback_delay(true, 12);
+        let while_on = (settings.playback_delay(), settings.playback_delay_index());
+        let off = settings.set_playback_delay(false, 12);
+        assert_eq!(
+            (
+                on,
+                while_on,
+                off,
+                settings.playback_delay(),
+                settings.playback_delay_index()
+            ),
+            (Ok(()), (3200, 12), Ok(()), 0, 12)
+        );
+    }
+
+    #[test]
+    fn an_index_that_names_no_playback_delay_is_refused_with_the_message() {
+        // FR-518: the index 13 names no value, nothing being set
+        let mut settings = Settings::default();
+        settings
+            .set_playback_delay(true, 2)
+            .expect("the index names a value");
+        let refused = settings.set_playback_delay(true, 13);
+        assert_eq!(
+            (refused, settings.playback_delay_index()),
+            (
+                Err(SettingsError::Constraint(
+                    "The playback delay is off or one of 0.05, 0.07, 0.10, 0.14, 0.20, 0.28, 0.40, 0.57, 0.80, 1.13, 1.60, 2.26, 3.20 seconds.".to_owned()
+                )),
+                2
+            )
+        );
+    }
+
+    #[test]
+    fn the_playback_delay_violation_is_none_for_off_and_the_thirteen_values_only() {
+        // FR-518
+        assert_eq!(
+            (
+                playback_delay_violation(None),
+                playback_delay_violation(Some(50)),
+                playback_delay_violation(Some(3200)),
+                playback_delay_violation(Some(570)).is_some(),
+                playback_delay_violation(Some(0)).is_some()
+            ),
+            (None, None, None, true, true)
+        );
+    }
+
+    #[test]
+    fn the_playback_delay_dialog_setting_is_switched() {
+        // FR-543, FR-544
+        let mut settings = Settings::default();
+        settings.set_playback_delay_dialog_disabled(true);
+        let on = settings.playback_delay_dialog_disabled();
+        settings.set_playback_delay_dialog_disabled(false);
+        assert_eq!(
+            (on, settings.playback_delay_dialog_disabled()),
+            (true, false)
         );
     }
 }

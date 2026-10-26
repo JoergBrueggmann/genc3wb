@@ -1,0 +1,13 @@
+idle_time: 0.4
+long_idle_time: 3.2
+automatic: true
+tab_size: 4
+tabs_to_spaces: false
+silent_creation: false
+playback_delay: 2
+node_left_width: 560
+node_upper_height: 340
+network_left_width: 480
+network_path: /Users/joerg/03GitHubFlds/genc3wb/dist/genc3/examples/generated/network.gc3n
+build_system_path: /Users/joerg/03GitHubFlds/genc3wb/dist/bin/genc3d
+insert_key: Enter

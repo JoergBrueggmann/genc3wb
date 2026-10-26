@@ -7,7 +7,7 @@ use crate::bridge::document_registry::DocumentRegistry;
 use crate::bridge::input_group::InputGroup;
 use crate::bridge::node_editor::NodeEditor;
 use crate::core::api_message::{NetworkMode, NodeDescription, NodeState, marks_of_diagnostics};
-use crate::core::automation::{Action, DialogAnswer, EditorName};
+use crate::core::automation::{Action, DialogAnswer, EditorName, resolved};
 use crate::core::build_system::{BuildError, BuildSession, Watched};
 use crate::core::executable;
 use crate::core::input_file::{InputKind, MissingFile, create_files, missing_files};
@@ -18,7 +18,7 @@ use crate::core::network_graph::{
 };
 use crate::core::node_state::{NodeStates, StoreGate};
 use crate::core::output::file_octets;
-use crate::core::recording::Recorder;
+use crate::core::recording::{FoundState, Recorder};
 use crate::core::settings::SettingsStore;
 use crate::core::text_increment::TextIncrement;
 
@@ -225,6 +225,9 @@ pub struct NetworkEditor {
     nodes: Vec<NodeDescription>,
     /// the files of that image, in the order of the vertices `f<index>` (FR-289 to FR-291)
     files: Vec<GraphFile>,
+    /// whether `nodes` and `files` come from a *build* of the *network file* named now, so that
+    /// the files the network works on are known for a *recording* (FR-528, FR-539)
+    files_known: bool,
     /// the *input groups* of the *editor windows*: one per *editor window* presented, named by
     /// the path of its file and holding the *nodes* that have the file, and those whose window
     /// closed, unnamed, kept for the next file opened (FR-290 to FR-297)
@@ -249,6 +252,24 @@ pub struct NetworkEditor {
     /// the number of *deactivate requests* handed to the build thread and not yet reported
     /// (FR-259, FR-270)
     deactivations_pending: u32,
+    /// whether the *activate request* of FR-534 is still to be tried after the last restart:
+    /// true from the restart until the *network mode* is *valid network* and the *node
+    /// descriptions* are known, whichever comes last, on which it is tried once, or not at all
+    /// where a file of FR-487 is missing
+    activate_on_valid: bool,
+    /// the *request failure*: the message of the last *activate request*, *deactivate request*,
+    /// *hold request* or *release request* refused or lost, whoever made it, shown in the status
+    /// bar in place of the *network mode* until the next such *request* or restart (FR-541);
+    /// empty where there is none
+    request_failure: String,
+    /// whether a *playback* runs, set by the *player*, during which FR-534 transmits nothing
+    playing: bool,
+    /// whether the network is being closed and the *deactivate request* is awaited before the
+    /// *input group* is told to name no *network file*, with whether the documents were saved
+    /// (FR-535, FR-536)
+    closing: Option<bool>,
+    /// the *input group* of the *network file*, for the state found and the closing
+    network_group: Option<Rc<RefCell<InputGroup>>>,
     /// the *nodes* whose *hold request* awaits its *response*, in the order of the requests,
     /// each with whether a *node window* is wanted for it (FR-281, FR-285, FR-294, FR-295)
     holds_pending: Vec<PendingHold>,
@@ -308,9 +329,16 @@ impl NetworkEditor {
         Notify = view_changed
     );
     qproperty!("building", Read = building, Notify = building_changed);
+    qproperty!("filesKnown", Read = files_known, Notify = view_changed);
     qproperty!("networkMode", Read = network_mode, Notify = mode_changed);
     qproperty!("switchable", Read = switchable, Notify = mode_changed);
     qproperty!("activating", Read = activating, Notify = mode_changed);
+    // the request failure, in place of the network mode (FR-541)
+    qproperty!(
+        "requestFailure",
+        Read = request_failure,
+        Notify = mode_changed
+    );
     qproperty!("deactivating", Read = deactivating, Notify = mode_changed);
     qproperty!("opening", Read = opening, Notify = mode_changed);
 
@@ -357,6 +385,14 @@ impl NetworkEditor {
         self.showing_error && !self.served_graph_source.is_empty()
     }
 
+    // realises FR-528, FR-539
+    // Yields whether the files the network works on are known, the network file named now
+    // having been built; read by the menu, which enables the start of an individual recording
+    // only then, so that the recording saves every file.
+    fn files_known(&self) -> bool {
+        self.files_known
+    }
+
     fn building(&self) -> bool {
         self.builds_pending > 0
     }
@@ -381,6 +417,11 @@ impl NetworkEditor {
         self.activations_pending > 0
     }
 
+    // realises FR-261, FR-268, FR-286, FR-287, FR-541
+    fn request_failure(&self) -> String {
+        self.request_failure.clone()
+    }
+
     // realises FR-270
     fn deactivating(&self) -> bool {
         self.deactivations_pending > 0
@@ -399,7 +440,8 @@ impl NetworkEditor {
     // setters
     // realises FR-066, FR-067, FR-091
     // Names the path of the build system, stores it, determines whether it is executable, and
-    // restarts the build system.
+    // restarts the build system; the recorder is told `build system <path>`, for the selection of
+    // the user and for the path of the settings at the start alike (FR-520, FR-521).
     fn set_build_system_path(&mut self, build_system_path: String) {
         if build_system_path == self.build_system_path {
             return;
@@ -415,7 +457,7 @@ impl NetworkEditor {
         }
         self.executable = executable::is_executable(&self.build_system_path);
         self.build_system_path_changed();
-        self.restart();
+        self.restart(true);
     }
 
     // signals
@@ -456,6 +498,12 @@ impl NetworkEditor {
     // `answerCreationFailure` (FR-491)
     #[qsignal(qml_name = "creationFailed")]
     fn creation_failed(&mut self, message: String);
+
+    // realises FR-535
+    /// The network is being closed while unsaved changes exist: the *front end* presents the
+    /// dialog that asks whether to save them.
+    #[qsignal(qml_name = "closeAsked")]
+    fn close_asked(&mut self);
 
     // slots
     // realises FR-080
@@ -718,6 +766,7 @@ impl NetworkEditor {
     /// window. Does nothing where no *node editor* is named `name`. Called by the *front end*.
     #[qslot(qml_name = "closeNode")]
     fn close_node(&mut self, name: String) {
+        self.request_failure.clear();
         let Some(slot) = self.editors.iter_mut().find(|slot| slot.name == name) else {
             return;
         };
@@ -745,6 +794,7 @@ impl NetworkEditor {
     /// network prepared first (`prepared`) under `policy`: where the preparation waits for a
     /// dialog, nothing else happens until its answer resumes the activation.
     fn activate_preparing(&mut self, policy: CreationPolicy) {
+        self.request_failure.clear();
         if !self.switchable() || self.states.is_active() {
             return;
         }
@@ -769,10 +819,52 @@ impl NetworkEditor {
         if !self.switchable() || !self.states.is_active() {
             return;
         }
+        self.request_failure.clear();
         self.tell(|recorder| recorder.record(&Action::Deactivate));
         self.deactivations_pending += 1;
         self.send(Command::Deactivate);
         self.mode_changed();
+    }
+
+    // realises FR-535
+    /// Closes the network as the close button does: where a code editor of the *network file*,
+    /// of a *node window* or of an *editor window* holds unsaved changes, emits `close_asked`
+    /// and waits for `answer_close`; otherwise closes as `finish_close` does, nothing saved.
+    /// The *recorder* is told `close network`. Called by the *front end* and scheduled by the
+    /// *player*.
+    #[qslot(qml_name = "closeNetwork")]
+    fn close_network(&mut self) {
+        self.tell(|recorder| recorder.record(&Action::CloseNetwork));
+        if self.any_unsaved() {
+            self.close_asked();
+        } else {
+            self.finish_close(false);
+        }
+    }
+
+    // realises FR-535, FR-536
+    /// Takes the answer of the dialog of `close_asked`: closes the network, the documents saved
+    /// where `save`; the *recorder* is told `answer save`. Called by the *front end*.
+    #[qslot(qml_name = "answerClose")]
+    fn answer_close(&mut self, save: bool) {
+        self.tell(|recorder| recorder.record(&Action::Answer(DialogAnswer::Save(save))));
+        self.finish_close(save);
+    }
+
+    // realises FR-536
+    /// Brings *product* to the *defined beginning*: closes the network as `close_network` does,
+    /// without the question, the unsaved changes discarded; scheduled by the *player*.
+    #[qslot(qml_name = "init")]
+    fn init(&mut self) {
+        self.finish_close(false);
+    }
+
+    // realises FR-534
+    /// Takes whether a *playback* runs, during which no *activate request* of FR-534 is
+    /// transmitted; scheduled by the *player* at its start and its end.
+    #[qslot(qml_name = "setPlaying")]
+    fn set_playing(&mut self, playing: bool) {
+        self.playing = playing;
     }
 
     // realises FR-109, FR-241, FR-252
@@ -822,16 +914,20 @@ impl NetworkEditor {
         }
     }
 
-    // realises FR-067
+    // realises FR-067, FR-070
     /// Takes the path of the *network file* from its *input group*, and restarts the
-    /// *build system* on it; scheduled by that *input group*.
+    /// *build system* on it, without a *build* of the text held, which is the text of the
+    /// *network file* named before: the *build system* activates the network at its start-up,
+    /// and an open request with that text would apply the network named before to it; the first
+    /// *text increment*, carrying the difference, goes out as the open request with the new
+    /// text (FR-070). Scheduled by that *input group*.
     #[qslot(qml_name = "setNetworkPath")]
     fn set_network_path(&mut self, network_path: String) {
         if network_path == self.network_path {
             return;
         }
         self.network_path = network_path;
-        self.restart();
+        self.restart(false);
     }
 
     // realises FR-069, FR-070
@@ -916,7 +1012,16 @@ impl NetworkEditor {
                             marks.texts
                         );
                     }
+                    let files = match &outcome.graph {
+                        Ok(graph) => files_of_nodes(&graph.nodes, &self.network_path),
+                        Err(_) => Vec::new(),
+                    };
                     self.take_outcome(outcome.graph);
+                    let network = self.network_path.clone();
+                    self.tell(|recorder| recorder.back_up_network(&network, &files));
+                    // the activation once the network is loaded, where the node descriptions
+                    // arrived last (FR-534)
+                    self.try_own_activation();
                 }
                 Report::NotStarted(message) => self.take_failure(message),
                 Report::Stored {
@@ -949,28 +1054,31 @@ impl NetworkEditor {
                     self.mode_changed();
                     match outcome {
                         Ok(()) => self.present_node(&name, window),
-                        Err(message) => self.take_failure(message),
+                        Err(message) => self.take_request_failure(message),
                     }
                 }
                 Report::Released(outcome) => {
                     if let Err(message) = outcome {
-                        self.take_failure(message);
+                        self.take_request_failure(message);
                     }
                 }
                 Report::Activated(outcome) => {
                     self.activations_pending = self.activations_pending.saturating_sub(1);
-                    self.mode_changed();
                     match outcome {
                         Ok(()) => self.journal.push(Event::Activated),
-                        Err(message) => self.take_failure(message),
+                        Err(message) => self.take_request_failure(message),
                     }
+                    self.mode_changed();
                 }
                 Report::Deactivated(outcome) => {
                     self.deactivations_pending = self.deactivations_pending.saturating_sub(1);
                     self.mode_changed();
                     match outcome {
                         Ok(()) => self.journal.push(Event::Deactivated),
-                        Err(message) => self.take_failure(message),
+                        Err(message) => self.take_request_failure(message),
+                    }
+                    if let Some(save) = self.closing.take() {
+                        self.name_none(save);
                     }
                 }
                 Report::Watched(states, mode) => {
@@ -984,6 +1092,9 @@ impl NetworkEditor {
                         });
                     }
                     self.mode_changed();
+                    // the activation once the network is loaded, where the mode arrived last
+                    // (FR-534)
+                    self.try_own_activation();
                     if was_served != self.states.serves_nodes() {
                         // the image of the other mode is presented (FR-275)
                         self.view_changed();
@@ -1024,6 +1135,13 @@ impl NetworkEditor {
         self.recorder = Some(recorder);
         self.create_editor();
         self.create_file_group();
+    }
+
+    // realises FR-535, FR-540
+    /// Wires the *input group* of the *network file*, read for the state an *individual
+    /// recording* finds and saved when the network is closed with 'Yes'.
+    pub fn set_network_group(&mut self, group: Rc<RefCell<InputGroup>>) {
+        self.network_group = Some(group);
     }
 
     // realises FR-501 to FR-504, FR-510, FR-514
@@ -1463,6 +1581,169 @@ impl NetworkEditor {
         }
     }
 
+    // realises FR-534, FR-541
+    /// Tries the activation of the *product*'s own once, where it is still to be tried after the
+    /// last restart, no *playback* runs, the *network mode* is *valid network* and the *node
+    /// descriptions* of the first successful *build* are known, whichever of the two arrived
+    /// last; nothing is tried, now or later, where a file of FR-487 is missing for a *node*, so
+    /// that the network stays a *valid network* with its graph and the user's `act` creates the
+    /// files. Called when a *state response* and when a *build* arrives.
+    fn try_own_activation(&mut self) {
+        if !self.activate_on_valid
+            || self.playing
+            || !self.files_known
+            || self.states.mode() != Some(NetworkMode::Valid)
+        {
+            return;
+        }
+        self.activate_on_valid = false;
+        let names: Vec<String> = self.nodes.iter().map(|node| node.name.clone()).collect();
+        if !self.files_to_create(&names).is_empty() {
+            return;
+        }
+        self.activate_directly();
+    }
+
+    // realises FR-534
+    /// Transmits the *activate request* as `activate` does, without the preparation of the files
+    /// of FR-487, which `try_own_activation` found complete: the activation once a loaded
+    /// network is valid, which repeats what the *build system* did at its start-up before; the
+    /// *recorder* is told `activate`, the try being the *product*'s own, whose failure is the
+    /// *request failure* as the user's is (FR-541).
+    fn activate_directly(&mut self) {
+        if !self.switchable() || self.states.is_active() {
+            return;
+        }
+        self.tell(|recorder| recorder.record(&Action::Activate));
+        self.activations_pending += 1;
+        self.send(Command::Activate);
+        self.mode_changed();
+    }
+
+    // realises FR-535
+    /// Yields whether a code editor of the *network file*, of a *node window* or of an
+    /// *editor window* holds unsaved changes.
+    fn any_unsaved(&self) -> bool {
+        self.every_group()
+            .iter()
+            .any(|group| group.borrow().has_unsaved_changes())
+    }
+
+    /// Yields the *input group* of the *network file*, those of every named *node editor* and
+    /// those of the *editor windows*, in that order.
+    fn every_group(&self) -> Vec<Rc<RefCell<InputGroup>>> {
+        let mut groups: Vec<Rc<RefCell<InputGroup>>> = Vec::new();
+        if let Some(group) = &self.network_group {
+            groups.push(Rc::clone(group));
+        }
+        for editor in self.named_node_editors() {
+            groups.extend(editor.borrow().input_groups());
+        }
+        groups.extend(self.file_groups());
+        groups
+    }
+
+    // realises FR-535, FR-536
+    /// Closes the network: saves every document that holds unsaved changes where `save`, closes
+    /// every *node window* and every *editor window*, and, where the network is an *active
+    /// network*, transmits the *deactivate request* and names no *network file* once it is
+    /// answered, or names none at once otherwise.
+    fn finish_close(&mut self, save: bool) {
+        if save {
+            for group in self.every_group() {
+                group.borrow_mut().save_document();
+            }
+        }
+        self.close_all_nodes();
+        self.close_all_files();
+        if self.states.is_active() && self.switchable() {
+            self.closing = Some(save);
+            self.deactivations_pending += 1;
+            self.send(Command::Deactivate);
+            self.mode_changed();
+        } else {
+            self.name_none(save);
+        }
+    }
+
+    /// Closes every *editor window*, as the user's closing does.
+    fn close_all_files(&mut self) {
+        let paths: Vec<String> = self
+            .file_groups
+            .iter()
+            .filter(|slot| !slot.path.is_empty())
+            .map(|slot| slot.path.clone())
+            .collect();
+        for path in paths {
+            self.close_file(path);
+        }
+    }
+
+    /// Schedules `closeNetwork` of the *input group* of the *network file*, which names no
+    /// *network file* and tells this editor the empty path.
+    fn name_none(&self, save: bool) {
+        if let Some(network_input) = &self.network_input {
+            invoke_method!(network_input, "closeNetwork", save);
+        }
+    }
+
+    // realises FR-539
+    /// Yields every file the network works on, as the last *network response* named them,
+    /// resolved against the folder of the *network file*.
+    fn files_of_network(&self) -> Vec<String> {
+        files_of_nodes(&self.nodes, &self.network_path)
+    }
+
+    // realises FR-540
+    /// Yields the state an *individual recording* finds: the *build system*, the *network file*,
+    /// the files of the network, whether it is active, the *node windows* and the *editor windows* presented, the
+    /// code editors whose text differs from their file, with the content of the file and the
+    /// text, and the *typing mode*; read by the *player*.
+    pub fn found_state(&self) -> FoundState {
+        // an activate request that awaits its response is a try in flight: the state found is
+        // the active network it brings about, so that the playback tries as well
+        let active = match self.states.mode() {
+            Some(NetworkMode::Active) => Some(true),
+            Some(NetworkMode::Valid) if self.activations_pending > 0 => Some(true),
+            Some(NetworkMode::Valid) => Some(false),
+            _ => None,
+        };
+        let node_windows = self
+            .editors
+            .iter()
+            .filter(|slot| !slot.name.is_empty() && slot.window)
+            .map(|slot| slot.name.clone())
+            .collect();
+        let editor_windows = self
+            .file_groups
+            .iter()
+            .filter(|slot| !slot.path.is_empty())
+            .map(|slot| slot.path.clone())
+            .collect();
+        let mut edited = Vec::new();
+        for group in self.every_group() {
+            let group = group.borrow();
+            if !group.has_unsaved_changes() {
+                continue;
+            }
+            let Some(editor) = group.editor_name() else {
+                continue;
+            };
+            let content = std::fs::read_to_string(group.document_path()).unwrap_or_default();
+            edited.push((editor, content, group.document_text()));
+        }
+        FoundState {
+            build_system: self.build_system_path.clone(),
+            network: self.network_path.clone(),
+            files: self.files_of_network(),
+            active,
+            node_windows,
+            editor_windows,
+            edited,
+            insert_mode: crate::bridge::workbench::insert_mode(),
+        }
+    }
+
     // realises FR-090
     /// Names the path the settings hold for the *build system*.
     pub fn load_initial(&mut self) {
@@ -1471,6 +1752,8 @@ impl NetworkEditor {
             .as_ref()
             .map(|settings| settings.borrow().build_system_path().to_owned())
             .unwrap_or_default();
+        // the automatic recording runs already, so that the build system in force at the start
+        // is recorded, as the playback names it anew (FR-520)
         self.set_build_system_path(path);
     }
 
@@ -1649,6 +1932,7 @@ impl NetworkEditor {
     /// pending, marks the window as wanted on it; hands a *hold request* to the build thread
     /// otherwise, counting it among those pending, which the status bar tells.
     fn hold(&mut self, name: String, window: bool) {
+        self.request_failure.clear();
         if let Some(slot) = self.editors.iter_mut().find(|slot| slot.name == name) {
             if window {
                 slot.window = true;
@@ -1683,6 +1967,17 @@ impl NetworkEditor {
         self.take_outcome(Err(message));
     }
 
+    // realises FR-261, FR-268, FR-286, FR-287, FR-541
+    /// Holds `message` as the *request failure* of a *request* refused or lost, whoever made it,
+    /// which the status bar shows in place of the *network mode*, the *error message* of the
+    /// *build* untouched, so that a *build* arriving later neither clears nor overwrites it; the
+    /// *journal* records the failure for the *player*.
+    fn take_request_failure(&mut self, message: String) {
+        self.journal.push(Event::Failed(message.clone()));
+        self.request_failure = message;
+        self.mode_changed();
+    }
+
     // realises FR-078, FR-079, FR-245
     /// Presents the *network graph* of a successful *build* and hides both buttons, or keeps what
     /// is presented and holds the *error message* of a failed one.
@@ -1695,6 +1990,7 @@ impl NetworkEditor {
                 self.layout = graph.layout;
                 self.nodes = graph.nodes;
                 self.files = graph.files;
+                self.files_known = true;
                 self.error_message.clear();
                 self.showing_error = false;
             }
@@ -1711,6 +2007,7 @@ impl NetworkEditor {
     /// being presented.
     fn forget_states(&mut self) {
         let was_served = self.states.serves_nodes();
+        self.request_failure.clear();
         self.states.clear();
         self.gate.clear();
         self.mode_changed();
@@ -1721,17 +2018,27 @@ impl NetworkEditor {
     }
 
     // realises FR-067, FR-070, FR-229, FR-263
-    /// Hands the paths to the build thread, which restarts the *build system*, and, where a
-    /// *provided text* is held and both paths are named, a *build* without a change, which opens
-    /// the *network file* with the *provided text*; the *node states* and the *network mode* of
-    /// the *build system* before are forgotten, and so is the *store request* held back.
-    fn restart(&mut self) {
+    /// Hands the paths to the build thread, which restarts the *build system*, and, where
+    /// `replay` holds, a *provided text* is held and both paths are named, a *build* without a
+    /// change, which opens the *network file* with the *provided text*; the *node states* and
+    /// the *network mode* of the *build system* before are forgotten, and so is the *store
+    /// request* held back.
+    ///
+    /// * `replay` holds for the *build system* named anew, whose text held is the text of the
+    ///   *network file* named, and not for the *network file* named anew, whose text held is the
+    ///   text of the file named before, kept for the difference the next *text increment*
+    ///   carries (FR-070).
+    fn restart(&mut self, replay: bool) {
         self.forget_states();
+        self.activate_on_valid = true;
+        self.files_known = false;
+        self.view_changed();
         self.send(Command::Restart {
             executable: self.build_system_path.clone(),
             network_path: self.network_path.clone(),
         });
-        if self.provided.is_empty()
+        if !replay
+            || self.provided.is_empty()
             || self.build_system_path.is_empty()
             || self.network_path.is_empty()
         {
@@ -1778,6 +2085,36 @@ fn milliseconds_since(started: Instant) -> i32 {
 }
 
 /// Schedules `reportArrived` of the network editor on the main thread.
+// realises FR-539
+/// Yields every file the *node descriptions* `nodes` name, the *meta compiler DSL* of a
+/// *meta compiler-compiler*, the *inputs* and the *outputs*, each once in the order of its first
+/// use, resolved against the folder of the *network file* at `network_path`.
+fn files_of_nodes(nodes: &[NodeDescription], network_path: &str) -> Vec<String> {
+    let folder = Path::new(network_path)
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_default();
+    let mut files: Vec<String> = Vec::new();
+    for node in nodes {
+        let mut paths: Vec<&str> = Vec::new();
+        if node.kind == crate::core::api_message::NodeKind::MetaCompilerCompiler {
+            paths.push(node.transformation.as_str());
+        }
+        paths.extend(node.inputs.iter().map(String::as_str));
+        paths.extend(node.outputs.iter().map(String::as_str));
+        for path in paths {
+            if path.is_empty() {
+                continue;
+            }
+            let file = resolved(&folder, path);
+            if !files.contains(&file) {
+                files.push(file);
+            }
+        }
+    }
+    files
+}
+
 fn schedule_report(invoker: &Arc<Mutex<QmlMethodInvoker>>) {
     if let Ok(invoker) = invoker.lock() {
         invoke_method!(invoker, "reportArrived");

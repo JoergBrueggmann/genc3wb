@@ -7,17 +7,17 @@
 use crate::bridge::input_group::InputGroup;
 use crate::bridge::network_editor::{Event, NetworkEditor};
 use crate::core::automation::{
-    ACTION_TIMEOUT, Action, DialogAnswer, EditorItem, EditorName, FocusTarget, Outcome, SETTLING,
-    Script, ScriptError, Step, WindowName, configuration_path, difference, exit_code_of,
-    gc3_beside, offset_after, offset_of_position, read_script, restore,
+    ACTION_TIMEOUT, Action, DialogAnswer, EditorItem, EditorName, FocusTarget, MAX_DELAY_ACTION,
+    Outcome, SETTLING, Script, ScriptError, Step, WindowName, configuration_path, difference,
+    exit_code_of, gc3_beside, offset_after, offset_of_position, read_script, remove_file, restore,
 };
-use crate::core::version::version_of_package;
 use crate::core::key_stroke::KeyStroke;
 use crate::core::launch;
 use crate::core::recording::{Recorder, local_time_name, relative};
 use crate::core::settings::{
-    SettingsStore, constraint_violation, playback_delay_violation, tab_size_violation,
+    Settings, SettingsStore, constraint_violation, playback_delay_violation, tab_size_violation,
 };
+use crate::core::version::version_of_package;
 
 use qtbridge::{QmlMethodInvoker, QmlObject, invoke_method, qobject};
 
@@ -25,7 +25,7 @@ use std::cell::RefCell;
 use std::io::Write;
 use std::path::Path;
 use std::rc::Rc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 // realises FR-501 to FR-504
 /// The event of the *journal* an action waits for.
@@ -51,17 +51,23 @@ impl Wanted {
         match self {
             Wanted::Nothing => true,
             Wanted::NodeOpened(name) => {
-                asked || events.iter().any(|e| matches!(e, Event::NodeOpened(n) if n == name))
+                asked
+                    || events
+                        .iter()
+                        .any(|e| matches!(e, Event::NodeOpened(n) if n == name))
             }
-            Wanted::NodeClosed(name) => {
-                events.iter().any(|e| matches!(e, Event::NodeClosed(n) if n == name))
-            }
+            Wanted::NodeClosed(name) => events
+                .iter()
+                .any(|e| matches!(e, Event::NodeClosed(n) if n == name)),
             Wanted::FileOpened(path) => {
-                asked || events.iter().any(|e| matches!(e, Event::FileOpened(p) if p == path))
+                asked
+                    || events
+                        .iter()
+                        .any(|e| matches!(e, Event::FileOpened(p) if p == path))
             }
-            Wanted::FileClosed(path) => {
-                events.iter().any(|e| matches!(e, Event::FileClosed(p) if p == path))
-            }
+            Wanted::FileClosed(path) => events
+                .iter()
+                .any(|e| matches!(e, Event::FileClosed(p) if p == path)),
             Wanted::Activated => asked || events.contains(&Event::Activated),
             Wanted::Deactivated => events.contains(&Event::Deactivated),
         }
@@ -80,6 +86,8 @@ struct Waiting {
     front_end: bool,
     /// whether the question of FR-014 completes the action as well
     save_question: bool,
+    /// the moment a `delay` action is complete, `None` for every other action (FR-547)
+    until: Option<Instant>,
 }
 
 impl Waiting {
@@ -90,6 +98,18 @@ impl Waiting {
             settle: true,
             front_end: false,
             save_question: false,
+            until: None,
+        }
+    }
+
+    /// What a `delay` action waits for: the moment `until`, nothing else (FR-547).
+    fn until(until: Instant) -> Waiting {
+        Waiting {
+            wanted: Wanted::Nothing,
+            settle: false,
+            front_end: false,
+            save_question: false,
+            until: Some(until),
         }
     }
 
@@ -100,6 +120,7 @@ impl Waiting {
             settle: true,
             front_end: false,
             save_question: false,
+            until: None,
         }
     }
 
@@ -111,6 +132,7 @@ impl Waiting {
             settle,
             front_end: true,
             save_question: false,
+            until: None,
         }
     }
 }
@@ -118,8 +140,15 @@ impl Waiting {
 // realises FR-500 to FR-514
 /// The step in progress.
 struct Current {
-    /// when the step began, from which the timeout counts
+    /// when the step began, or, once the *playback delay* before it passed, when it did, from
+    /// which the timeout counts (FR-514)
     begun: Instant,
+    /// whether the *playback delay* before the action passed, or none is waited, the action
+    /// being the first (FR-500)
+    delay_passed: bool,
+    /// the time the timeout allows beyond `ACTION_TIMEOUT`: the entering of the characters of an
+    /// `edit` with the *playback delay* between them (FR-505, FR-514)
+    allowance: Duration,
     /// what the action performed waits for, `None` while it waits for its precondition or its
     /// delay
     waiting: Option<Waiting>,
@@ -140,9 +169,12 @@ struct Current {
 /// The *player*.
 #[derive(Default)]
 pub struct Automation {
-    /// the settings, shared with the *workbench object*: the *character playback delay* and the
-    /// path of the *build system*, beside which `gc3` is found
+    /// the settings, shared with the *workbench object*: the *playback delay* and the path of
+    /// the *build system*, beside which `gc3` is found
     settings: Option<Rc<RefCell<SettingsStore>>>,
+    /// the *playback delay* of the *playback* that runs, taken from the settings when it
+    /// started and kept whatever the script applies (FR-543, FR-544)
+    delay: Duration,
     /// the network editor, whose *journal*, state, *node editors* and *editor windows* the
     /// *player* reads
     network: Option<Rc<RefCell<NetworkEditor>>>,
@@ -169,6 +201,9 @@ pub struct Automation {
     report: Vec<String>,
     /// whether a *playback* runs: the timer of the *front end* steps the *player* while it does
     running: bool,
+    /// whether the user stopped the *playback*: it ends once the action in progress is complete
+    /// (FR-546)
+    stopping: bool,
 }
 
 // realises FR-497, FR-499 to FR-517
@@ -177,9 +212,42 @@ impl Automation {
     qproperty!("running", Read = running, Notify = running_changed);
     qproperty!("verifying", Read = verifying, Constant);
     qproperty!("report", Read = report, Notify = report_changed);
+    // the line of the script the playback carries out, for the status bar (FR-545)
+    qproperty!(
+        "currentLineNumber",
+        Read = current_line_number,
+        Notify = current_line_changed
+    );
+    qproperty!(
+        "currentLine",
+        Read = current_line,
+        Notify = current_line_changed
+    );
 
     fn running(&self) -> bool {
         self.running
+    }
+
+    // realises FR-545
+    // Yields the number of the line of the action in progress, 0 between two actions and while
+    // no playback runs.
+    fn current_line_number(&self) -> i32 {
+        self.current
+            .as_ref()
+            .and_then(|_| self.current_step())
+            .and_then(|step| i32::try_from(step.line).ok())
+            .unwrap_or(0)
+    }
+
+    // realises FR-545
+    // Yields the line of the action in progress as written, without its comment, empty between
+    // two actions and while no playback runs.
+    fn current_line(&self) -> String {
+        self.current
+            .as_ref()
+            .and_then(|_| self.current_step())
+            .map(|step| step.text)
+            .unwrap_or_default()
     }
 
     // realises FR-516, FR-517
@@ -198,6 +266,9 @@ impl Automation {
 
     #[qsignal(qml_name = "reportChanged")]
     fn report_changed(&mut self);
+
+    #[qsignal(qml_name = "currentLineChanged")]
+    fn current_line_changed(&mut self);
 
     // the front end replaces the text between the two offsets of the code editor by the text,
     // character by character with the delay in milliseconds (FR-505)
@@ -248,16 +319,14 @@ impl Automation {
 
     // the recording (FR-519 to FR-533)
     qproperty!("recording", Read = recording, Notify = recording_changed);
-    qproperty!("recordingPath", Read = recording_path, Notify = recording_changed);
+    qproperty!(
+        "recordingPath",
+        Read = recording_path,
+        Notify = recording_changed
+    );
     qproperty!(
         "recordingFailure",
         Read = recording_failure,
-        Notify = recording_changed
-    );
-    qproperty!("networkFolder", Read = network_folder, Notify = recording_changed);
-    qproperty!(
-        "defaultBackupFolder",
-        Read = default_backup_folder,
         Notify = recording_changed
     );
 
@@ -285,27 +354,6 @@ impl Automation {
             .unwrap_or_default()
     }
 
-    // realises FR-530
-    fn network_folder(&self) -> String {
-        self.network_input
-            .as_ref()
-            .map(|group| group.borrow().document_path())
-            .filter(|path| !path.is_empty())
-            .and_then(|path| Path::new(&path).parent().map(Path::to_path_buf))
-            .map(|folder| folder.to_string_lossy().into_owned())
-            .unwrap_or_default()
-    }
-
-    // realises FR-530
-    fn default_backup_folder(&self) -> String {
-        self.recorder
-            .as_ref()
-            .and_then(|recorder| recorder.borrow().path().map(Path::to_path_buf))
-            .and_then(|path| path.parent().map(|folder| folder.join("backup")))
-            .map(|folder| folder.to_string_lossy().into_owned())
-            .unwrap_or_default()
-    }
-
     #[qsignal(qml_name = "recordingChanged")]
     fn recording_changed(&mut self);
 
@@ -315,18 +363,22 @@ impl Automation {
     /// first. Called by the *front end* from the file dialog.
     #[qslot(qml_name = "startRecording")]
     fn start_recording(&mut self, path: String) {
-        let network_path = self
-            .network_input
+        let state = self
+            .network
             .as_ref()
-            .map(|group| group.borrow().document_path())
+            .map(|network| network.borrow().found_state())
             .unwrap_or_default();
         if let Some(recorder) = &self.recorder {
-            let _ = recorder.borrow_mut().start(
+            let mut recorder = recorder.borrow_mut();
+            let started = recorder.start(
                 Path::new(&launch::absolute(&path)),
                 &version_of_package(env!("CARGO_PKG_VERSION")),
                 &local_time_name(),
-                &network_path,
+                &Settings::default_path(),
             );
+            if started.is_ok() {
+                recorder.record_state(&state);
+            }
         }
         self.recording_changed();
     }
@@ -342,28 +394,6 @@ impl Automation {
         self.recording_changed();
     }
 
-    // realises FR-530
-    /// Copies the folder `source` into the folder `backup` and records `restore`; yields the
-    /// reason where it failed, empty otherwise. Called by the *backup dialog*.
-    #[qslot(qml_name = "backUp")]
-    fn back_up(&mut self, source: String, backup: String) -> String {
-        let absolute = |path: &str| {
-            if path.trim().is_empty() {
-                String::new()
-            } else {
-                launch::absolute(path.trim())
-            }
-        };
-        let result = match &self.recorder {
-            Some(recorder) => recorder
-                .borrow_mut()
-                .back_up(&absolute(&source), &absolute(&backup)),
-            None => Err("the player is not wired".to_owned()),
-        };
-        self.recording_changed();
-        result.err().unwrap_or_default()
-    }
-
     // realises FR-531
     /// Yields whether a code editor holds or held the focus and is presented, so that 'Store to
     /// verify on replay' is enabled; called by the *front end* when the menu is about to show.
@@ -372,9 +402,9 @@ impl Automation {
         let Some(editor) = self.focused_editor() else {
             return false;
         };
-        self.network.as_ref().is_some_and(|network| {
-            self.presented(&network.borrow(), &editor).is_ok()
-        })
+        self.network
+            .as_ref()
+            .is_some_and(|network| self.presented(&network.borrow(), &editor).is_ok())
     }
 
     // realises FR-531
@@ -455,16 +485,15 @@ impl Automation {
         }
         if self.current.is_none() {
             let steps = self.script.as_ref().map_or(0, |script| script.steps.len());
-            if self.next >= steps {
+            // after the last step, or where the user stopped the playback while no step was in
+            // progress (FR-546)
+            if self.next >= steps || self.stopping {
                 self.finish();
                 return;
             }
             let (journal_mark, save_questions) = {
                 let network = self.network.as_ref().map(|network| network.borrow());
-                let input = self
-                    .network_input
-                    .as_ref()
-                    .map(|input| input.borrow());
+                let input = self.network_input.as_ref().map(|input| input.borrow());
                 (
                     network.map_or(0, |network| network.journal_len()),
                     input.map_or(0, |input| input.save_questions()),
@@ -472,6 +501,9 @@ impl Automation {
             };
             self.current = Some(Current {
                 begun: Instant::now(),
+                // the first action waits no delay (FR-500)
+                delay_passed: self.next == 0,
+                allowance: Duration::ZERO,
                 waiting: None,
                 journal_mark,
                 save_questions,
@@ -479,9 +511,22 @@ impl Automation {
                 front_end_failed: false,
                 quiet_since: None,
             });
+            self.current_line_changed();
         }
         if let Some(outcome) = self.advance() {
             self.record(outcome);
+        }
+    }
+
+    // realises FR-546
+    /// Notes that the user stopped the *playback*: the step in progress is completed as every
+    /// step is, its outcome turned into `Stopped`, which ends the *playback*; where none is in
+    /// progress, the *playback* ends at the next step. Called by the menu item; nothing while no
+    /// *playback* runs.
+    #[qslot(qml_name = "stop")]
+    fn stop(&mut self) {
+        if self.running {
+            self.stopping = true;
         }
     }
 
@@ -532,6 +577,10 @@ impl Automation {
         self.report.clear();
         self.next = 0;
         self.current = None;
+        self.stopping = false;
+        // the delay of the whole playback, as the settings hold it now: set in the playback
+        // delay dialog or restored from the settings file (FR-543, FR-544)
+        self.delay = Duration::from_millis(u64::from(self.delay_ms()));
         self.suspend_recorder(true);
         let build_system = self
             .settings
@@ -543,6 +592,7 @@ impl Automation {
             Ok(script) => {
                 self.script = Some(script);
                 self.running = true;
+                self.set_playing(true);
                 self.running_changed();
                 self.report_changed();
             }
@@ -568,16 +618,38 @@ impl Automation {
     /// Ends the *playback*: stops the timer by `running` and emits `finished` with the exit code.
     fn finish(&mut self) {
         self.current = None;
+        self.current_line_changed();
         self.running = false;
+        self.set_playing(false);
+        if let Ok(workbench) = self.workbench() {
+            // the settings file kept aside by `settings file` put back (FR-537)
+            invoke_method!(workbench, "restoreSettingsFile");
+        }
         self.running_changed();
         self.suspend_recorder(false);
         self.finished(exit_code_of(&self.outcomes));
+    }
+
+    // realises FR-534
+    /// Tells the network editor whether a *playback* runs, so that it transmits no *activate
+    /// request* of its own meanwhile.
+    fn set_playing(&self, playing: bool) {
+        if let Some(network) = &self.network {
+            let invoker = network.borrow().get_qml_method_invoker();
+            invoke_method!(&invoker, "setPlaying", playing);
+        }
     }
 
     // realises FR-513 to FR-515
     /// Records the outcome of the step in progress: appends its line to the report, and goes on
     /// to the next step or ends the *playback*.
     fn record(&mut self, outcome: Outcome) {
+        // the action completed before the stop ends the playback (FR-546)
+        let outcome = if self.stopping && matches!(outcome, Outcome::Completed) {
+            Outcome::Stopped
+        } else {
+            outcome
+        };
         let line = self
             .script
             .as_ref()
@@ -588,6 +660,7 @@ impl Automation {
         let continues = outcome.continues();
         self.outcomes.push(outcome);
         self.current = None;
+        self.current_line_changed();
         self.next += 1;
         if !continues {
             self.finish();
@@ -613,11 +686,25 @@ impl Automation {
             .cloned()
     }
 
-    /// Yields the *character playback delay* in milliseconds.
-    fn delay_ms(&self) -> u128 {
+    /// Yields the *playback delay* of the settings in milliseconds.
+    fn delay_ms(&self) -> u32 {
         self.settings
             .as_ref()
-            .map_or(0, |settings| u128::from(settings.borrow().playback_delay()) * 100)
+            .map_or(0, |settings| settings.borrow().playback_delay())
+    }
+
+    // realises FR-505, FR-514
+    /// Yields the time the timeout of `action` allows beyond `ACTION_TIMEOUT`: the entering of
+    /// the characters of an `edit`, one *playback delay* per character; nothing for every other
+    /// action.
+    fn allowance_of(&self, action: &Action) -> Duration {
+        match action {
+            Action::Edit { text, .. } => self
+                .delay
+                .saturating_mul(u32::try_from(text.chars().count()).unwrap_or(u32::MAX)),
+            Action::Delay(milliseconds) => Duration::from_millis(u64::from(*milliseconds)),
+            _ => Duration::ZERO,
+        }
     }
 
     // realises FR-500 to FR-514
@@ -625,14 +712,27 @@ impl Automation {
     /// checks whether its effect is told; yields its outcome once it is complete or failed.
     fn advance(&mut self) -> Option<Outcome> {
         let step = self.current_step()?;
+        if !self.current.as_ref()?.delay_passed {
+            // the playback delay before every action but the first, counted from the
+            // completion of the action before it; the timeout counts from its end (FR-500,
+            // FR-514)
+            if self.current.as_ref()?.begun.elapsed() < self.delay {
+                return None;
+            }
+            let current = self.current.as_mut()?;
+            current.delay_passed = true;
+            current.begun = Instant::now();
+        }
         let elapsed = self.current.as_ref()?.begun.elapsed();
         if self.current.as_ref()?.waiting.is_none() {
             return match self.ready(&step.action) {
                 Readiness::Ready => match self.perform(&step.action) {
                     Ok(waiting) => {
+                        let allowance = self.allowance_of(&step.action);
                         if let Some(current) = self.current.as_mut() {
                             current.front_end_pending = waiting.front_end;
                             current.waiting = Some(waiting);
+                            current.allowance = allowance;
                         }
                         None
                     }
@@ -659,8 +759,10 @@ impl Automation {
             ));
         }
         if pending {
-            return (elapsed >= ACTION_TIMEOUT)
-                .then(|| Outcome::Error("the front end did not answer within 30 seconds".to_owned()));
+            let allowance = self.current.as_ref()?.allowance;
+            return (elapsed >= ACTION_TIMEOUT + allowance).then(|| {
+                Outcome::Error("the front end did not answer within 30 seconds".to_owned())
+            });
         }
         let (events, quiet, asked) = {
             let network = self.network.as_ref()?.borrow();
@@ -682,6 +784,10 @@ impl Automation {
         }
         if waiting.save_question && asked {
             return Some(Outcome::Completed);
+        }
+        // a delay is complete once its moment is reached (FR-547)
+        if let Some(until) = waiting.until {
+            return (Instant::now() >= until).then_some(Outcome::Completed);
         }
         let wanted = waiting.wanted.satisfied_by(&events);
         let settled = if waiting.settle {
@@ -710,17 +816,6 @@ impl Automation {
         let network = match self.network.as_ref() {
             Some(network) => network.borrow(),
             None => return Readiness::Failed("the player is not wired".to_owned()),
-        };
-        let delayed = || {
-            let elapsed = self
-                .current
-                .as_ref()
-                .map_or(0, |current| current.begun.elapsed().as_millis());
-            if elapsed >= self.delay_ms() {
-                Readiness::Ready
-            } else {
-                Readiness::Waiting("the character playback delay".to_owned())
-            }
         };
         match action {
             Action::OpenNode(name) => {
@@ -754,9 +849,7 @@ impl Automation {
                 }
             }
             Action::CloseFile(path) => match network.resolved_file_path(path) {
-                Some(resolved) if network.file_group_named(&resolved).is_some() => {
-                    Readiness::Ready
-                }
+                Some(resolved) if network.file_group_named(&resolved).is_some() => Readiness::Ready,
                 _ => Readiness::Failed(format!("no editor window on '{path}' is presented")),
             },
             Action::Activate | Action::Deactivate => {
@@ -773,10 +866,23 @@ impl Automation {
                 Ok(_) => Readiness::Ready,
                 Err(reason) => Readiness::Failed(reason),
             },
+            // the expiry takes place after the playback delay of every action; no wait of its
+            // own (FR-506)
             Action::Idle(editor) | Action::LongIdle(editor) => {
                 match self.group_of(&network, editor) {
-                    Ok(_) => delayed(),
+                    Ok(_) => Readiness::Ready,
                     Err(reason) => Readiness::Failed(reason),
+                }
+            }
+            // a delay beyond the bound is a value the notation does not admit (FR-547)
+            Action::Delay(milliseconds) => {
+                if *milliseconds <= MAX_DELAY_ACTION {
+                    Readiness::Ready
+                } else {
+                    Readiness::Failed(format!(
+                        "the delay of {milliseconds} ms exceeds {} seconds",
+                        MAX_DELAY_ACTION / 1000
+                    ))
                 }
             }
             Action::Cursor { editor, .. }
@@ -816,11 +922,18 @@ impl Automation {
                     Readiness::Failed(format!("'{name}' names no key stroke"))
                 }
             }
-            Action::Restore { backup, .. } => {
-                if Path::new(backup).is_dir() {
+            Action::Restore { saved, .. } => {
+                if Path::new(saved).is_file() {
                     Readiness::Ready
                 } else {
-                    Readiness::Failed(format!("the backup folder '{backup}' does not exist"))
+                    Readiness::Failed(format!("the saved file '{saved}' does not exist"))
+                }
+            }
+            Action::SettingsFile(path) => {
+                if Path::new(path).is_file() {
+                    Readiness::Ready
+                } else {
+                    Readiness::Failed(format!("the saved settings file '{path}' does not exist"))
                 }
             }
             _ => Readiness::Ready,
@@ -845,7 +958,7 @@ impl Automation {
             .ok_or_else(not_wired)?
             .borrow()
             .get_qml_method_invoker();
-        let delay = i32::try_from(self.delay_ms()).unwrap_or(i32::MAX);
+        let delay = i32::try_from(self.delay.as_millis()).unwrap_or(i32::MAX);
         match action {
             Action::Network(path) => {
                 invoke_method!(&input_invoker, "namePath", path.clone());
@@ -997,6 +1110,8 @@ impl Automation {
                 }
                 Err(Outcome::Completed)
             }
+            // the playback delay of the line is not applied: the delay the playback was started
+            // with holds for the whole playback (FR-509, FR-543)
             Action::Settings(values) => {
                 let workbench = self.workbench()?;
                 invoke_method!(
@@ -1007,8 +1122,7 @@ impl Automation {
                     values.automatic,
                     int_of(values.tab_size as usize),
                     values.tabs_to_spaces,
-                    values.silent_creation,
-                    int_of(values.playback_delay as usize)
+                    values.silent_creation
                 );
                 Err(Outcome::Completed)
             }
@@ -1031,15 +1145,43 @@ impl Automation {
                 self.answer_asked(dialog.to_owned(), choice, silent);
                 Ok(Waiting::front_end(true))
             }
-            Action::Restore { backup, source } => {
-                restore(Path::new(backup), Path::new(source)).map_err(Outcome::Error)?;
-                self.reload_documents_under(source);
+            Action::Restore { saved, file } => {
+                restore(Path::new(saved), Path::new(file)).map_err(Outcome::Error)?;
+                self.reload_documents_of(file);
+                Ok(Waiting::settled())
+            }
+            Action::Remove(file) => {
+                remove_file(Path::new(file)).map_err(Outcome::Error)?;
+                self.reload_documents_of(file);
+                Ok(Waiting::settled())
+            }
+            Action::Init => {
+                invoke_method!(&network_invoker, "init");
+                Ok(Waiting::settled())
+            }
+            Action::Delay(milliseconds) => Ok(Waiting::until(
+                Instant::now() + Duration::from_millis(u64::from(*milliseconds)),
+            )),
+            Action::CloseNetwork => {
+                invoke_method!(&network_invoker, "closeNetwork");
+                Ok(Waiting::settled())
+            }
+            Action::SettingsFile(path) => {
+                Settings::load(Path::new(path)).map_err(|error| {
+                    Outcome::Error(format!(
+                        "the saved settings file '{path}' is not applied: {error}"
+                    ))
+                })?;
+                let workbench = self.workbench()?;
+                invoke_method!(workbench, "applySettingsFile", path.clone());
                 Ok(Waiting::settled())
             }
             Action::Verify { editor, file } => {
                 let actual = self.octets_of(editor)?;
                 let expected = std::fs::read(file).map_err(|error| {
-                    Outcome::Error(format!("the expected file '{file}' cannot be read: {error}"))
+                    Outcome::Error(format!(
+                        "the expected file '{file}' cannot be read: {error}"
+                    ))
                 })?;
                 Err(match difference(&actual, &expected) {
                     None => Outcome::Completed,
@@ -1061,11 +1203,11 @@ impl Automation {
     /// which `restore` replaced: the *input group* of the *network file*, those of every named
     /// *node editor* and those of the *editor windows*, so that the code editors show the
     /// restored content.
-    fn reload_documents_under(&self, source: &str) {
+    fn reload_documents_of(&self, file: &str) {
         let Some(network) = self.network.as_ref() else {
             return;
         };
-        let folder = Path::new(source);
+        let file = launch::absolute(file);
         let mut groups: Vec<Rc<RefCell<InputGroup>>> = Vec::new();
         if let Some(input) = &self.network_input {
             groups.push(Rc::clone(input));
@@ -1080,7 +1222,7 @@ impl Automation {
         for group in groups {
             let invoker = {
                 let group = group.borrow();
-                if !Path::new(&group.document_path()).starts_with(folder) {
+                if launch::absolute(&group.document_path()) != file {
                     continue;
                 }
                 group.get_qml_method_invoker()
@@ -1235,11 +1377,9 @@ impl Automation {
                 name,
                 item: EditorItem::Output(index),
             } => {
-                let node = network
-                    .node_editor_named(name)
-                    .ok_or_else(|| {
-                        Outcome::Error(format!("no node window of '{name}' is presented"))
-                    })?;
+                let node = network.node_editor_named(name).ok_or_else(|| {
+                    Outcome::Error(format!("no node window of '{name}' is presented"))
+                })?;
                 let octets = node.borrow().output_octets(*index);
                 octets.ok_or_else(|| {
                     Outcome::Error(format!("the node '{name}' has no output {index}"))

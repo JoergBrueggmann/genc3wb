@@ -283,16 +283,13 @@ impl InputGroup {
 
     // setters
     // realises FR-012, FR-013, FR-014, FR-015
-    // Names the path: where the editor holds unsaved changes, keeps the path pending and emits
-    // `ask_to_save`; otherwise stores the path and loads the file.
+    // Names the path through `name_path`: where the editor holds unsaved changes, keeps the path
+    // pending and emits `ask_to_save`; otherwise stores the path and loads the file.
     fn set_path(&mut self, path: String) {
         if path == self.path() {
             return;
         }
-        if self.kind() == InputKind::Network {
-            self.tell(|recorder| recorder.record(&Action::Network(path.clone())));
-        }
-        self.name_path(path);
+        self.name_path(path, true, true, false);
     }
 
     // realises FR-019, FR-021, FR-055, FR-165, FR-166, FR-238, FR-278
@@ -356,14 +353,13 @@ impl InputGroup {
 
     // slots
     // realises FR-476, FR-520
-    /// Names the *handed file* at `path` as the *network file*, as `apply_path` does, without
-    /// storing its path, and tells the *recorder*, since a *recording* started before the file
-    /// arrived; scheduled by the *workbench object* for a file the operating system hands over
-    /// in the *start-up phase*, before the user edits.
+    /// Names the *handed file* at `path` as the *network file* through `name_path`, without a
+    /// question and without storing its path, the *recorder* told there, since a *recording*
+    /// started before the file arrived; scheduled by the *workbench object* for a file the
+    /// operating system hands over in the *start-up phase*, before the user edits.
     #[qslot(qml_name = "nameHanded")]
     fn name_handed(&mut self, path: String) {
-        self.tell(|recorder| recorder.record(&Action::Network(path.clone())));
-        self.apply_path(&path, false);
+        self.name_path(path, false, false, false);
     }
 
     // realises FR-482, FR-484, FR-485, IR-209
@@ -375,10 +371,9 @@ impl InputGroup {
     /// dialog of the new-file button.
     #[qslot(qml_name = "createFile")]
     fn create_file(&mut self, path: String) {
-        self.tell(|recorder| recorder.record(&Action::NewNetwork(path.clone())));
         match write_network_template(&path) {
-            Ok(()) if path == self.path() => self.apply_path(&path, true),
-            Ok(()) => self.name_path(path),
+            Ok(()) if path == self.path() => self.name_path(path, true, false, true),
+            Ok(()) => self.name_path(path, true, true, true),
             Err(error) => {
                 self.file_creation_failed(format!(
                     "The network file could not be created: {error}"
@@ -393,6 +388,22 @@ impl InputGroup {
     #[qslot(qml_name = "namePath")]
     fn name_path_by_script(&mut self, path: String) {
         self.set_path(path);
+    }
+
+    // realises FR-535, FR-536
+    /// Names no *network file*, as the close button and `init` end: saves the document where
+    /// `save` and it holds unsaved changes, then names the empty path as `apply_path` does, the
+    /// *lock file* released and removed, `None` stored as the path of the *network file*, the
+    /// field and the editor emptied and the network editor told, which shuts the *build system*
+    /// down and starts none; the *recorder* is told nothing, since the network editor records
+    /// `close network`. Scheduled by the network editor.
+    #[qslot(qml_name = "closeNetwork")]
+    fn close_network(&mut self, save: bool) {
+        if save && self.file.borrow().has_unsaved_changes() {
+            let _ = self.file.borrow_mut().save();
+        }
+        self.pending_path = None;
+        self.apply_path("", true);
     }
 
     // realises FR-507
@@ -639,7 +650,7 @@ impl InputGroup {
         self.document_changed();
         self.set_diagnostics(vec![], vec![], vec![], vec![]);
         self.set_octet_marks(vec![], vec![], vec![], vec![]);
-        self.name_path(path);
+        self.name_path(path, true, true, false);
     }
 
     // realises FR-239
@@ -894,6 +905,28 @@ impl InputGroup {
         self.save_questions
     }
 
+    // realises FR-535, FR-540
+    /// Yields whether the document holds changes not saved; read by the network editor.
+    pub fn has_unsaved_changes(&self) -> bool {
+        self.file.borrow().has_unsaved_changes()
+    }
+
+    // realises FR-535
+    /// Saves the document where it holds unsaved changes; called by the network editor when the
+    /// network is closed with 'Yes'.
+    pub fn save_document(&mut self) {
+        if self.file.borrow().has_unsaved_changes() {
+            let _ = self.file.borrow_mut().save();
+        }
+    }
+
+    // realises FR-540
+    /// Yields the name of the code editor of the group, as its owner set it; read by the network
+    /// editor for the state an *individual recording* finds.
+    pub fn editor_name(&self) -> Option<EditorName> {
+        self.editor_name.clone()
+    }
+
     // realises FR-521 to FR-526
     /// Names the code editor of the group for the *recorder*, `None` where the group presents
     /// nothing; set by the owner of the group.
@@ -977,7 +1010,8 @@ impl InputGroup {
                 i32::try_from(increment.range).unwrap_or(i32::MAX),
                 increment.text
             );
-        }        true
+        }
+        true
     }
 
     // realises FR-167, FR-168
@@ -1028,7 +1062,7 @@ impl InputGroup {
         self.text_changed();
     }
 
-    // realises FR-090, FR-214, FR-217, FR-476, FR-478
+    // realises FR-090, FR-214, FR-217, FR-476, FR-478, FR-520, FR-539
     /// Loads the file at the path the settings hold for the *network file*, or the *handed file*
     /// `handed` in its place where there is one, whose path is not stored (FR-476); announces
     /// the state, and announces the path to the network editor where one is wired.
@@ -1036,6 +1070,8 @@ impl InputGroup {
     /// * Where another genc³wb holds the *lock file* of that *network file*, no *network file*
     ///   is named, and the path stays in the settings as it is.
     /// * The path is held absolute, and its folder becomes the working directory (FR-478).
+    /// * The *recorder* is told `network <path>` where a file is named and its *lock file*
+    ///   taken, since the *automatic recording* runs already (FR-520, FR-539).
     pub fn load_initial(&mut self, handed: Option<&str>) {
         let path = match handed.filter(|_| self.kind() == InputKind::Network) {
             Some(handed) => launch::absolute(handed),
@@ -1043,7 +1079,7 @@ impl InputGroup {
                 .settings
                 .as_ref()
                 .filter(|_| self.kind() == InputKind::Network)
-                .map(|settings| launch::absolute(settings.borrow().network_path()))
+                .and_then(|settings| settings.borrow().network_path().map(launch::absolute))
                 .unwrap_or_default(),
         };
         let path = if self.lock_network(&path) {
@@ -1051,22 +1087,39 @@ impl InputGroup {
         } else {
             String::new()
         };
+        if !path.is_empty() {
+            // the automatic recording runs already, so that the file named at the start is
+            // recorded as every other naming is (FR-520, FR-539)
+            self.tell(|recorder| recorder.hold_network_line(&Action::Network(path.clone())));
+        }
         let _ = self.file.borrow_mut().load(&path);
         self.announce_state();
         self.announce_path();
     }
 
-    // realises FR-013, FR-014, FR-015, FR-280
-    /// Names `path`: where the editor holds unsaved changes that no other *presenter* keeps,
-    /// keeps the path pending and emits `ask_to_save`; otherwise applies it.
-    fn name_path(&mut self, path: String) {
-        if self.file.borrow().has_unsaved_changes() && self.is_sole_presenter() {
+    // realises FR-013, FR-014, FR-015, FR-280, FR-539
+    /// Names `path`, the one function every naming of a *network file* by the user passes
+    /// through: tells the *recorder* `network <path>`, or `new network <path>` where `created`,
+    /// first, so that the line is held back until the first *build* answers and no caller can
+    /// leave the tell out; then, where `ask` and the editor holds unsaved changes that no other
+    /// *presenter* keeps, keeps the path pending and emits `ask_to_save`; otherwise applies it,
+    /// stored where `store`.
+    fn name_path(&mut self, path: String, store: bool, ask: bool, created: bool) {
+        if self.kind() == InputKind::Network {
+            let action = if created {
+                Action::NewNetwork(path.clone())
+            } else {
+                Action::Network(path.clone())
+            };
+            self.tell(|recorder| recorder.hold_network_line(&action));
+        }
+        if ask && self.file.borrow().has_unsaved_changes() && self.is_sole_presenter() {
             self.pending_path = Some(path.clone());
             self.save_questions = self.save_questions.wrapping_add(1);
             self.ask_to_save(path);
             return;
         }
-        self.apply_path(&path, true);
+        self.apply_path(&path, store);
     }
 
     // realises FR-280
@@ -1118,7 +1171,7 @@ impl InputGroup {
         }
         if let (Some(settings), InputKind::Network, true) = (&self.settings, kind, store) {
             let mut settings = settings.borrow_mut();
-            settings.set_network_path(path);
+            settings.set_network_path(if path.is_empty() { None } else { Some(path) });
             let _ = settings.store();
             drop(settings);
             crate::bridge::workbench::settings_stored();

@@ -1,0 +1,6 @@
+meta compiler-compiler network
+	node a
+		inputs
+			a.in
+		outputs
+			x.txt

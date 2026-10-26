@@ -9,7 +9,139 @@ and this project adheres to a four-part version number.
 
 ## [Unreleased]
 
-At the moment, nothing unreleased here.
+## [0.42.0.0] - 2026-10-26
+
+**_Settings_menu_with_both_entries_**
+
+Leading work item: guidelines 0.17.0.0 (AIAgentQtRust)
+
+- Engineer the *change request* '**_Settings_menu_with_both_entries_**', decided by the product owner on 2026-10-26, as genc³wb definition 0.38.0.0 states it: the menu 'Settings' with 'Settings...' and 'Insert key settings...' on every platform, and on MacOS 'Settings...' in the application menu as well.
+- Main.qml: the menu bar built from the types of `Qt.labs.platform`: `preferencesAction`, the entry of the application menu with the preferences role, present on MacOS alone; `settingsAction` with the role that keeps it in the menu 'Settings'; `insertKeyAction` renamed; the menus 'Edit', 'Automation' and 'Help' and their items as before.
+- Tests: none drives a menu item; the QML lint and the *verification runs*, which load the main window with the menu bar, run with the change. 'tests/automation_scripts.rs': a run with settings of its own runs a copy of the executable in a folder of its own, since the parallel runs of one process wrote the settings file beside the shared executable over each other, which made the test of the *playback delay* fail by chance.
+- Raise the version in 'Cargo.toml' to 0.42.0; 'tests/recording.rs' and the round-trip tests expect the comment line of 0.42.0.0.
+- Behaviour changed: a minor bump, the major part being 0.
+
+## [0.41.0.0] - 2026-10-26
+
+**_Delay_action_of_the_automation_notation_**
+
+Leading work item: definition 0.37.0.0
+
+- Engineer the *change request* '**_Delay_action_of_the_automation_notation_**', decided by the product owner on 2026-10-26, as genc³wb definition 0.37.0.0 states it: the action `delay <time> [s|ms]`, by which a *playback* waits from 0 to 4 seconds, written by hand and never recorded.
+- `automation.gc3`: the rule `Delay` with the optional unit, rendered with the unit `s` where none is given. `core::automation`: `Action::Delay` in milliseconds, the time read to the millisecond from seconds or milliseconds, `MAX_DELAY_ACTION`. `bridge::automation`: the action performed as a wait until a moment, failing where the time exceeds 4 seconds, the time not counted in the timeout. `core::recording`: the rendering of the action, which the *recorder* never writes.
+- Tests: the unit tests of the configuration and of the reading, 'tests/automation_configuration.rs'; 'tests/playback_delay_action.rs', an in-process *playback* with a `delay` of half a second timed, and one of five seconds failing.
+- Raise the version in 'Cargo.toml' to 0.41.0; 'tests/recording.rs' and the round-trip tests expect the comment line of 0.41.0.0. 'README.md' as the product owner shortened it at the gate: the feature of the automation told without the details of the pace.
+- Behaviour changed: a minor bump, the major part being 0.
+
+## [0.40.0.0] - 2026-10-26
+
+**_Playback_stopped_from_the_menu_**
+
+Leading work item: definition 0.36.0.0
+
+- Engineer the *change request* '**_Playback_stopped_from_the_menu_**', decided by the product owner on 2026-10-26, as genc³wb definition 0.36.0.0 states it: the item 'Stop playback' of the menu 'Automation' ends the *playback* that runs after the action in progress.
+- `core::automation`: `Outcome::Stopped`, reported as `<line>: stopped: <action>`, ending the *playback* and counting as 2 in the exit code. `bridge::automation`: the slot `stop`, which notes the stop and ends the *playback* once the action in progress is complete, its outcome turned into `Stopped`, or at once where none is. Main.qml: the item 'Stop playback' right after 'Play back script...', enabled while a *playback* runs.
+- Tests: the unit test of the report lines and the exit code; 'tests/playback_stop.rs', an in-process *playback* with a delay stopped during its second action, asserting the report, the exit code 2 and that nothing follows.
+- Raise the version in 'Cargo.toml' to 0.40.0; 'tests/recording.rs' and the round-trip tests expect the comment line of 0.40.0.0. 'README.md' tells the stop.
+- Behaviour changed: a minor bump, the major part being 0.
+
+## [0.39.0.0] - 2026-10-26
+
+**_Playback_delay_in_exponential_steps_**
+
+Leading work item: definition 0.35.0.0
+
+- Engineer the *change request* '**_Playback_delay_in_exponential_steps_**', decided by the product owner on 2026-10-26, as genc³wb definition 0.35.0.0 states it: the *playback delay* is no delay or one of thirteen durations from 0.05 to 3.20 seconds growing by √2, each rounded to the millisecond and shown with two decimals, chosen by a check box 'Delay' and a field stepping through them.
+- `core::settings`: `PLAYBACK_DELAYS`, the thirteen values rounded to the millisecond, `playback_delay_text` showing one with two decimals; the settings holding whether the delay is on and the index of its value; the key `playback_delay` written in seconds with two decimals while the delay is on, absent while it is off, a value read brought to the nearest of the thirteen, 0 and an absent key read as off. `automation.gc3` and `core::automation`: `delay off` or `delay <s>`, the value none or the nearest of the thirteen in milliseconds. `core::recording`: the delay written as `off` or with two decimals. `bridge::workbench`: the properties `playbackDelayOn` and `playbackDelayIndex`, `playbackDelay` in milliseconds yielding 0 while off, the slot `playbackDelayOf(index)`, `trySetSettings` and `setPlaybackDelay` taking the switch and the index. `bridge::automation`: the delay taken from the settings as before.
+- SettingsDialog.qml and PlaybackDelayDialog.qml: the check box 'Delay' above the field, the field a spin box over the thirteen values showing seconds with two decimals, disabled while the check box is off.
+- Tests: the unit tests of the settings, of the configuration and of the recorder; 'tests/settings.rs'; the QML test of the dialog; 'tests/playback_line.rs' and the delay test of 'tests/automation_scripts.rs' with values of the thirteen; the script 'settings_and_modes' with `delay off`.
+- Raise the version in 'Cargo.toml' to 0.39.0; 'tests/recording.rs' and the round-trip tests expect the comment line of 0.39.0.0. 'README.md' tells the delay's range.
+- Behaviour changed: a minor bump, the major part being 0.
+
+## [0.38.0.0] - 2026-10-26
+
+**_Playback_delay_between_every_two_actions_**
+
+Leading work item: definition 0.34.0.0
+
+- Engineer the *change request* '**_Playback_delay_between_every_two_actions_**', decided by the product owner on 2026-10-23 and at the identification meeting of 2026-10-25, as genc³wb definition 0.34.0.0 states it: the *playback delay*, a time in seconds from 0.0 to 4.0, waited before every action of a *playback* but the first, chosen in the *playback delay dialog*, and the line of the script in progress in the status bar.
+- `core::settings`: the *playback delay* in milliseconds, at most 4000, the key `playback_delay` written in seconds with one decimal and read as tenths of a second where it is an integer; the *playback delay dialog setting* under the key `playback_delay_dialog_disabled`. `automation.gc3` and `core::automation`: the `settings` line carrying the delay in seconds. `core::recording`: the delay written in seconds. `bridge::automation`: the delay taken when the *playback* starts and waited before every action but the first, the timeout counted from the end of the delay and, for `edit`, after its characters, `settings` and `settings file` applied without the delay and the setting, the properties `currentLine` and `currentLineNumber`. `bridge::workbench`: the property `playbackDelay` in milliseconds, the property `playbackDelayDialogDisabled`, `trySetSettings` with the setting, `applySettings` without the delay, the slot `setPlaybackDelay` of the dialog.
+- SettingsDialog.qml: the field 'Playback delay' in seconds and the check box 'Disable playback delay dialog'. PlaybackDelayDialog.qml: the *playback delay dialog*. Main.qml: the dialog before the file selector dialog, the status bar showing `Playback line <n>: <line>`.
+- Tests: the unit tests of the settings, of the configuration and of the recorder; 'tests/settings.rs'; the QML test 'tests/qml/tst_playback_delay.qml' of the dialog, run by 'tests/playback_delay_dialog.rs'; 'tests/playback_line.rs', an in-process *playback* with a delay of 0.3 seconds asserting the line in progress, the time taken and the delay kept through the `settings` line; 'tests/automation_scripts.rs' asserting that a *verification run* waits the delay of the *settings file* before every action but the first and keeps it through `settings file` and `settings`; the script 'settings_and_modes' with the delay in seconds; the runner of the scenarios under 'tests/user_scripts' takes a folder's 'usage.gc3s', as the *automatic recording* names it, as well as 'script.gc3s', decided by the product owner at the gate on 2026-10-26.
+- Raise the version in 'Cargo.toml' to 0.38.0; 'tests/recording.rs' and the round-trip tests expect the comment line of 0.38.0.0. 'README.md' tells the delay.
+- Behaviour changed: a minor bump, the major part being 0.
+
+## [0.37.0.0] - 2026-10-25
+
+**_Request_failure_kept_apart_from_the_error_message_of_a_build_**
+
+Leading work item: definition 0.33.0.0
+
+- Engineer the *change request* '**_Error_message_of_a_request_kept_apart_from_the_error_message_of_a_build_**', decided by the product owner on 2026-10-25 (alternative a), as genc³wb definition 0.33.0.0 states it: the failure of a *request* the user made shared the *error message* and the error button with a failed *build*, so that a *build* arriving after it cleared or overwrote it.
+- `bridge::network_editor`: `request_failure` in place of `own_try_failure`, set by the error of every *request*, the *activate request*, the *deactivate request*, the *hold request* and the *release request*, whoever made it, and cleared by the next *request* or the restart, the property `requestFailure`; `error_message` written by a failed *build* and a *build system* that could not be started alone; `own_try_pending` gone. Main.qml: the status bar shows `Request failed: <message>` in place of the *network mode*.
+- Tests: 'request_failure.rs', a refused *activate request* of the user on a network whose *meta compiler DSL* is invalid, followed by a *build* that succeeds, the failure staying in the status bar, the graph presented and the *error message* empty; the tests of a start reading `requestFailure`.
+- Raise the version in 'Cargo.toml' to 0.37.0; 'tests/recording.rs' and the round-trip tests expect the comment line of 0.37.0.0.
+- A behaviour changed: a minor bump, the major part being 0.
+
+## [0.36.0.0] - 2026-10-25
+
+**_Start-up_activation_only_where_it_can_succeed_and_its_outcome_in_the_status_bar_**
+
+Leading work item: guidelines 0.16.0.0 (AIAgentQtRust)
+
+- Engineer the *change request* '**_View_derived_from_the_state_and_start-up_activation_only_where_it_can_succeed_**', decided by the product owner on 2026-10-25 (alternative a), as genc³wb definition 0.32.0.0 states it: the activation the *product* tries of its own at the start failed wherever a file of a *node* was missing, and its message was shown in place of the graph or hidden by it depending on whether the first *build* finished before or after the try.
+- `bridge::network_editor`: `try_own_activation`, called when the *state response* and when the *build* arrive, transmitting the *activate request* of the *product*'s own once the network is a *valid network* and the *node descriptions* are known, and only where no file of FR-487 is missing; `own_try_failure` and the property `ownTryFailure`, the message of a failed own try, cleared by the next *request*, the *error message* of the *build* untouched. Main.qml: the status bar shows the failure of the own try in place of the *network mode*.
+- Tests: 'start_missing_files_idle_early.rs' and 'start_missing_files_idle_late.rs', a start on a *network file* whose files are missing, the idle expired at once and three seconds after the *state response*, both asserting a *valid network*, the graph presented, no message and no file created, the early one asserting as well that the *automatic recording* holds no `activate` and plays back; 'start_invalid_dsl.rs', a start on a network whose *meta compiler DSL* is invalid, the own try failing into the status bar while the graph stays; the round-trip tests and 'recording.rs' expiring the idle before they wait for the activation, since the own try waits for the *node descriptions* of the *build*, the recorded order now `network`, `idle network`, `activate`.
+- Raise the version in 'Cargo.toml' to 0.36.0; 'tests/recording.rs' and the round-trip tests expect the comment line of 0.36.0.0.
+- A behaviour changed at the start: a minor bump, the major part being 0.
+
+## [0.35.0.0] - 2026-10-25
+
+**_Recorder_started_before_any_file_is_named_**
+
+Leading work item: guidelines 0.15.0.0 (AIAgentQtRust)
+
+- Fix the *software problem report* '**_Recording_of_a_start_with_a_network_file_named_recovers_no_network_at_playback_**', decided by the product owner on 2026-10-25 (alternative a) and at the identification meeting of the same day (1 a, 2 a, 3 corrected), as genc³wb definition 0.31.0.0 states it: the *automatic recording* of a start with the *network file* named in the *settings file*, or handed over on the command line, held no `restore` and no `network` line, since `Workbench::default` started the *recorder* after the *input group* of the *network file* had loaded its initial path and `load_initial` told the *recorder* nothing, so that a *playback* closed the network by `init` and named none.
+- `bridge::workbench`: the *automatic recording* started before the network editor and the *input group* of the *network file* load their initial paths. `bridge::input_group`: the tell `hold_network_line` moved from `set_path`, `name_handed` and `create_file` into `name_path`, the one function every naming of a *network file* by the user passes through, told before the question of FR-014, so that `answer save` follows the `network` line in the script as the *playback* needs it, `new network` where `create_file` named the file, and `load_initial` telling it as well. `bridge::network_editor`: `load_initial` recording `build system <path>` of the settings, since the *recorder* runs already and FR-520 demands the line, and `found_state` yielding the *build system*; `core::recording`: `FoundState.build_system` and `record_state` writing the `build system` line first, so that an *individual recording* names the one in force (FR-528, FR-540).
+- Tests, as the test guideline 0.15.0.0 demands one round trip per way a *recording* can begin: 'recording_at_start.rs', the *network file* named in the *settings file*; 'recording_at_start_none.rs', none named and the *network file* named by the dialog's slot; 'recording_handed.rs', the *handed file* of the command line; 'recording_file_opened.rs', the *handed file* of the file-open event; each constructs the *workbench object* in-process from a *settings file* the test writes beside its executable, as the *product* does at a start, stops the *recording*, plays it back by a *verification run* of the executable in a second process and asserts the lines recorded, the report and the files at the end; 'recording.rs', the *individual recording*, asserting the files at the end as well; the script 'tests/scripts/node_keyword', the scenario of the report, the keyword `node` broken by typed characters and mended by deletions, run by 'automation_scripts.rs', and 'node_keyword.rs' asserting the *network mode* along it, *active network*, then *invalid network* and *valid network*, not active, after the mend.
+- Raise the version in 'Cargo.toml' to 0.35.0; 'tests/recording.rs' and the round-trip tests expect the comment line of 0.35.0.0.
+- A line recorded and played back anew: a minor bump, the major part being 0.
+
+## [0.34.0.1] - 2026-10-25
+
+**_Source_formatted_by_rustfmt_**
+
+- Format the source with `cargo fmt`, on the instruction of the product owner of 2026-10-25: the check `cargo fmt --check` failed on files of 0.32.0.0 to 0.34.0.0, 'src/core/automation.rs', 'src/core/recording.rs', 'src/core/settings.rs', 'src/bridge/automation.rs', 'src/bridge/input_group.rs', 'src/bridge/node_editor.rs', 'src/bridge/workbench.rs', 'tests/automation_configuration.rs', 'tests/automation_scripts.rs', 'tests/close_network.rs', 'tests/init_and_close.rs' and 'tests/recording.rs', in the order of `use` lines and the wrapping of long expressions; nothing of what the code does changes, and the check passes.
+- Raise the version in 'Cargo.toml' to 0.34.0+1; 'tests/recording.rs' expects the comment line of 0.34.0.1.
+- A layout change alone: a build bump.
+
+## [0.34.0.0] - 2026-10-25
+
+**_Precondition_saved_at_a_defined_beginning_and_recovered_at_playback_**
+
+Leading work item: definition 0.30.0.0
+
+- Engineer the *change request* '**_Precondition_saved_at_a_defined_beginning_and_recovered_at_playback_**', as genc³wb definition 0.30.0.0 states it: every *recording* begins with `init`, the *settings file* saved and `settings file`, saves every file a network works on when the network is loaded and records the state an *individual recording* finds; a *playback* recovers them first; the *product* activates a loaded network itself; the network is closed by a button, by `close network` and by `init`.
+- `core::automation`: the actions `Init`, `CloseNetwork`, `SettingsFile`, `Remove`, and `Restore` of one saved file into one file; `restore` copying one file and `remove_file` deleting one, *lock files* and files that are no regular files spared, in place of the folder mirror; 'src/automation.gc3' with the four lines.
+- `core::recording`: `Recorder::start` writing `init` and the *settings file* copied to 'backup/1/1.bak' with `settings file`; `hold_network_line` and `back_up_network`, the `network` line held back until the first *build* has answered and the files saved into 'backup/<n>/<m>.bak' with one `restore` or `remove` line each, the lines of actions that arose meanwhile deferred behind it; `FoundState` and `record_state` for an *individual recording*; the focused code editor and its cursor kept across the recordings.
+- `core::settings`: the path of the *network file* an `Option<String>`, `None` where none is named, the key left out of the *settings file* and an absent, `null` or empty value read as `None` (`path_or_none`); `core::build_system`: the *build system* started with `--startup-inactive`.
+- `bridge::network_editor`: the *activate request* of its own the first time a loaded network is valid while no *playback* runs (`activate_on_valid`, `activate_directly`, `set_playing`); the closing of the network (`close_network`, `close_asked`, `answer_close`, `init`, `finish_close`, `close_all_files`, `name_none`), the *input group* of the *network file* wired (`set_network_group`); the files of the network after a *build* told to the *recorder* (`files_of_nodes`), and whether they are known for the *network file* named now (`filesKnown`); `found_state`. `bridge::input_group`: the `network` line held, `close_network`, `has_unsaved_changes`, `save_document`, `editor_name`. `bridge::automation`: the actions carried out, `reload_documents_of` one file, the *settings file* kept aside and put back (`applySettingsFile`, `restoreSettingsFile` of `bridge::workbench`), the state found recorded at the start of an *individual recording*; the backup slot and the two folder properties gone. `bridge::workbench`: `insert_mode` readable as a function of the module, the *recorder* started with the *settings file*.
+- Main.qml: the item 'Backup to restore on replay' and BackupDialog.qml gone, 'Start and create recording file' enabled only while the files of the network named are known, the title of the script dialog, the dialog `closeSaveDialog`, the close of the network from the input group's `closeRequested`; InputGroup.qml: the close button `✕` with its tooltip.
+- Tests: the unit tests of the notation, the reading, the file restore and remove, the recorder's start, backup and state found, and the settings' option; 'automation_configuration.rs' reading the new lines back through `gc3`; the scripts under 'tests/scripts' beginning with `init` and restoring per file, and the new script 'init_and_close'; 'init_and_close.rs', a *verification run* that applies a saved *settings file*, closes and leaves a network and leaves no *lock file*, no *network file* named and the settings as before; 'close_network.rs', the network activated by the *product* and closed by the button; 'recording.rs' recording the state found and playing it back; 'build_system.rs' activating once in its start helper, as the network editor does; 'recording.rs' expecting the comment line of 0.34.0.0; the case folders of the unit tests of `core::input_file` named after the test as well, since three case names were used twice and the tests of one run, which run in parallel, removed each other's folder, which failed one of them now and then, and a folder that exists already refused.
+- 'README.md': the features told as what the workbench offers and why, the automation among them with its recording and its precondition, the close of the network; how a feature is used is left to the definition, as the product owner asked on 2026-10-25.
+- Raise the version in 'Cargo.toml' to 0.34.0.
+- A new capability: a minor bump, the major part being 0.
+
+## [0.33.1.0] - 2026-10-23
+
+**_Network_file_named_after_another_one_activated_**
+
+Leading work item: definition 0.29.1.0
+
+- Fix the *software problem report* '**_Network_file_named_after_another_one_is_not_activated_**', as genc³wb definition 0.29.1.0 states it: `restart` of `bridge::network_editor` takes whether the held text is replayed as a *build* without a change, which `set_build_system_path` asks for and `set_network_path` does not, so that the *build system* started on a *network file* named anew receives no open request with the text of the file named before and the network it activated at start-up stays active; the first *text increment* after the *idle time* goes out as the open request with the new text and yields the graph.
+- Tests: 'tests/second_network.rs', the *workbench object* driven offscreen through a *network file* named, its text provided, and a second *network file* named, which has to come to be an *active network*; the script 'tests/scripts/second_network', which names two *network files* one after the other and verifies the *output* of the *node* of the second after an edit, run by 'automation_scripts.rs'; the script exercises the sequence and the test asserts the *network mode*, since a script observes contents alone and a *held node* derives them in a *valid network* as well; 'tests/recording.rs' expects the comment line of 0.33.1.0; the test of the user scenarios plays none where 'tests/user_scripts' is absent or empty, the folder being the product owner's, who removed its scenarios on 2026-10-23.
+- Raise the version in 'Cargo.toml' to 0.33.1.
+- A corrected fault: a patch bump.
 
 ## [0.33.0.0] - 2026-10-22
 

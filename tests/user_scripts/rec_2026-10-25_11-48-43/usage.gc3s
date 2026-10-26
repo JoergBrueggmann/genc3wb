@@ -1,0 +1,52 @@
+// Recorded by genc³wb 0.34.0.2 on 2026-10-25 at 11:48:43
+automation script
+init
+settings file "backup/1/1.bak"
+restore "backup/2/1.bak" into "../tst_prj/generated/network.gc3n"
+restore "backup/2/2.bak" into "../tst_prj/generated/writer.gc3"
+restore "backup/2/3.bak" into "../tst_prj/generated/letters.txt"
+restore "backup/2/4.bak" into "../tst_prj/generated/reader.gc3"
+restore "backup/2/5.bak" into "../tst_prj/generated/text.txt"
+restore "backup/2/6.bak" into "../tst_prj/generated/copy.txt"
+network "../tst_prj/generated/network.gc3n"
+focus main
+activate
+idle network
+open file "../tst_prj/generated/copy.txt"
+focus main
+focus file "../tst_prj/generated/copy.txt"
+close file "../tst_prj/generated/copy.txt"
+focus main
+open file "../tst_prj/generated/text.txt"
+focus main
+focus file "../tst_prj/generated/text.txt"
+cursor file "../tst_prj/generated/text.txt" 1:11
+edit file "../tst_prj/generated/text.txt" 1:11 0 "!"
+idle file "../tst_prj/generated/text.txt"
+close file "../tst_prj/generated/text.txt"
+focus main
+open file "../tst_prj/generated/letters.txt"
+focus main
+focus file "../tst_prj/generated/letters.txt"
+select file "../tst_prj/generated/letters.txt" 1:46 1:52
+edit file "../tst_prj/generated/letters.txt" 1:52 0 " | 't'"
+idle file "../tst_prj/generated/letters.txt"
+select file "../tst_prj/generated/letters.txt" 1:57 1:56
+edit file "../tst_prj/generated/letters.txt" 1:56 1 "!"
+idle file "../tst_prj/generated/letters.txt"
+close file "../tst_prj/generated/letters.txt"
+focus main
+open file "../tst_prj/generated/copy.txt"
+focus main
+close file "../tst_prj/generated/copy.txt"
+focus main
+open file "../tst_prj/generated/writer.gc3"
+focus main
+close file "../tst_prj/generated/writer.gc3"
+focus main
+open file "../tst_prj/generated/copy.txt"
+focus main
+focus file "../tst_prj/generated/copy.txt"
+verify file "../tst_prj/generated/copy.txt" "usage-0.gc3v"
+close file "../tst_prj/generated/copy.txt"
+focus main

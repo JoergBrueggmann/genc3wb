@@ -15,13 +15,15 @@ use crate::core::key_stroke::KeyStroke;
 use crate::core::launch;
 use crate::core::recording::{AUTOMATIC_FILE_NAME, Recorder, local_time_name, start_folder};
 use crate::core::settings::{
-    Settings, SettingsStore, playback_delay_violation, tab_size_violation, times_of_processing,
+    PLAYBACK_DELAYS, Settings, SettingsStore, tab_size_violation, times_of_processing,
 };
 use crate::core::version::version_of_package;
 
 use qtbridge::{QmlMethodInvoker, QmlObject, invoke_method, qobject};
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -121,6 +123,26 @@ pub fn file_opened(path: String) {
 /// Schedules `announceSettingsStored` of the *workbench object*, where the *front end* is up,
 /// so that the status bar and the settings dialog follow a store of the settings made by another
 /// *bridged type*.
+// realises FR-540
+/// Yields whether the *typing mode* is the insert mode, as the *workbench object* holds it; read
+/// by the network editor for the state an *individual recording* finds.
+pub fn insert_mode() -> bool {
+    INSERT_MODE.with(Cell::get)
+}
+
+thread_local! {
+    /// the *typing mode* of the *workbench object*, readable without it (FR-540)
+    static INSERT_MODE: Cell<bool> = const { Cell::new(true) };
+}
+
+// realises IR-219
+/// Yields the path at which the *settings file* at `settings` is kept aside during a *playback*.
+fn aside_path(settings: &Path) -> PathBuf {
+    let mut path = settings.as_os_str().to_owned();
+    path.push(".aside");
+    PathBuf::from(path)
+}
+
 pub fn settings_stored() {
     LAUNCH.with(|launch| {
         if let Some(invoker) = &launch.borrow().invoker {
@@ -153,7 +175,9 @@ pub struct Workbench {
 }
 
 impl Default for Workbench {
-    /// Restores the settings and takes the *handed file* left by `hand_file`, creates the
+    /// Restores the settings and takes the *handed file* left by `hand_file`, starts the
+    /// *automatic recording* before any *bridged type* is created, so that nothing one of them
+    /// names at its construction escapes the *recorder* (FR-520), creates the
     /// *document registry*, the network editor and the *input group* of the *network file*, and
     /// wires them: the network editor with the settings, the *document registry* and that
     /// *input group*, and that *input group* with the network editor, both with their paths, the
@@ -174,6 +198,19 @@ impl Default for Workbench {
         };
         let documents = Rc::new(RefCell::new(DocumentRegistry::new()));
         let recorder = Rc::new(RefCell::new(Recorder::default()));
+        // the automatic recording of every start but a verification run, started before any
+        // bridged type is created, so that nothing one of them names at its construction
+        // escapes it (FR-520)
+        if verify.is_none() {
+            let time = local_time_name();
+            let path = start_folder(&launch::executable_folder(), &time).join(AUTOMATIC_FILE_NAME);
+            let _ = recorder.borrow_mut().start(
+                &path,
+                &version_of_package(env!("CARGO_PKG_VERSION")),
+                &time,
+                &Settings::default_path(),
+            );
+        }
         let network = NetworkEditor::default_with_attached_qobject();
         let network_input = InputGroup::default_with_attached_qobject();
         network.borrow_mut().configure(
@@ -192,6 +229,9 @@ impl Default for Workbench {
         network_input
             .borrow_mut()
             .set_editor_name(Some(EditorName::Network));
+        network
+            .borrow_mut()
+            .set_network_group(Rc::clone(&network_input));
         network.borrow_mut().load_initial();
         network_input.borrow_mut().load_initial(handed.as_deref());
         let automation = Automation::default_with_attached_qobject();
@@ -202,18 +242,6 @@ impl Default for Workbench {
             Rc::clone(&recorder),
             verify.clone(),
         );
-        // the automatic recording of every start but a verification run (FR-520)
-        if verify.is_none() {
-            let time = local_time_name();
-            let path = start_folder(&launch::executable_folder(), &time).join(AUTOMATIC_FILE_NAME);
-            let network_path = network_input.borrow().document_path();
-            let _ = recorder.borrow_mut().start(
-                &path,
-                &version_of_package(env!("CARGO_PKG_VERSION")),
-                &time,
-                &network_path,
-            );
-        }
         Workbench {
             settings,
             documents,
@@ -271,11 +299,28 @@ impl Workbench {
         Read = silent_creation,
         Notify = silent_creation_changed
     );
-    // the character playback delay in tenths of a second (FR-518)
+    // the playback delay in milliseconds, 0 while none is waited, whether one is waited, and the
+    // index of the value chosen last among the thirteen (FR-518)
     qproperty!(
         "playbackDelay",
         Read = playback_delay,
         Notify = playback_delay_changed
+    );
+    qproperty!(
+        "playbackDelayOn",
+        Read = playback_delay_on,
+        Notify = playback_delay_changed
+    );
+    qproperty!(
+        "playbackDelayIndex",
+        Read = playback_delay_index,
+        Notify = playback_delay_changed
+    );
+    // the playback delay dialog setting: whether no playback delay dialog is presented (FR-544)
+    qproperty!(
+        "playbackDelayDialogDisabled",
+        Read = playback_delay_dialog_disabled,
+        Notify = playback_delay_dialog_disabled_changed
     );
     // the positions of the splitters in pixels: the size of the left or upper part (FR-149)
     qproperty!(
@@ -320,6 +365,20 @@ impl Workbench {
         self.settings.borrow().playback_delay()
     }
 
+    // realises FR-095, FR-518, FR-542
+    fn playback_delay_on(&self) -> bool {
+        self.settings.borrow().playback_delay_on()
+    }
+
+    fn playback_delay_index(&self) -> i32 {
+        i32::try_from(self.settings.borrow().playback_delay_index()).unwrap_or(0)
+    }
+
+    // realises FR-095, FR-544
+    fn playback_delay_dialog_disabled(&self) -> bool {
+        self.settings.borrow().playback_delay_dialog_disabled()
+    }
+
     // realises FR-192
     fn insert_mode(&self) -> bool {
         self.insert_mode
@@ -337,6 +396,7 @@ impl Workbench {
             return;
         }
         self.insert_mode = insert_mode;
+        INSERT_MODE.with(|mode| mode.set(insert_mode));
         self.recorder
             .borrow_mut()
             .record(&Action::TypingMode(insert_mode));
@@ -418,6 +478,9 @@ impl Workbench {
     #[qsignal(qml_name = "playbackDelayChanged")]
     fn playback_delay_changed(&mut self);
 
+    #[qsignal(qml_name = "playbackDelayDialogDisabledChanged")]
+    fn playback_delay_dialog_disabled_changed(&mut self);
+
     #[qsignal(qml_name = "splittersChanged")]
     fn splitters_changed(&mut self);
 
@@ -497,11 +560,12 @@ impl Workbench {
         self.set_insert_mode(insert);
     }
 
-    // realises FR-509
+    // realises FR-509, FR-543
     /// Sets the settings as `try_set_settings` does, the *player* having checked the constraints
-    /// before; scheduled by the *player*, which is why it yields nothing.
+    /// before, the *playback delay* and the *playback delay dialog setting* left as they are,
+    /// since the delay the *playback* was started with holds for the whole *playback*;
+    /// scheduled by the *player*, which is why it yields nothing.
     #[qslot(qml_name = "applySettings")]
-    #[allow(clippy::too_many_arguments)] // the values of the settings dialog, as the player hands them
     fn apply_settings(
         &mut self,
         idle_time: i32,
@@ -510,7 +574,6 @@ impl Workbench {
         tab_size: i32,
         tabs_to_spaces: bool,
         silent_creation: bool,
-        playback_delay: i32,
     ) {
         let _ = self.try_set_settings(
             idle_time,
@@ -519,20 +582,124 @@ impl Workbench {
             tab_size,
             tabs_to_spaces,
             silent_creation,
-            playback_delay,
+            self.playback_delay_on(),
+            self.playback_delay_index(),
+            self.playback_delay_dialog_disabled(),
         );
+    }
+
+    // realises FR-098, FR-518, FR-542
+    /// Yields the value of the *playback delay* with the index `index` among the thirteen, in
+    /// milliseconds, 0 for an index that names none; called by the fields of the two dialogs
+    /// to show the value of their position.
+    #[qslot(qml_name = "playbackDelayOf")]
+    fn playback_delay_of(&self, index: i32) -> i32 {
+        usize::try_from(index)
+            .ok()
+            .and_then(|index| PLAYBACK_DELAYS.get(index))
+            .and_then(|value| i32::try_from(*value).ok())
+            .unwrap_or(0)
+    }
+
+    // realises FR-543, IR-012, IR-220
+    /// Sets the *playback delay*, whether one is waited and the index of its value, as the
+    /// *playback delay dialog* accepts it, switches the *playback delay dialog setting* on where
+    /// `disable_dialog`, and stores them; called by the *front end* when the dialog is accepted.
+    /// An index that names no value sets nothing, the field of the dialog admitting none.
+    #[qslot(qml_name = "setPlaybackDelay")]
+    fn set_playback_delay(&mut self, on: bool, index: i32, disable_dialog: bool) {
+        let Ok(index) = usize::try_from(index) else {
+            return;
+        };
+        let changed_playback_delay =
+            self.playback_delay_on() != on || self.playback_delay_index() != index as i32;
+        let changed_disabled = disable_dialog && !self.playback_delay_dialog_disabled();
+        {
+            let mut settings = self.settings.borrow_mut();
+            if settings.set_playback_delay(on, index).is_err() {
+                return;
+            }
+            if disable_dialog {
+                settings.set_playback_delay_dialog_disabled(true);
+            }
+        }
+        self.store();
+        if changed_playback_delay {
+            self.playback_delay_changed();
+        }
+        if changed_disabled {
+            self.playback_delay_dialog_disabled_changed();
+        }
+    }
+
+    // realises FR-537, IR-219
+    /// Keeps the *settings file* aside, writes the saved file at `path` in its place and applies
+    /// the settings it holds, the paths of FR-090 excepted; scheduled by the *player*, which
+    /// checked that the file is read.
+    #[qslot(qml_name = "applySettingsFile")]
+    fn apply_settings_file(&mut self, path: String) {
+        let target = Settings::default_path();
+        let aside = aside_path(&target);
+        if target.is_file() && !aside.exists() {
+            let _ = fs::copy(&target, &aside);
+        }
+        if fs::copy(&path, &target).is_ok() {
+            self.reload_settings();
+        }
+    }
+
+    // realises FR-537, IR-219
+    /// Writes the *settings file* kept aside back and applies it, so that the settings of the
+    /// user who ran the script are as before; scheduled by the *player* when the *playback*
+    /// ends.
+    #[qslot(qml_name = "restoreSettingsFile")]
+    fn restore_settings_file(&mut self) {
+        let target = Settings::default_path();
+        let aside = aside_path(&target);
+        if aside.is_file() && fs::copy(&aside, &target).is_ok() {
+            let _ = fs::remove_file(&aside);
+            self.reload_settings();
+        }
+    }
+
+    // realises FR-537, FR-543
+    /// Applies the *settings file* as it stands: the times, the *automatic setting*, the
+    /// *tab size*, the *spaces setting*, the *silent creation setting* and the *insert key*,
+    /// each as the user's change would, the paths, the *playback delay* and the *playback delay
+    /// dialog setting* left as they are, since the delay the *playback* was started with holds
+    /// for the whole *playback*.
+    fn reload_settings(&mut self) {
+        let Ok(loaded) = Settings::load(&Settings::default_path()) else {
+            return;
+        };
+        let idle_time = i32::try_from(loaded.idle_time()).unwrap_or(i32::MAX);
+        let long_idle_time = i32::try_from(loaded.long_idle_time()).unwrap_or(i32::MAX);
+        let tab_size = i32::try_from(loaded.tab_size()).unwrap_or(i32::MAX);
+        let _ = self.try_set_settings(
+            idle_time,
+            long_idle_time,
+            loaded.automatic(),
+            tab_size,
+            loaded.tabs_to_spaces(),
+            loaded.silent_creation(),
+            self.playback_delay_on(),
+            self.playback_delay_index(),
+            self.playback_delay_dialog_disabled(),
+        );
+        self.set_insert_key_named(loaded.insert_key().name());
     }
 
     // slots
     // realises FR-099, FR-100, FR-132, FR-133, FR-134, FR-135, FR-140, FR-141, FR-255, FR-257,
-    // FR-490, FR-492, FR-518
+    // FR-490, FR-492, FR-518, FR-544
     /// Sets the two times of every code editor, in milliseconds, the *automatic setting*, the
-    /// *tab size*, in characters, the *spaces setting*, the *silent creation setting* and the
-    /// *character playback delay*, in tenths of a second, and stores them; yields whether the
-    /// values satisfy the constraints, and emits `settings_rejected` with the message naming the
+    /// *tab size*, in characters, the *spaces setting*, the *silent creation setting*, the
+    /// *playback delay*, whether one is waited and the index of its value among the thirteen,
+    /// and the *playback delay dialog setting*, and stores them; yields whether the values
+    /// satisfy the constraints, and emits `settings_rejected` with the message naming the
     /// violated one where they do not, nothing being set then.
     ///
-    /// * The *tab size* is checked first, then the two times, then the delay.
+    /// * The *tab size* is checked first, then the index of the delay, then the two times.
     /// * With the *automatic setting* on, the times are left as they are, since the next
     ///   *processing time* sets them (FR-132).
     #[qslot(qml_name = "trySetSettings")]
@@ -545,18 +712,22 @@ impl Workbench {
         tab_size: i32,
         tabs_to_spaces: bool,
         silent_creation: bool,
-        playback_delay: i32,
+        playback_delay_on: bool,
+        playback_delay_index: i32,
+        playback_delay_dialog_disabled: bool,
     ) -> bool {
         let idle_time = u32::try_from(idle_time).unwrap_or(0);
         let long_idle_time = u32::try_from(long_idle_time).unwrap_or(0);
         let tab_size = u32::try_from(tab_size).unwrap_or(0);
-        let playback_delay = u32::try_from(playback_delay).unwrap_or(u32::MAX);
+        let playback_delay_index = usize::try_from(playback_delay_index).unwrap_or(usize::MAX);
         if let Some(message) = tab_size_violation(tab_size) {
             self.settings_rejected(message);
             return false;
         }
-        if let Some(message) = playback_delay_violation(playback_delay) {
-            self.settings_rejected(message);
+        if let Err(error) =
+            Settings::default().set_playback_delay(playback_delay_on, playback_delay_index)
+        {
+            self.settings_rejected(error.to_string());
             return false;
         }
         if !automatic {
@@ -572,14 +743,18 @@ impl Workbench {
         let changed_tab_size = self.tab_size() != tab_size;
         let changed_tabs_to_spaces = self.tabs_to_spaces() != tabs_to_spaces;
         let changed_silent_creation = self.silent_creation() != silent_creation;
-        let changed_playback_delay = self.playback_delay() != playback_delay;
+        let changed_playback_delay = self.playback_delay_on() != playback_delay_on
+            || self.playback_delay_index() != playback_delay_index as i32;
+        let changed_dialog_disabled =
+            self.playback_delay_dialog_disabled() != playback_delay_dialog_disabled;
         {
             let mut settings = self.settings.borrow_mut();
             settings.set_automatic(automatic);
             let _ = settings.set_tab_size(tab_size);
             settings.set_tabs_to_spaces(tabs_to_spaces);
             settings.set_silent_creation(silent_creation);
-            let _ = settings.set_playback_delay(playback_delay);
+            let _ = settings.set_playback_delay(playback_delay_on, playback_delay_index);
+            settings.set_playback_delay_dialog_disabled(playback_delay_dialog_disabled);
         }
         self.store();
         self.times_changed();
@@ -595,6 +770,9 @@ impl Workbench {
         if changed_playback_delay {
             self.playback_delay_changed();
         }
+        if changed_dialog_disabled {
+            self.playback_delay_dialog_disabled_changed();
+        }
         self.recorder
             .borrow_mut()
             .record(&Action::Settings(SettingsValues {
@@ -604,7 +782,7 @@ impl Workbench {
                 tab_size,
                 tabs_to_spaces,
                 silent_creation,
-                playback_delay,
+                playback_delay: playback_delay_on.then(|| PLAYBACK_DELAYS[playback_delay_index]),
             }));
         true
     }

@@ -68,7 +68,7 @@ fn a_file_opened_in_the_start_up_phase_is_the_network_file_and_is_not_stored() {
     fs::write(&opened, "meta compiler-compiler network\n").expect("the file is written");
     let settings_path = Settings::default_path();
     let stored_before = Settings::load(&settings_path)
-        .map(|settings| settings.network_path().to_owned())
+        .map(|settings| settings.network_path().map(str::to_owned))
         .unwrap_or_default();
     // SAFETY: the test is the only thread of its process at this point, so that no other thread
     // reads the environment while it is written.
@@ -86,7 +86,7 @@ fn a_file_opened_in_the_start_up_phase_is_the_network_file_and_is_not_stored() {
         .and_then(|dir| dir.canonicalize().ok())
         == folder.join("second").canonicalize().ok();
     let stored_after = Settings::load(&settings_path)
-        .map(|settings| settings.network_path().to_owned())
+        .map(|settings| settings.network_path().map(str::to_owned))
         .unwrap_or_default();
     let _ = fs::remove_dir_all(&folder);
     assert_eq!(

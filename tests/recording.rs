@@ -9,9 +9,9 @@
 
 use genc3wb::bridge::editing::Editing;
 use genc3wb::bridge::workbench::Workbench;
-use genc3wb::core::automation::{
-    Action, EditorItem, EditorName, gc3_beside, read_script,
-};
+use genc3wb::core::automation::{Action, EditorItem, EditorName, gc3_beside, read_script};
+use genc3wb::core::recording::relative;
+use genc3wb::core::settings::Settings;
 
 use qtbridge::QApp;
 
@@ -35,16 +35,16 @@ fn build_system() -> String {
     std::env::var("GENC3D").expect("GENC3D names the service executable genc3d")
 }
 
-/// Yields the *front end* of the test: a step machine of one timer that starts the *recording*
-/// into `script`, backs `work` up into `backup`, activates the network once it is valid, opens
+/// Yields the *front end* of the test: a step machine of one timer that provides the text of the
+/// *network file*, starts the *recording* into `script` once the network is active, which records
+/// the state it finds, deactivates and activates the network, opens
 /// the *node* once it is active, focuses, places the cursor, appends `ddd` to its *input* and
 /// expires the idle, stores the *input* and the *output* as *expected files*, closes the
 /// *node window*, appends a comment to the *network file* and stores it, deactivates, stops the
 /// *recording* and exits with 0; with 2 where the
-/// *node editor* is not named, 3 where the backup fails, and 8 where a step does not come
-/// within a minute. A network the *build system* activated at its start is deactivated first,
+/// *node editor* is not named, and 8 where a step does not come within a minute. A network the *build system* activated at its start is deactivated first,
 /// so that the activation is the user's and recorded.
-fn front_end(network: &str, script: &str, work: &str, backup: &str) -> Vec<u8> {
+fn front_end(network: &str, script: &str) -> Vec<u8> {
     format!(
         r#"
 import QtQuick
@@ -67,20 +67,17 @@ ApplicationWindow {{
             root.ticks += 1;
             var mode = Workbench.network.networkMode;
             if (root.step === 0) {{
-                Workbench.automation.startRecording("{script}");
-                var reason = Workbench.automation.backUp("{work}", "{backup}");
-                if (reason.length > 0) {{
-                    console.log("backup: " + reason);
-                    Qt.exit(3);
-                }}
                 Workbench.networkInput.idleExpired();
                 root.step = 1;
-            }} else if (root.step === 1 && mode === 3) {{
-                // the build system activated the valid network at its start: deactivated, so
-                // that the activation is the user's
+            }} else if (root.step === 1 && mode === 3 && Workbench.network.graphSource.length > 0) {{
+                // the recording starts on the built network the product activated of its own
+                // once the node descriptions and the valid mode were known (FR-534), which it
+                // records as the state it finds; the network is deactivated then, so that the
+                // activation that follows is the user's
+                Workbench.automation.startRecording("{script}");
                 Workbench.network.deactivate();
                 root.step = 11;
-            }} else if ((root.step === 1 || root.step === 11) && mode === 2) {{
+            }} else if (root.step === 11 && mode === 2) {{
                 Workbench.network.activate();
                 root.step = 2;
             }} else if (root.step === 2 && mode === 3 && Workbench.network.graphSource.length > 0) {{
@@ -166,7 +163,9 @@ fn copy_folder(from: &Path, to: &Path) {
 fn verification_run(script: &Path, folder: &Path) -> (i32, Vec<String>, String) {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let executable = PathBuf::from(env!("CARGO_BIN_EXE_genc3wb"));
-    let beside = executable.parent().expect("the executable lies in a folder");
+    let beside = executable
+        .parent()
+        .expect("the executable lies in a folder");
     fs::copy(
         manifest.join("src/automation.gc3"),
         beside.join("automation.gc3"),
@@ -238,7 +237,10 @@ fn a_recorded_session_reads_back_through_gc3_and_plays_back_with_every_action_ok
     unsafe { std::env::set_var("QT_QPA_PLATFORM", "offscreen") };
     let path_of = |path: &Path| path.to_string_lossy().into_owned();
     let script = folder.join("script.gc3s");
-    let backup = folder.join("backup");
+    // the settings file beside the test executable, saved by the recording as its first file
+    let settings_path = Settings::default_path();
+    let settings_before = fs::read(&settings_path).ok();
+    fs::write(&settings_path, "tab_size: 4\n").expect("the settings file is written");
     let exit_code = QApp::new()
         .application_name("genc3wb-test")
         .register::<Workbench>()
@@ -246,89 +248,107 @@ fn a_recorded_session_reads_back_through_gc3_and_plays_back_with_every_action_ok
         .load_qml(&front_end(
             &path_of(&work.join("n.gc3n")),
             &path_of(&script),
-            &path_of(&work),
-            &path_of(&backup),
         ))
         .run();
     std::thread::sleep(Duration::from_millis(500));
+    match settings_before {
+        Some(octets) => fs::write(&settings_path, octets).expect("the settings are restored"),
+        None => {
+            let _ = fs::remove_file(&settings_path);
+        }
+    }
     let text = fs::read_to_string(&script).unwrap_or_default();
-    // a `deactivate` before the activation is the test's, where the build system activated the
-    // network at its start, and is left out of the comparison
-    let lines: Vec<&str> = text
-        .lines()
-        .enumerate()
-        .filter(|(index, line)| !(*index == 5 && *line == "deactivate"))
-        .map(|(_, line)| line)
-        .collect();
+    let lines: Vec<&str> = text.lines().collect();
     let read = read_script(
         &script,
         &gc3_beside(&build_system()),
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("src/automation.gc3"),
     );
-    let mut actions: Vec<Action> = read
+    let actions: Vec<Action> = read
         .as_ref()
-        .map(|script| script.steps.iter().map(|step| step.action.clone()).collect())
+        .map(|script| {
+            script
+                .steps
+                .iter()
+                .map(|step| step.action.clone())
+                .collect()
+        })
         .unwrap_or_default();
-    if actions.get(3) == Some(&Action::Deactivate) {
-        actions.remove(3);
-    }
     let expected_0 = fs::read(folder.join("script-0.gc3v")).unwrap_or_default();
     let expected_1 = fs::read(folder.join("script-1.gc3v")).unwrap_or_default();
     let expected_2 = fs::read(folder.join("script-2.gc3v")).unwrap_or_default();
-    let backed_up = fs::read_to_string(backup.join("in.txt")).unwrap_or_default();
+    let saved_network =
+        fs::read_to_string(folder.join("backup").join("2").join("1.bak")).unwrap_or_default();
+    let saved_settings =
+        fs::read_to_string(folder.join("backup").join("1").join("1.bak")).unwrap_or_default();
     // a copy of the scenario, since the playback restores the work folder from the backup
     let replay = root.join("replay");
     copy_folder(&folder, &replay);
     let (code, report, output) = verification_run(&replay.join("script.gc3s"), &replay);
+    // the files at the end of the playback are those the recording ended in
+    let output_after = fs::read(replay.join("work").join("out.txt")).unwrap_or_default();
     let _ = fs::remove_dir_all(&root);
     let input = EditorName::Node {
         name: "copy".to_owned(),
         item: EditorItem::Input(0),
     };
+    let build_system_line = format!("build system \"{}\"", relative(&folder, &build_system()));
+    let expected: Vec<&str> = [
+        "init",
+        "settings file \"backup/1/1.bak\"",
+        build_system_line.as_str(),
+        "restore \"backup/2/1.bak\" into \"work/n.gc3n\"",
+        "restore \"backup/2/2.bak\" into \"work/copy.gc3\"",
+        "restore \"backup/2/3.bak\" into \"work/in.txt\"",
+        "restore \"backup/2/4.bak\" into \"work/out.txt\"",
+        "network \"work/n.gc3n\"",
+        "activate",
+        "typing mode insert",
+        "deactivate",
+        "activate",
+        "open node copy",
+        "focus node copy input 0",
+        "cursor node copy input 0 1:12",
+        "edit node copy input 0 1:12 0 \"ddd\"",
+        "idle node copy input 0",
+        "verify node copy input 0 \"script-0.gc3v\"",
+        "focus node copy output 0",
+        "verify node copy output 0 \"script-1.gc3v\"",
+        "close node copy",
+        "focus network",
+        "edit network 7:1 0 \"// end\\n\"",
+        "idle network",
+        "verify network \"script-2.gc3v\"",
+        "deactivate",
+    ]
+    .to_vec();
     assert_eq!(
-        (exit_code, lines.len(), lines.get(1).copied(), &lines[2..]),
         (
-            0,
-            20,
-            Some("automation script"),
-            &[
-                "network \"work/n.gc3n\"",
-                "restore \"backup\" into \"work\"",
-                "idle network",
-                "activate",
-                "open node copy",
-                "focus node copy input 0",
-                "cursor node copy input 0 1:12",
-                "edit node copy input 0 1:12 0 \"ddd\"",
-                "idle node copy input 0",
-                "verify node copy input 0 \"script-0.gc3v\"",
-                "focus node copy output 0",
-                "verify node copy output 0 \"script-1.gc3v\"",
-                "close node copy",
-                "focus network",
-                "edit network 7:1 0 \"// end\\n\"",
-                "idle network",
-                "verify network \"script-2.gc3v\"",
-                "deactivate",
-            ][..]
+            exit_code,
+            lines.len(),
+            lines.get(1).copied(),
+            lines[2..].to_vec()
         ),
+        (0, 28, Some("automation script"), expected),
         "the recording:\n{text}"
     );
     assert_eq!(
         (
-            lines[0].starts_with("// Recorded by genc³wb 0.33.0.0 on "),
+            lines[0].starts_with("// Recorded by genc³wb 0.42.0.0 on "),
             actions.len(),
-            actions.get(4),
-            actions.get(6),
-            actions.get(7),
+            actions.get(12),
+            actions.get(14),
+            actions.get(15),
             expected_0.as_slice(),
             expected_1.as_slice(),
             expected_2.ends_with(b"out.txt\n// end\n"),
-            backed_up.as_str(),
+            saved_network.as_str(),
+            // the product stored the settings before the recording began, so the copy holds them all
+            saved_settings.contains("tab_size: 4\n"),
         ),
         (
             true,
-            18,
+            26,
             Some(&Action::OpenNode("copy".to_owned())),
             Some(&Action::Cursor {
                 editor: input.clone(),
@@ -345,14 +365,25 @@ fn a_recorded_session_reads_back_through_gc3_and_plays_back_with_every_action_ok
             b"hello worldddd".as_slice(),
             b"hello worldddd".as_slice(),
             true,
-            "hello world",
+            ONE_NODE,
+            true,
         ),
         "read: {read:?}"
     );
     let last_line = text.lines().count();
     assert_eq!(
-        (code, report.len(), report.last().map(String::as_str)),
-        (0, last_line - 2, Some(format!("{last_line}: ok: deactivate").as_str())),
+        (
+            code,
+            report.len(),
+            report.last().map(String::as_str),
+            output_after.as_slice()
+        ),
+        (
+            0,
+            last_line - 2,
+            Some(format!("{last_line}: ok: deactivate").as_str()),
+            b"hello worldddd".as_slice()
+        ),
         "the playback:\n{output}"
     );
 }

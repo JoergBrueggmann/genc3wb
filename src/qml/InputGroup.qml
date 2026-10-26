@@ -26,6 +26,8 @@ GroupBox {
     property alias codeEditor: editor
 
     signal detachRequested()
+    // the close button was activated: Main closes the network (FR-535)
+    signal closeRequested()
 
     // Selects the position `index` of the mode switch, as a tap does (FR-507).
     function selectMode(index: int) {
@@ -77,6 +79,18 @@ GroupBox {
                 text: "+"
                 visible: root.group?.selectable ?? false
                 onClicked: newFileDialog.open()
+            }
+
+            // the close button: closes the network (FR-535)
+            ToolButton {
+                id: closeButton
+
+                text: "✕"
+                visible: root.group?.selectable ?? false
+                enabled: (root.group?.path ?? "").length > 0
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Close network")
+                onClicked: root.closeRequested()
             }
 
             ModeSwitch {

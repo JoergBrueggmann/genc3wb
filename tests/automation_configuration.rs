@@ -22,11 +22,12 @@ const SCRIPT: &str = "// a script of every action\nautomation script\n\
     edit node copy input 0 1:12 0 \"ddd\\n\\\"q\\\"\"\nidle node copy input 0\n\
     mode node copy input 0 hex\ndigits node copy input 0 hex 4 2 \"AB\"\ncursor node copy dsl 3:4\n\
     select file \"src/in.txt\" 1:1 2:5\nfocus node copy\nfocus main\nfocus node copy diagnostics\n\
-    long idle network\nsettings idle 2.0 long idle 16 automatic off tab size 4 spaces on silent creation off delay 3\n\
+    long idle network\nsettings idle 2.0 long idle 16 automatic off tab size 4 spaces on silent creation off delay 0.28\n\
     insert key \"Ctrl+I\"\ntyping mode overwrite\nanswer save yes\nanswer creation cancel\n\
     answer creation failure continue\nundo node copy input 0\nredo node copy input 0\n\
     open file \"src/out.txt\"\nverify node copy output 0 \"expected/out.gc3v\"\nclose node copy\n\
-    close file \"src/out.txt\"\ndeactivate\n";
+    close file \"src/out.txt\"\ndeactivate\ninit\nclose network\nsettings file \"backup/1/1.bak\"\n\
+    remove \"src/out.txt\"\n";
 
 /// Yields `gc3` beside the build system of `GENC3D`, and the configuration of 'src'.
 fn tools() -> (PathBuf, PathBuf) {
@@ -44,6 +45,39 @@ fn tools() -> (PathBuf, PathBuf) {
  * conforms to doc  : ✅
  * covers bridge    : Automation::play */
 
+// FR-495, FR-547: the time in seconds without a unit, with the unit, and in milliseconds
+// needs what the test below needs
+#[test]
+#[ignore]
+fn a_delay_is_rendered_with_its_unit_and_read_to_the_millisecond() {
+    let (gc3, configuration) = tools();
+    let folder = std::env::temp_dir().join(format!("g3wb-ad-{}", std::process::id()));
+    fs::create_dir_all(&folder).expect("the temporary directory can be created");
+    let path = folder.join("delays.gc3s");
+    fs::write(
+        &path,
+        "automation script\ndelay 1.5\ndelay 250 ms\ndelay 2 s  // a pause\ndelay 0.0004\n",
+    )
+    .expect("the script is written");
+    let script = read_script(&path, &gc3, &configuration);
+    let _ = fs::remove_dir_all(&folder);
+    let actions: Vec<Action> = script
+        .expect("the script is read")
+        .steps
+        .iter()
+        .map(|step| step.action.clone())
+        .collect();
+    assert_eq!(
+        actions,
+        vec![
+            Action::Delay(1500),
+            Action::Delay(250),
+            Action::Delay(2000),
+            Action::Delay(0)
+        ]
+    );
+}
+
 // FR-493 to FR-497, IR-212, IR-213
 // needs the basic executable gc3 of genc³ 0.36.0.0 or later beside the genc3d named by the
 // environment variable GENC3D
@@ -57,8 +91,11 @@ fn every_action_is_read_from_the_canonical_form_gc3_renders() {
     fs::write(&path, SCRIPT).expect("the script is written");
     let script = read_script(&path, &gc3, &configuration);
     let faulty = read_script(&folder.join("none.gc3s"), &gc3, &configuration);
-    fs::write(&path, "automation script\nopen node copy\nedit network 1:1 0 unquoted\n")
-        .expect("the script is written");
+    fs::write(
+        &path,
+        "automation script\nopen node copy\nedit network 1:1 0 unquoted\n",
+    )
+    .expect("the script is written");
     let unquoted = read_script(&path, &gc3, &configuration);
     let _ = fs::remove_dir_all(&folder);
     let script = script.expect("the script of every action is read");
@@ -70,12 +107,16 @@ fn every_action_is_read_from_the_canonical_form_gc3_renders() {
             lines.last().copied(),
             &script.steps[7].action,
             &script.steps[6].action,
-            script.steps[2].text.as_str()
+            script.steps[2].text.as_str(),
+            &script.steps[30].action,
+            &script.steps[31].action,
+            &script.steps[32].action,
+            &script.steps[33].action
         ),
         (
-            30,
+            34,
             Some(3),
-            Some(33),
+            Some(37),
             &Action::Edit {
                 editor: EditorName::Node {
                     name: "copy".to_owned(),
@@ -90,7 +131,11 @@ fn every_action_is_read_from_the_canonical_form_gc3_renders() {
                 create: true,
                 silent: true
             }),
-            "network \"src/n.gc3n\""
+            "network \"src/n.gc3n\"",
+            &Action::Init,
+            &Action::CloseNetwork,
+            &Action::SettingsFile(folder.join("backup/1/1.bak").to_string_lossy().into_owned()),
+            &Action::Remove(folder.join("src/out.txt").to_string_lossy().into_owned())
         )
     );
     assert!(
@@ -119,12 +164,16 @@ fn every_line_the_recorder_renders_reads_back_into_its_action() {
         item: EditorItem::Input(0),
     };
     let file = EditorName::File {
-        path: folder.join("src").join("in.txt").to_string_lossy().into_owned(),
+        path: folder
+            .join("src")
+            .join("in.txt")
+            .to_string_lossy()
+            .into_owned(),
     };
     let actions = vec![
         Action::Restore {
-            backup: folder.join("backup").to_string_lossy().into_owned(),
-            source: folder.join("src").to_string_lossy().into_owned(),
+            saved: folder.join("backup").to_string_lossy().into_owned(),
+            file: folder.join("src").to_string_lossy().into_owned(),
         },
         Action::BuildSystem(
             folder
@@ -135,7 +184,13 @@ fn every_line_the_recorder_renders_reads_back_into_its_action() {
                 .to_string_lossy()
                 .into_owned(),
         ),
-        Action::Network(folder.join("src").join("n.gc3n").to_string_lossy().into_owned()),
+        Action::Network(
+            folder
+                .join("src")
+                .join("n.gc3n")
+                .to_string_lossy()
+                .into_owned(),
+        ),
         Action::NewNetwork(folder.join("new.gc3n").to_string_lossy().into_owned()),
         Action::Idle(EditorName::Network),
         Action::Activate,
@@ -191,7 +246,7 @@ fn every_line_the_recorder_renders_reads_back_into_its_action() {
             tab_size: 4,
             tabs_to_spaces: true,
             silent_creation: false,
-            playback_delay: 3,
+            playback_delay: Some(283),
         }),
         Action::InsertKey("Ctrl+I".to_owned()),
         Action::TypingMode(false),
@@ -210,7 +265,13 @@ fn every_line_the_recorder_renders_reads_back_into_its_action() {
         Action::Answer(DialogAnswer::CreationFailure(false)),
         Action::Undo(input.clone()),
         Action::Redo(input.clone()),
-        Action::OpenFile(folder.join("src").join("out.txt").to_string_lossy().into_owned()),
+        Action::OpenFile(
+            folder
+                .join("src")
+                .join("out.txt")
+                .to_string_lossy()
+                .into_owned(),
+        ),
         Action::Verify {
             editor: EditorName::Node {
                 name: "copy".to_owned(),
@@ -219,7 +280,13 @@ fn every_line_the_recorder_renders_reads_back_into_its_action() {
             file: folder.join("every-0.gc3v").to_string_lossy().into_owned(),
         },
         Action::CloseNode("copy".to_owned()),
-        Action::CloseFile(folder.join("src").join("out.txt").to_string_lossy().into_owned()),
+        Action::CloseFile(
+            folder
+                .join("src")
+                .join("out.txt")
+                .to_string_lossy()
+                .into_owned(),
+        ),
         Action::Deactivate,
     ];
     let text = actions
@@ -227,8 +294,11 @@ fn every_line_the_recorder_renders_reads_back_into_its_action() {
         .map(|action| line_of(action, &folder) + "\n")
         .collect::<String>();
     let path = folder.join("every.gc3s");
-    fs::write(&path, format!("// rendered by the recorder\nautomation script\n{text}"))
-        .expect("the script is written");
+    fs::write(
+        &path,
+        format!("// rendered by the recorder\nautomation script\n{text}"),
+    )
+    .expect("the script is written");
     let script = read_script(&path, &gc3, &configuration);
     let _ = fs::remove_dir_all(&folder);
     let script = script.expect("the rendered script is read");

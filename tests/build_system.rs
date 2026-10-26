@@ -85,12 +85,17 @@ fn awaited_loss(told: &Receiver<Told>) -> bool {
     false
 }
 
-/// Starts the *build system* on the *network file* of `directory`, so that it runs every *node*
-/// of it, with `sinks` for its watch.
+/// Starts the *build system* on the *network file* of `directory`, with `sinks` for its watch,
+/// and transmits the *activate request* once, as the network editor does once a loaded network
+/// is valid (FR-534), so that it runs every *node* of a valid network; the outcome of that try
+/// is the network's, told by the *state responses*.
 fn started(directory: &Path, sinks: StateSinks) -> (NetworkBuilder, Result<(), BuildError>) {
     let network_path = directory.join("n.gc3n").to_string_lossy().into_owned();
     let mut builder = NetworkBuilder::new(directory.join("s"), sinks);
     let started = builder.restart(&build_system(), &network_path);
+    if started.is_ok() {
+        let _ = builder.activate();
+    }
     (builder, started)
 }
 

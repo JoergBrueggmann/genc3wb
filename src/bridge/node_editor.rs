@@ -6,10 +6,10 @@
 use crate::bridge::document_registry::DocumentRegistry;
 use crate::bridge::input_group::InputGroup;
 use crate::bridge::output_group::OutputGroup;
-use crate::core::automation::{EditorItem, EditorName};
 use crate::core::api_message::{
     Diagnostic, NodeMode, bit_marks_of_diagnostics, marks_of_diagnostics, rendering_of_documents,
 };
+use crate::core::automation::{EditorItem, EditorName};
 use crate::core::build_system::{
     BuildError, DiagnosticAnswer, DocumentContent, StateSink, Watched,
 };

@@ -1,0 +1,14 @@
+// the network of the example: the output of the first node is the meta compiler DSL of the second
+meta compiler-compiler network
+
+  node writer
+    inputs
+      letters.txt
+    outputs
+      reader.gc3
+
+  node reader
+    inputs
+      text.txt
+    outputs
+      copy.txt

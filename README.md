@@ -40,61 +40,42 @@ on genc3.com.
 ## Features
 
 - **The build network, live.** The compiler network editor edits the network
-  file while `genc3d` evaluates it and shows the network it states as a graph:
-  the nodes, their rule files, inputs and outputs, and the files that connect
-  them. The mode of the network — invalid, valid or active — stands in the
-  status bar and in the colours of the graph, and a switch activates and
-  deactivates the network.
-- **One window per step.** A double-click on a node opens it as a machine: the
-  inputs on the left, the outputs on the right, and the rule file, the meta
-  compiler DSL of the node, below as its control. Several nodes are open at
-  once, and a file that several windows present is one document: an edit in
-  one window shows in the others and reaches every node that has the file.
-- **Edits travel as deltas.** Every edit of a rule file or of an input is
-  transmitted to the node after a short idle time, which the workbench sets
-  from the measured answer times. The outputs are shown as the node holds them
-  and are stored after every change the network accepts without an error.
+  file while `genc3d` evaluates it and shows the network as a graph: the nodes,
+  their rule files, inputs and outputs, and the files that connect them. You
+  see at every moment whether the network is invalid, valid or active, and you
+  activate and deactivate it with a switch.
+- **One window per step.** A node opens as a machine: its inputs, its outputs
+  and, as its control, its rule file, the meta compiler DSL. Several nodes are
+  open at once, and a file that several windows present is one document, so
+  that an edit shows everywhere it matters and reaches every node that has it.
+- **Edits travel as deltas.** Every edit reaches the node as a change, not as a
+  file, after a short idle time the workbench tunes to the measured answer
+  times. The outputs follow as the node holds them and are stored once the
+  network accepts the change, so that the chain stays live while you type.
 - **Diagnostics where they belong.** Errors, warnings and information are
-  marked in the editor they concern, whoever caused them — an edit in the
-  window or a node upstream that produced an input anew — with the message as
-  a tooltip, and are listed on a page of their own. A node downstream of an
-  error points at the node it originates at.
-- **Text, hex and bits.** Inputs and outputs are held as octets and shown as
-  UTF-8 text, as hexadecimal digits or as binary digits. Inputs are edited in
-  all three, digit by digit, with selection, clipboard, undo and redo, and
-  inserting or overwriting typing. A diagnostic of a binary document is marked
-  by its bit offset.
-- **Editor windows on any file of the network.** A double-click on an input or
-  an output of the graph opens it in a window of its own. The window holds the
-  nodes that have its file, so that the chain runs and the outputs follow with
-  no node window open.
-- **Started quickly.** The `+` button creates a network file from a template
-  of two nodes. When you open a node or activate the network while a rule file
-  or an input does not exist yet, a dialog names the files and creates them on
-  your word, folders included: the rule file from a template that reads every
-  UTF-8 character and renders the symbol tree, an input empty, so that a first
-  network runs before a rule is written. The dialog can be switched off for
-  good, in itself or in the settings.
-- **Tabs or spaces.** The Tab key inserts a tab character, or spaces up to the
-  next tab stop when you prefer them, a setting beside the tab size.
-- **Scripted, for tests and demonstrations.** An automation script, a gc3s-file in
-  a notation genc³ itself parses, plays back the actions of a user: naming and
-  activating the network, opening nodes and files, typing into an editor, the
-  idle expiries, the settings; it restores a backed-up folder as its precondition
-  and verifies what an editor shows against an expected file. Started from the
-  menu 'Automation' with a report dialog, or with `genc3wb --verify <script>`,
-  which writes one report line per action and exits with 0, 1 or 2. A character
-  playback delay in the settings types a demonstration one character at a time.
-- **Recorded as you work.** Every start records what you do that changes data
-  into 'usage.gc3s' in a folder of its own under 'rec' beside 'bin', line by
-  line as it happens, so that a crash leaves the script that led to it; the
-  menu 'Automation' stops it, starts a recording into a file of your choice,
-  backs a folder up to be restored on replay, and stores what the focused
-  editor shows as an expected file to be verified on replay.
+  marked in the editor they concern, whoever caused them, with the message at
+  hand and listed on a page of their own. A node downstream of an error points
+  at the node it originates at, so that a fault is found where it was made.
+- **Text, hex and bits.** Inputs and outputs are octets, shown and edited as
+  UTF-8 text, as hexadecimal digits or as bits, so that binary data is as much
+  at home as text, with selection, clipboard, undo and redo in every view.
+- **Editor windows on any file of the network.** Any input or output opens in
+  a window of its own, which keeps the nodes that have it running, so that a
+  chain runs and its outputs follow without a node window open.
+- **Started quickly.** A new network file comes from a template, and the rule
+  files and inputs a node lacks are created on your word, with a rule that
+  passes every character through, so that a first network runs before a rule
+  is written. Tabs or spaces, as you prefer.
+- **Automation, for tests and demonstrations.** Every session is recorded as
+  you work, as a script in a notation genc³ itself parses, together with the
+  files the network works on and your settings, so that what you did can be
+  played back from the same state: to reproduce a problem exactly as it
+  happened, to run a scenario as a test that verifies what the editors show,
+  or to demonstrate the workbench step by step, at the pace you choose.
 - **At home on the desktop.** A double-click on a gc3n-file opens it with the
-  workbench, every network in a workbench of its own, and a lock file beside
-  the network file names the workbench that holds it. The settings lie beside
-  the executable, so that the distribution is one folder.
+  workbench, every network in a workbench of its own, and a lock file keeps two
+  workbenches from editing one network. The network is closed with a click,
+  and the settings travel with the installation.
 
 ## Built with
 

@@ -523,10 +523,28 @@ mod tests {
     struct CaseDir(std::path::PathBuf);
 
     impl CaseDir {
+        /// The folder of one test case: named after the case, the test, which is the name of
+        /// its thread, and the process, so that the tests of one run, which run in parallel,
+        /// never share a folder; a folder that exists already is a fault of the tests, not
+        /// removed under the test that holds it.
         fn new(name: &str) -> CaseDir {
-            let dir = std::env::temp_dir()
-                .join(format!("genc3wb-input_file-{name}-{}", std::process::id()));
-            let _ = fs::remove_dir_all(&dir);
+            let thread = std::thread::current();
+            let test = thread
+                .name()
+                .unwrap_or("main")
+                .rsplit("::")
+                .next()
+                .unwrap_or("main")
+                .to_owned();
+            let dir = std::env::temp_dir().join(format!(
+                "genc3wb-input_file-{name}-{test}-{}",
+                std::process::id()
+            ));
+            assert!(
+                !dir.exists(),
+                "the folder '{}' exists already: two tests share a case folder",
+                dir.display()
+            );
             fs::create_dir_all(&dir).expect("the temporary directory of the test can be created");
             CaseDir(dir)
         }

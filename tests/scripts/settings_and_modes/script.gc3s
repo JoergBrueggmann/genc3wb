@@ -1,7 +1,11 @@
 // The actions that change the settings, the typing mode, the insert key, the editor mode and the
 // digits, the cursor, the selection and the focus, each played and the data verified.
 automation script
-restore "backup" into "work"
+init
+restore "backup/n.gc3n" into "work/n.gc3n"
+restore "backup/copy.gc3" into "work/copy.gc3"
+restore "backup/in.txt" into "work/in.txt"
+restore "backup/out.txt" into "work/out.txt"
 network "work/n.gc3n"
 idle network
 activate
@@ -13,7 +17,7 @@ select node copy input 0 1:1 1:6
 typing mode overwrite
 typing mode insert
 insert key "Ctrl+I"
-settings idle 0.4 long idle 1.0 automatic off tab size 2 spaces on silent creation off delay 0
+settings idle 0.4 long idle 1.0 automatic off tab size 2 spaces on silent creation off delay off
 mode node copy input 0 hex
 digits node copy input 0 hex 0 2 "6C"
 idle node copy input 0
