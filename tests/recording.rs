@@ -334,7 +334,7 @@ fn a_recorded_session_reads_back_through_gc3_and_plays_back_with_every_action_ok
     );
     assert_eq!(
         (
-            lines[0].starts_with("// Recorded by genc³wb 0.42.0.0 on "),
+            lines[0].starts_with("// Recorded by genc³wb 0.43.0.0 on "),
             actions.len(),
             actions.get(12),
             actions.get(14),

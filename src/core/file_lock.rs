@@ -106,7 +106,7 @@ pub enum Taking {
 
 // realises FR-214, FR-221, C-008
 /// A *lock file* this process holds, by the advisory lock of the operating system: `flock` on
-/// MacOS, so that it is released when the process terminates in whatever way.
+/// MacOS and Linux, so that it is released when the process terminates in whatever way.
 ///
 /// * Dropping it removes the *lock file* and releases the lock (FR-221).
 /// * A file that another genc³wb locked is refused, and so is one this process locked through
@@ -213,7 +213,8 @@ fn is_same_file(file: &File, path: &Path) -> bool {
 }
 
 /// Yields whether the open `file` is the file at `path`; taken as given where the operating
-/// system offers no number of a file, as the *lock files* are specified for MacOS alone (C-008).
+/// system offers no number of a file, as the *lock files* are specified for MacOS and Linux
+/// alone (C-008).
 #[cfg(not(unix))]
 fn is_same_file(_file: &File, path: &Path) -> bool {
     path.is_file()

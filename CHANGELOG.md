@@ -9,6 +9,21 @@ and this project adheres to a four-part version number.
 
 ## [Unreleased]
 
+## [0.43.0.0] - 2026-10-28
+
+**_Distribution_script_building_on_Linux_**
+
+Leading work item: guidelines 0.18.0.0 (AIAgentQtRust)
+
+- Engineer the *change request* '**_Distribution_script_building_on_Linux_**', decided by the product owner on 2026-10-27 and at the *meeting* of 2026-10-28, as genc³wb definition 0.39.0.0 states it: the distribution built on Linux, and the menu bar shown there.
+- 'make-dist.sh': the part of the platform chosen by `uname -s`: on MacOS the bundle and 'register.command' as before, checked by `plutil`; on Linux the desktop entry 'genc3wb.desktop', the MIME type 'genc3wb-gc3n.xml' and 'register.sh', checked by `desktop-file-validate` and `xmllint`; on another platform no distribution.
+- Main.qml: the items of the menu bar as one `Action` each; the menu bar of Qt Quick Controls on every platform but MacOS, where Qt Labs Platform finds no native menu bar without Qt Widgets; the menu bar of Qt Labs Platform loaded on MacOS alone, its items taking the text and the enabled state of the actions.
+- 'src/core/file_lock.rs': the comments name the lock on Linux as well (C-008).
+- 'README.md': the builds for Linux, and the registration on both platforms.
+- Raise the version in 'Cargo.toml' to 0.43.0; 'tests/recording.rs' and the round-trip tests expect the comment line of 0.43.0.0.
+- Tests: the *test suite* passes on Linux with Qt 6.11.3, the integration tests and the *verification runs* included; the distribution script passes on Linux, and 'register.sh' was run against a home folder of its own.
+- Behaviour changed: a minor bump, the major part being 0.
+
 ## [0.42.0.0] - 2026-10-26
 
 **_Settings_menu_with_both_entries_**

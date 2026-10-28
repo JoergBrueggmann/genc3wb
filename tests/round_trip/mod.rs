@@ -339,7 +339,7 @@ pub fn round_trip(exit_code: i32, script: &Path, work: &Path) -> RoundTrip {
         exit_code,
         comment: lines
             .first()
-            .is_some_and(|line| line.starts_with("// Recorded by genc³wb 0.42.0.0 on ")),
+            .is_some_and(|line| line.starts_with("// Recorded by genc³wb 0.43.0.0 on ")),
         head: lines.get(1).map(|line| (*line).to_owned()),
         actions: lines
             .iter()

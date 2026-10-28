@@ -212,131 +212,249 @@ ApplicationWindow {
         }
     }
 
-    // the menu bar, built from the types of Qt Labs Platform, since their roles place 'Settings...'
-    // in the application menu of MacOS and keep its twin in the menu 'Settings' (FR-096)
-    Platform.MenuBar {
+    // the items of the menu bar, each defined once and reached by both menu bars below (FR-096)
+    Action {
+        id: settingsAction
+
+        text: qsTr("&Settings...")
+        onTriggered: settingsDialog.open()
+    }
+
+    Action {
+        id: insertKeyAction
+
+        text: qsTr("Insert &key settings...")
+        onTriggered: insertKeyDialog.open()
+    }
+
+    Action {
+        id: insertModeAction
+
+        text: Workbench.insertMode ? qsTr("Switch to &overwrite mode") : qsTr("Switch to &insert mode")
+        onTriggered: Workbench.insertMode = !Workbench.insertMode
+    }
+
+    Action {
+        id: playbackAction
+
+        text: qsTr("&Play back script...")
+        enabled: !Workbench.automation.recording && !Workbench.automation.running
+        // the playback delay dialog first, unless its setting disables it (FR-499, FR-544)
+        onTriggered: {
+            if (Workbench.playbackDelayDialogDisabled) {
+                scriptDialog.open();
+            } else {
+                playbackDelayDialog.open();
+            }
+        }
+    }
+
+    Action {
+        id: stopPlaybackAction
+
+        text: qsTr("Sto&p playback")
+        // enabled while a playback runs; the action in progress is completed first (FR-546)
+        enabled: Workbench.automation.running
+        onTriggered: Workbench.automation.stop()
+    }
+
+    Action {
+        id: startRecordingAction
+
+        text: qsTr("&Start and create recording file...")
+        // enabled once the build of the network file named has answered, so that the
+        // recording saves every file the network works on (FR-528)
+        enabled: !Workbench.automation.recording && !Workbench.automation.running
+                 && (Workbench.networkInput.path === "" || Workbench.network.filesKnown)
+        onTriggered: recordingFileDialog.open()
+    }
+
+    Action {
+        id: stopRecordingAction
+
+        text: qsTr("S&top and save recording...")
+        enabled: Workbench.automation.recording
+        onTriggered: stopRecordingDialog.open()
+    }
+
+    Action {
+        id: storeAction
+
+        text: qsTr("Store to &verify on replay")
+        enabled: false
+        onTriggered: Workbench.automation.storeFocused()
+    }
+
+    Action {
+        id: infoAction
+
+        text: qsTr("&Info")
+        onTriggered: infoDialog.open()
+    }
+
+    // whether a code editor holds or held the focus is state of the recorder, read when the menu
+    // 'Automation' is about to show (FR-531)
+    function updateStoreAction() {
+        storeAction.enabled = Workbench.automation.recording && Workbench.automation.canStore();
+    }
+
+    // the menu bar of every platform but MacOS, drawn in the window, since Qt Labs Platform finds no
+    // native menu bar there without Qt Widgets (FR-096)
+    menuBar: MenuBar {
         id: menuBar
 
-        window: mainWindow
+        visible: Qt.platform.os !== "osx"
 
-        Platform.Menu {
+        Menu {
             id: settingsMenu
 
             title: qsTr("&Settings")
 
-            // the preferences item of the application menu of MacOS; the other platforms have no
-            // application menu, so that the entry below stands alone there (FR-096)
-            Platform.MenuItem {
-                id: preferencesAction
-
-                text: qsTr("&Settings...")
-                role: Platform.MenuItem.PreferencesRole
-                visible: Qt.platform.os === "osx"
-                onTriggered: settingsDialog.open()
+            MenuItem {
+                action: settingsAction
             }
 
-            // the entry of the menu 'Settings', kept there by its role (FR-096, FR-097)
-            Platform.MenuItem {
-                id: settingsAction
-
-                text: qsTr("&Settings...")
-                role: Platform.MenuItem.NoRole
-                onTriggered: settingsDialog.open()
-            }
-
-            Platform.MenuItem {
-                id: insertKeyAction
-
-                text: qsTr("Insert &key settings...")
-                role: Platform.MenuItem.NoRole
-                onTriggered: insertKeyDialog.open()
+            MenuItem {
+                action: insertKeyAction
             }
         }
 
-        Platform.Menu {
+        Menu {
             id: editMenu
 
             title: qsTr("&Edit")
 
-            Platform.MenuItem {
-                id: insertModeAction
-
-                text: Workbench.insertMode ? qsTr("Switch to &overwrite mode") : qsTr("Switch to &insert mode")
-                onTriggered: Workbench.insertMode = !Workbench.insertMode
+            MenuItem {
+                action: insertModeAction
             }
         }
 
         // the menu of the playback and the recording (FR-498)
-        Platform.Menu {
+        Menu {
             id: automationMenu
 
             title: qsTr("&Automation")
-            // whether a code editor holds or held the focus is state of the recorder, read when the
-            // menu is about to show (FR-531)
-            onAboutToShow: storeAction.enabled = Workbench.automation.recording && Workbench.automation.canStore()
+            onAboutToShow: mainWindow.updateStoreAction()
 
-            Platform.MenuItem {
-                id: playbackAction
-
-                text: qsTr("&Play back script...")
-                enabled: !Workbench.automation.recording && !Workbench.automation.running
-                // the playback delay dialog first, unless its setting disables it (FR-499, FR-544)
-                onTriggered: {
-                    if (Workbench.playbackDelayDialogDisabled) {
-                        scriptDialog.open();
-                    } else {
-                        playbackDelayDialog.open();
-                    }
-                }
+            MenuItem {
+                action: playbackAction
             }
 
-            Platform.MenuItem {
-                id: stopPlaybackAction
-
-                text: qsTr("Sto&p playback")
-                // enabled while a playback runs; the action in progress is completed first (FR-546)
-                enabled: Workbench.automation.running
-                onTriggered: Workbench.automation.stop()
+            MenuItem {
+                action: stopPlaybackAction
             }
 
-            Platform.MenuItem {
-                id: startRecordingAction
-
-                text: qsTr("&Start and create recording file...")
-                // enabled once the build of the network file named has answered, so that the
-                // recording saves every file the network works on (FR-528)
-                enabled: !Workbench.automation.recording && !Workbench.automation.running
-                         && (Workbench.networkInput.path === "" || Workbench.network.filesKnown)
-                onTriggered: recordingFileDialog.open()
+            MenuItem {
+                action: startRecordingAction
             }
 
-            Platform.MenuItem {
-                id: stopRecordingAction
-
-                text: qsTr("S&top and save recording...")
-                enabled: Workbench.automation.recording
-                onTriggered: stopRecordingDialog.open()
+            MenuItem {
+                action: stopRecordingAction
             }
 
-            Platform.MenuItem {
-                id: storeAction
-
-                text: qsTr("Store to &verify on replay")
-                enabled: false
-                onTriggered: Workbench.automation.storeFocused()
+            MenuItem {
+                action: storeAction
             }
         }
 
-        Platform.Menu {
+        Menu {
             id: helpMenu
 
             title: qsTr("&Help")
 
-            Platform.MenuItem {
-                id: infoAction
+            MenuItem {
+                action: infoAction
+            }
+        }
+    }
 
-                text: qsTr("&Info")
-                onTriggered: infoDialog.open()
+    // the menu bar of MacOS, built from the types of Qt Labs Platform, since their roles place
+    // 'Settings...' in the application menu and keep its twin in the menu 'Settings' (FR-096); loaded
+    // on MacOS alone, its items taking the text and the enabled state of the actions above
+    Loader {
+        id: nativeMenuBar
+
+        active: Qt.platform.os === "osx"
+
+        sourceComponent: Platform.MenuBar {
+            window: mainWindow
+
+            Platform.Menu {
+                title: qsTr("&Settings")
+
+                // the preferences item of the application menu of MacOS (FR-096)
+                Platform.MenuItem {
+                    text: settingsAction.text
+                    role: Platform.MenuItem.PreferencesRole
+                    onTriggered: settingsAction.trigger()
+                }
+
+                // the entry of the menu 'Settings', kept there by its role (FR-096, FR-097)
+                Platform.MenuItem {
+                    text: settingsAction.text
+                    role: Platform.MenuItem.NoRole
+                    onTriggered: settingsAction.trigger()
+                }
+
+                Platform.MenuItem {
+                    text: insertKeyAction.text
+                    role: Platform.MenuItem.NoRole
+                    onTriggered: insertKeyAction.trigger()
+                }
+            }
+
+            Platform.Menu {
+                title: qsTr("&Edit")
+
+                Platform.MenuItem {
+                    text: insertModeAction.text
+                    onTriggered: insertModeAction.trigger()
+                }
+            }
+
+            // the menu of the playback and the recording (FR-498)
+            Platform.Menu {
+                title: qsTr("&Automation")
+                onAboutToShow: mainWindow.updateStoreAction()
+
+                Platform.MenuItem {
+                    text: playbackAction.text
+                    enabled: playbackAction.enabled
+                    onTriggered: playbackAction.trigger()
+                }
+
+                Platform.MenuItem {
+                    text: stopPlaybackAction.text
+                    enabled: stopPlaybackAction.enabled
+                    onTriggered: stopPlaybackAction.trigger()
+                }
+
+                Platform.MenuItem {
+                    text: startRecordingAction.text
+                    enabled: startRecordingAction.enabled
+                    onTriggered: startRecordingAction.trigger()
+                }
+
+                Platform.MenuItem {
+                    text: stopRecordingAction.text
+                    enabled: stopRecordingAction.enabled
+                    onTriggered: stopRecordingAction.trigger()
+                }
+
+                Platform.MenuItem {
+                    text: storeAction.text
+                    enabled: storeAction.enabled
+                    onTriggered: storeAction.trigger()
+                }
+            }
+
+            Platform.Menu {
+                title: qsTr("&Help")
+
+                Platform.MenuItem {
+                    text: infoAction.text
+                    onTriggered: infoAction.trigger()
+                }
             }
         }
     }

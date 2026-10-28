@@ -3,12 +3,16 @@
 # the executable of the workbench beside the three executables of genc³ and the
 # automation configuration 'automation.gc3', so that the workbench finds its
 # settings file 'genc3wb.yaml', the build system 'genc3d' and the configuration in
-# the folder of its own executable; the application bundle
+# the folder of its own executable; on MacOS the application bundle
 # 'genc3wb.app', whose executable is a symbolic link to 'bin/genc3wb' and which
 # declares gc3n-files as the documents it opens, so that a double-click on a
-# gc3n-file opens it with the workbench once the bundle is registered; the
+# gc3n-file opens it with the workbench once the bundle is registered, and the
 # script 'register.command', which registers the bundle with Launch Services
-# and puts 'bin' on the search path of the shell; the licence, the description
+# and puts 'bin' on the search path of the shell; on Linux the desktop entry
+# 'genc3wb.desktop', which hands a gc3n-file to the workbench on its command
+# line, the MIME type of gc3n-files 'genc3wb-gc3n.xml', and the script
+# 'register.sh', which registers both for the user and puts 'bin' on the
+# search path in '~/.profile'; the licence, the description
 # and the work items of the package; and, under 'genc3', the rest of the
 # distribution of genc³: its description, licence, work items, reference manual
 # and examples. What is distributed therefore holds the workbench and the build
@@ -66,16 +70,21 @@ for sExecutable in genc3d genc3 gc3; do
 done
 rmdir "$sDist/genc3/bin" || exit 1
 
-# the application bundle: Launch Services starts an application bundle and
-# hands the document to it as an event, never a bare executable; the executable
-# of the bundle is a symbolic link to the workbench, so that the workbench
-# finds its settings file and the build system in 'bin' whichever way it is
-# started
-sBundle="$sDist/genc3wb.app"
-mkdir -p "$sBundle/Contents/MacOS" || exit 1
-ln -s ../../../bin/genc3wb "$sBundle/Contents/MacOS/genc3wb" || exit 1
-printf 'APPL????' > "$sBundle/Contents/PkgInfo"
-cat > "$sBundle/Contents/Info.plist" <<EOT
+# the part of the platform: what makes a double-click on a gc3n-file open it
+# with the workbench, and the script that registers it
+sPlatform="$(uname -s)"
+case "$sPlatform" in
+Darwin)
+    # the application bundle: Launch Services starts an application bundle and
+    # hands the document to it as an event, never a bare executable; the executable
+    # of the bundle is a symbolic link to the workbench, so that the workbench
+    # finds its settings file and the build system in 'bin' whichever way it is
+    # started
+    sBundle="$sDist/genc3wb.app"
+    mkdir -p "$sBundle/Contents/MacOS" || exit 1
+    ln -s ../../../bin/genc3wb "$sBundle/Contents/MacOS/genc3wb" || exit 1
+    printf 'APPL????' > "$sBundle/Contents/PkgInfo"
+    cat > "$sBundle/Contents/Info.plist" <<EOT
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -143,9 +152,9 @@ cat > "$sBundle/Contents/Info.plist" <<EOT
 </plist>
 EOT
 
-# the registration: run by the user, by double-click or in a terminal, after
-# the distribution was placed where it is to stay, and again after it was moved
-cat > "$sDist/register.command" <<'EOT'
+    # the registration: run by the user, by double-click or in a terminal, after
+    # the distribution was placed where it is to stay, and again after it was moved
+    cat > "$sDist/register.command" <<'EOT'
 #!/usr/bin/env bash
 # Registers this distribution of genc³wb on this Mac: the application bundle
 # 'genc3wb.app' with Launch Services, so that a double-click on a gc3n-file
@@ -189,7 +198,107 @@ else
 fi
 echo "on the search path of new terminals: $sRoot/bin"
 EOT
-chmod +x "$sDist/register.command" || exit 1
+    chmod +x "$sDist/register.command" || exit 1
+    ;;
+Linux)
+    # the MIME type of gc3n-files, which the desktop entry declares as the
+    # documents it opens
+    cat > "$sDist/genc3wb-gc3n.xml" <<'EOT'
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+	<mime-type type="application/x-gc3n">
+		<comment>genc³ compiler network</comment>
+		<sub-class-of type="text/plain"/>
+		<glob pattern="*.gc3n"/>
+	</mime-type>
+</mime-info>
+EOT
+
+    # the desktop entry: the desktop starts the workbench with the path of the
+    # gc3n-file on its command line; 'register.sh' installs it with the path
+    # of 'bin/genc3wb' in place of the bare name, so that the workbench finds
+    # its settings file and the build system in 'bin'
+    cat > "$sDist/genc3wb.desktop" <<'EOT'
+[Desktop Entry]
+Type=Application
+Name=genc³wb
+Comment=The workbench of the meta compiler-compiler genc³
+Exec=genc3wb %f
+Terminal=false
+Categories=Development;
+MimeType=application/x-gc3n;
+EOT
+
+    # the registration: run by the user in a terminal, after the distribution
+    # was placed where it is to stay, and again after it was moved
+    cat > "$sDist/register.sh" <<'EOT'
+#!/usr/bin/env bash
+# Registers this distribution of genc³wb for the user on this Linux: the MIME
+# type of gc3n-files and the desktop entry 'genc3wb.desktop', so that a
+# double-click on a gc3n-file opens it with the workbench, and the folder 'bin'
+# on the search path in '~/.profile', so that genc3wb, genc3d, genc3 and gc3
+# are callable in a terminal after the next login.
+# Repeatable: run it again after moving the folder.
+set -uo pipefail
+
+cd "$(dirname "$0")" || exit 1
+sRoot="$(pwd -P)"
+sShare="${XDG_DATA_HOME:-$HOME/.local/share}"
+sProfile="$HOME/.profile"
+sMark='# genc3wb: the folder of the executables of genc³wb and genc³'
+
+if [ ! -x "$sRoot/bin/genc3wb" ] || [ ! -f "$sRoot/genc3wb.desktop" ] \
+        || [ ! -f "$sRoot/genc3wb-gc3n.xml" ]; then
+    echo "FAILED: '$sRoot' holds no distribution of genc³wb" >&2
+    exit 1
+fi
+
+# the MIME type, in the database of the user
+mkdir -p "$sShare/mime/packages" || exit 1
+cp "$sRoot/genc3wb-gc3n.xml" "$sShare/mime/packages/" || exit 1
+update-mime-database "$sShare/mime" || {
+    echo "FAILED: the MIME type of gc3n-files was not registered" >&2
+    exit 1
+}
+
+# the desktop entry, with the path of the workbench of this folder; an entry of
+# an earlier location is replaced
+mkdir -p "$sShare/applications" || exit 1
+sed "s|^Exec=genc3wb |Exec=\"$sRoot/bin/genc3wb\" |" "$sRoot/genc3wb.desktop" \
+    > "$sShare/applications/genc3wb.desktop" || exit 1
+update-desktop-database "$sShare/applications" || {
+    echo "FAILED: the desktop entry was not registered" >&2
+    exit 1
+}
+xdg-mime default genc3wb.desktop application/x-gc3n || {
+    echo "FAILED: genc3wb was not made the application of gc3n-files" >&2
+    exit 1
+}
+echo "registered: $sShare/applications/genc3wb.desktop opens gc3n-files"
+
+# the search path: one marked block in '~/.profile', which the login of the
+# desktop reads, replaced where it is present
+sBlock="$sMark
+export PATH=\"$sRoot/bin:\$PATH\""
+touch "$sProfile" || exit 1
+if grep -qF "$sMark" "$sProfile"; then
+    # the mark and the line after it go, everything else stays
+    sKept="$(awk -v mark="$sMark" '$0 == mark { skip = 1; next } skip == 1 { skip = 0; next } { print }' "$sProfile")"
+    printf '%s\n\n%s\n' "$sKept" "$sBlock" > "$sProfile" || exit 1
+    echo "replaced: the block of genc3wb in $sProfile"
+else
+    printf '\n%s\n' "$sBlock" >> "$sProfile" || exit 1
+    echo "added: the block of genc3wb to $sProfile"
+fi
+echo "on the search path after the next login: $sRoot/bin"
+EOT
+    chmod +x "$sDist/register.sh" || exit 1
+    ;;
+*)
+    echo "FAILED: no distribution is made on $sPlatform" >&2
+    exit 1
+    ;;
+esac
 
 # what was assembled is executable where it was assembled
 nStatus=0
@@ -199,17 +308,28 @@ for sExecutable in genc3wb genc3d genc3 gc3; do
         nStatus=1
     fi
 done
-if [ ! -x "$sBundle/Contents/MacOS/genc3wb" ]; then
-    echo "FAILED: the executable of $sBundle does not reach bin/genc3wb" >&2
-    nStatus=1
-fi
 if [ ! -f "$sDist/bin/automation.gc3" ]; then
     echo "FAILED: $sDist/bin/automation.gc3 is missing" >&2
     nStatus=1
 fi
-if ! plutil -lint "$sBundle/Contents/Info.plist" > /dev/null 2>&1; then
-    echo "FAILED: the Info.plist of $sBundle is malformed" >&2
-    nStatus=1
+if [ "$sPlatform" = Darwin ]; then
+    if [ ! -x "$sBundle/Contents/MacOS/genc3wb" ]; then
+        echo "FAILED: the executable of $sBundle does not reach bin/genc3wb" >&2
+        nStatus=1
+    fi
+    if ! plutil -lint "$sBundle/Contents/Info.plist" > /dev/null 2>&1; then
+        echo "FAILED: the Info.plist of $sBundle is malformed" >&2
+        nStatus=1
+    fi
+else
+    if ! desktop-file-validate "$sDist/genc3wb.desktop"; then
+        echo "FAILED: the desktop entry $sDist/genc3wb.desktop is malformed" >&2
+        nStatus=1
+    fi
+    if ! xmllint --noout "$sDist/genc3wb-gc3n.xml"; then
+        echo "FAILED: the MIME type $sDist/genc3wb-gc3n.xml is malformed" >&2
+        nStatus=1
+    fi
 fi
 if ! "$sDist/bin/genc3d" --help > /dev/null 2>&1; then
     echo "FAILED: $sDist/bin/genc3d did not run" >&2
@@ -222,7 +342,11 @@ if [ $? -ne 1 ]; then
 fi
 
 if [ "$nStatus" -eq 0 ]; then
-    echo "OK: $sDist holds the workbench, the build system and the automation configuration under bin, the bundle genc3wb.app and register.command"
+    if [ "$sPlatform" = Darwin ]; then
+        echo "OK: $sDist holds the workbench, the build system and the automation configuration under bin, the bundle genc3wb.app and register.command"
+    else
+        echo "OK: $sDist holds the workbench, the build system and the automation configuration under bin, the desktop entry genc3wb.desktop, the MIME type genc3wb-gc3n.xml and register.sh"
+    fi
 fi
 
 exit "$nStatus"

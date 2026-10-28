@@ -27,8 +27,8 @@ on genc3.com.
   which is released internally and available to design partners, not as a
   public download. To try genc³ and genc³wb on your case, use the
   [contact form](https://sw4sd.com/contact/) of software 4sd.
-- genc³ builds for macOS on Apple silicon today; builds for Linux and Windows
-  are planned. genc³wb reaches `genc3d` and its nodes through Unix domain
+- genc³ and genc³wb build for macOS on Apple silicon and for Linux x86_64
+  today; builds for Windows are planned. genc³wb reaches `genc3d` and its nodes through Unix domain
   sockets, so that in this version the graph and the node windows are shown on
   Linux and macOS alone; without a build system a network file is edited, but
   no graph is shown.
@@ -92,7 +92,11 @@ cargo build --release
 `cargo test` runs the tests of the application logic; the integration tests
 against the build system run with the path of `genc3d` in the environment
 variable `GENC3D` and the option `--ignored`. The script 'make-dist.sh'
-assembles the distribution folder with the executables of genc³.
+assembles the distribution folder with the executables of genc³, on macOS with
+the application bundle and 'register.command', on Linux with the desktop entry,
+the MIME type of gc3n-files and 'register.sh'; the script of the platform
+registers the distribution for the user, so that a double-click on a gc3n-file
+opens it with genc³wb and the executables are on the search path.
 
 NOTE: Portions of this project's code and documentation were developed with AI
 assistance (Claude), under the author's direction, review, and authorisation.
